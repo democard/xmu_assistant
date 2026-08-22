@@ -1,0 +1,5 @@
+requests>=2.31.0
+xmulogin>=1.0.0
+PySide6>=6.7.0
+# DPAPI 凭据加密（A1）：仅 Windows 需要；缺失时 secrets.protect 会显式告警并回退明文
+pywin32>=306; sys_platform == "win32"

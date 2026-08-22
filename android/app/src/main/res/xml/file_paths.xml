@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径授权：仅暴露应用私有 files/ 目录，
+     供 Android 8.0-9（API<29）分享成绩长图时使用。
+     其他目录一律不暴露，避免分享越权。 -->
+<paths>
+    <files-path name="shared_images" path="images/" />
+</paths>

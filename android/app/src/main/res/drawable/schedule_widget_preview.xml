@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面小卡片预览图：供 ColorOS/OPPO 等桌面在 requestPinAppWidget 时展示/校验。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp"
+    android:height="110dp"
+    android:viewportWidth="250"
+    android:viewportHeight="110">
+    <!-- 背景 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0h250v110h-250z" />
+    <path
+        android:fillColor="#E0E8E6"
+        android:pathData="M0,0h250v1h-250z" />
+    <!-- 标题行 -->
+    <path
+        android:fillColor="#0F766E"
+        android:pathData="M16,16h72v18h-72z" />
+    <path
+        android:fillColor="#6B7D79"
+        android:pathData="M176,24h58v6h-58z" />
+    <!-- 课程行 -->
+    <path
+        android:fillColor="#17312E"
+        android:pathData="M16,52h120v12h-120z" />
+    <path
+        android:fillColor="#6B7D79"
+        android:pathData="M176,52h58v8h-58z" />
+    <path
+        android:fillColor="#0F766E"
+        android:pathData="M16,74h48v10h-48z" />
+    <path
+        android:fillColor="#17312E"
+        android:pathData="M80,74h120v10h-120z" />
+    <path
+        android:fillColor="#6B7D79"
+        android:pathData="M216,74h18v8h-18z" />
+</vector>

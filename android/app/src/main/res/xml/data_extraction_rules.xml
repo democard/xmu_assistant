@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- 课表缓存含教师/教室等个人排课信息，明文存储，不参与云备份 -->
+        <exclude
+            domain="file"
+            path="schedule_cache.json" />
+        <exclude
+            domain="file"
+            path="schedule_cache.json.tmp" />
+        <!-- 桌面小卡片摘要同样不备份 -->
+        <exclude
+            domain="sharedpref"
+            path="schedule_widget.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="file"
+            path="schedule_cache.json" />
+        <exclude
+            domain="file"
+            path="schedule_cache.json.tmp" />
+        <exclude
+            domain="sharedpref"
+            path="schedule_widget.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+.gradle-home/
+.tmp/
+build/
+app/build/
+local.properties
+
+# Android Studio / IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 本地日志与截图（Codex 调试产物）
+*.log
+*.log.err
+*.xml.bak
+
+# 测试临时数据
+app/src/test/resources/*.tmp
+
+# 固定调试签名（android/keystore/debug.keystore）已入库：
+# 签名在仓库内可复现，保证 dev/release 覆盖升级（install -r）不丢本地登录数据。
+# 若将来新增其它密钥文件，请单独显式忽略，勿用整目录忽略（避免新克隆无法构建）。
+# keystore/

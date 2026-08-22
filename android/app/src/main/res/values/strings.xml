@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">xmu助手</string>
+    <string name="schedule_widget_description">显示今日课程安排</string>
+    <string name="schedule_widget_default_title">今日课程</string>
+    <string name="schedule_widget_empty">今天没有课</string>
+    <string name="schedule_widget_no_data">暂无课表，打开 App 刷新后自动更新</string>
+</resources>
