@@ -1,0 +1,73 @@
+<resources>
+    <string name="app_name">xmu助手</string>
+    <string name="schedule_widget_description">显示今日课程安排</string>
+    <string name="schedule_widget_default_title">今日课程</string>
+    <string name="schedule_widget_empty">今天没有课</string>
+    <string name="schedule_widget_no_data">暂无课表，打开 App 刷新后自动更新</string>
+
+    <string name="shortcut_rollcall_short">签到情况</string>
+    <string name="shortcut_rollcall_long">查看签到情况</string>
+    <string name="shortcut_schedule_short">课表</string>
+    <string name="shortcut_schedule_long">查看课表</string>
+    <string name="shortcut_score_short">成绩</string>
+    <string name="shortcut_score_long">查询成绩</string>
+
+    <!-- 桌面小卡片引导弹窗（D1 资源化试点：源码经逐条核对未被契约测试锚定） -->
+    <string name="widget_guide_title">添加桌面小卡片</string>
+    <string name="widget_guide_ok">好的</string>
+    <string name="widget_guide_open_settings">打开桌面设置</string>
+    <string name="widget_guide_got_it">知道了</string>
+    <string name="widget_guide_coloros_body">受系统限制，App 没法直接把小卡片放到桌面，手动添加很简单：\n\n1. 回到桌面，长按空白处\n2. 在弹出的菜单里选「小部件」\n3. 找到「xmu助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
+    <string name="widget_guide_generic_body">系统没能直接添加成功，也可以手动添加：\n\n1. 点「打开桌面设置」进入桌面设置\n2. 回到桌面，长按空白处 → 选「小部件」\n3. 找到「xmu助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
+    <string name="widget_permission_guide_title">需开启「桌面快捷方式」权限</string>
+    <string name="widget_permission_guide_open">去开启权限</string>
+    <string name="widget_permission_guide_got_it">我知道了</string>
+    <string name="widget_permission_guide_body">检测到是小米 / Redmi 设备：系统支持一键添加小卡片，但需要应用先拥有「桌面快捷方式」权限，否则会添加失败且不报错。\n\n点「去开启权限」会跳到应用设置页，请找到「桌面快捷方式」并允许，然后返回本页重新点击「添加到桌面」即可。\n\n（部分 MIUI / HyperOS 版本中该权限名为「创建桌面快捷方式」或在「权限管理 → 其他权限」里。）</string>
+
+    <!-- 考试安排页全量用户可见文案（B4 资源化批次 2：源码经逐条核对未被契约测试锚定） -->
+    <string name="exam_page_title">考试安排</string>
+    <string name="exam_page_refreshing">刷新中</string>
+    <string name="exam_page_refresh">刷新考试安排</string>
+    <string name="exam_page_auto_updated">检测到变化，自动更新</string>
+    <string name="exam_page_empty_not_logged_in_title">请先登录</string>
+    <string name="exam_page_empty_not_logged_in_body">登录后点击上方刷新即可获取考试安排。</string>
+    <string name="exam_page_empty_title">暂无考试数据</string>
+    <string name="exam_page_empty_body">点击上方刷新按钮获取考试安排。</string>
+    <string name="exam_page_upcoming">未完成（%1$d）</string>
+    <string name="exam_page_finished">已完成（%1$d）</string>
+    <string name="exam_page_unarranged">未安排（%1$d）</string>
+    <string name="exam_page_term_empty_title">该学期暂无安排</string>
+    <string name="exam_page_term_empty_body">本学期没有已排考试或未安排课程。</string>
+
+    <!-- 课程课件页用户可见文案（B1 资源化批次 3）。
+         刻意排除项（非纯展示文案，属跨文件数据契约，保持硬编码）：
+         「全部」筛选哨兵与「第一/二/三学期」标签要与 UiComponents.courseSemesterLabel
+         的返回值、UiDerivedState.filterCourses 的比较式逐字相等，单边资源化会让
+         筛选静默全失效（比不资源化更危险）。 -->
+    <string name="courseware_page_title">课程课件</string>
+    <string name="courseware_page_courses_refreshing">课程刷新中</string>
+    <string name="courseware_page_courses_refresh">刷新课程</string>
+    <string name="courseware_page_courses_updated">课程上次更新 %1$s</string>
+    <string name="courseware_page_empty_not_logged_in_title">请先登录</string>
+    <string name="courseware_page_empty_not_logged_in_body">登录后点击上方刷新课程即可选择课件。</string>
+    <string name="courseware_page_empty_no_selection_title">请选择课程</string>
+    <string name="courseware_page_empty_no_selection_body">先刷新课程，再选择需要下载课件的课程。</string>
+    <string name="courseware_page_filter_year">学年</string>
+    <string name="courseware_page_filter_semester">学期</string>
+    <string name="courseware_page_course_list_label">课程</string>
+    <string name="courseware_page_no_match_title">没有匹配课程</string>
+    <string name="courseware_page_no_match_body">请换一个学年或学期筛选。</string>
+    <string name="courseware_page_current_course">当前课程：%1$s</string>
+    <string name="courseware_page_summary">已读取 %1$d 条课件；可直接下载 %2$d 条；需保存入口 %3$d 条；受限 %4$d 条</string>
+    <string name="courseware_page_refreshing">课件刷新中</string>
+    <string name="courseware_page_refresh">刷新课件</string>
+    <string name="courseware_page_updated">课件上次更新 %1$s</string>
+    <string name="courseware_page_downloading">下载中</string>
+    <string name="courseware_page_download">下载（%1$d）</string>
+    <string name="courseware_page_select_all">全选</string>
+    <string name="courseware_page_open_platform">打开平台页面</string>
+    <string name="courseware_page_empty_title">暂无课件</string>
+    <string name="courseware_page_empty_body">如果平台暂时没有返回课件，请稍后再试。</string>
+    <!-- 快捷设置磁贴名称（AndroidManifest MonitorControlTileService label） -->
+    <string name="tile_service_label">签到监控</string>
+</resources>

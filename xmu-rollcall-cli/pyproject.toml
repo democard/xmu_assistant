@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xmu-assistant"
+dynamic = ["version"]
+description = "xmu助手 for XMU TronClass rollcall monitoring"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "requests>=2.31.0",
+    "xmulogin>=1.0.0",
+    "PySide6>=6.7.0",
+    # DPAPI 凭据加密（A1）：仅 Windows；缺失时 secrets.protect 显式告警并回退明文
+    "pywin32>=306; sys_platform == \"win32\"",
+]
+
+[project.scripts]
+xmu-dashboard = "xmu_rollcall.desktop_qt.app:main"
+
+[tool.setuptools]
+packages = ["xmu_rollcall"]
+
+[tool.setuptools.dynamic]
+version = {attr = "xmu_rollcall.__version__"}

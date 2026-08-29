@@ -1,0 +1,77 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+/venv/
+/.venv/
+/.tools/
+/env/
+/.env/
+
+# Local IDE/editor files
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*.iml
+
+# Kotlin metadata cache（Compose/Kotlin 编译器中间产物）
+.kotlin/
+*.apk.bak
+*.aab
+
+# Release 签名密钥：绝不入库（debug.keystore 已入库用于覆盖升级签名保持）
+*.jks
+release*.keystore
+upload*.keystore
+
+# Local runtime/config data
+/.runtime/
+/.xmu_rollcall/
+/.agents/
+/.superpowers/
+*.log
+# 运行/回归测试日志（如 .a2_test_log.txt）
+*_test_log.txt
+
+# 内部开发记录（交接/计划/第三方参考），不入库
+/docs/
+/android/docs/
+
+# Build and package artifacts
+/app/
+/build/
+/dist/
+# PyInstaller 工作目录与产物（/build/、/dist/ 仅锚定仓库根，子项目需单独列出）
+/xmu-rollcall-cli/build/
+/xmu-rollcall-cli/dist/
+/artifacts/
+/.gradle/
+/.gradle-user-home/
+/android/.gradle/
+/android/app/build/
+/*.spec
+!xmu-assistant.spec
+*.egg-info/
+*.whl
+*.tar.gz
+
+# 发布产物：二进制 exe/apk 不再入库，改由 GitHub Releases 托管
+# （仓库仅保留 release/SHA256SUMS.txt 校验文件；本地 exe/apk 由构建脚本生成后上传）
+release/*.exe
+release/*.apk
+
+# 本地 .git 备份目录（filter-repo 等操作前的临时备份，禁止入库）
+.git-backup-*/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Legacy local notes
+legacy/v3.0.1/info.txt

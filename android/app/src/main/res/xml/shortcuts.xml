@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 静态应用快捷方式：长按桌面图标直达核心页面。
+     Intent 显式指向 MainActivity 并带 open_page extra，复用 singleTask
+     onNewIntent 的既有深链消费链路（deepLinkSeq），无需新增路由代码。 -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="rollcall_status"
+        android:enabled="true"
+        android:icon="@drawable/ic_notification"
+        android:shortcutShortLabel="@string/shortcut_rollcall_short"
+        android:shortcutLongLabel="@string/shortcut_rollcall_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xmu.assistant"
+            android:targetClass="com.xmu.assistant.MainActivity">
+            <extra android:name="open_page" android:value="签到情况" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="schedule"
+        android:enabled="true"
+        android:icon="@drawable/ic_notification"
+        android:shortcutShortLabel="@string/shortcut_schedule_short"
+        android:shortcutLongLabel="@string/shortcut_schedule_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xmu.assistant"
+            android:targetClass="com.xmu.assistant.MainActivity">
+            <extra android:name="open_page" android:value="课表" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="scores"
+        android:enabled="true"
+        android:icon="@drawable/ic_notification"
+        android:shortcutShortLabel="@string/shortcut_score_short"
+        android:shortcutLongLabel="@string/shortcut_score_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xmu.assistant"
+            android:targetClass="com.xmu.assistant.MainActivity">
+            <extra android:name="open_page" android:value="成绩" />
+        </intent>
+    </shortcut>
+</shortcuts>

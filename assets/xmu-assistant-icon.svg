@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="100" y1="60" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0A2D5C"/>
+      <stop offset="0.58" stop-color="#0D4F8B"/>
+      <stop offset="1" stop-color="#071F42"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <circle cx="512" cy="512" r="386" fill="none" stroke="#F7FBFF" stroke-width="30"/>
+  <circle cx="512" cy="512" r="346" fill="none" stroke="#D7E8F6" stroke-width="11" opacity="0.96"/>
+  <g transform="translate(0 52) scale(1.12 1.12) translate(-61 -61)">
+    <path fill="#F7FBFF" d="M512 676 C474 622 440 564 420 494 C400 420 394 342 400 258 C446 300 482 360 512 444 C542 360 578 300 624 258 C630 342 624 420 604 494 C584 564 550 622 512 676 Z"/>
+    <path fill="#F7FBFF" d="M386 326 L354 498 L512 676 L462 576 L430 486 Z"/>
+    <path fill="#F7FBFF" d="M638 326 L670 498 L512 676 L562 576 L594 486 Z"/>
+    <path fill="#0B4F8A" d="M512 456 C490 392 462 340 426 292 C446 394 480 492 512 572 C544 492 578 394 598 292 C562 340 534 392 512 456 Z"/>
+    <path fill="#0B4F8A" d="M512 572 C484 526 448 494 404 478 C430 562 470 626 512 676 C554 626 594 562 620 478 C576 494 540 526 512 572 Z"/>
+    <path fill="#CFE4F7" d="M512 676 C492 634 482 598 482 562 C502 576 522 576 542 562 C542 598 532 634 512 676 Z"/>
+  </g>
+</svg>

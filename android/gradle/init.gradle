@@ -1,0 +1,21 @@
+// 本地构建用镜像加速（不修改项目仓库配置）。
+// 通过 `gradle -I gradle/init.gradle` 或放入 ~/.gradle/init.gradle 生效。
+gradle.settingsEvaluated { settings ->
+    settings.pluginManagement {
+        repositories {
+            maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+            maven { url 'https://maven.aliyun.com/repository/google' }
+            maven { url 'https://maven.aliyun.com/repository/central' }
+            gradlePluginPortal()
+        }
+    }
+    if (settings.extensions.findByName('dependencyResolutionManagement') != null) {
+        settings.dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+            repositories {
+                maven { url 'https://maven.aliyun.com/repository/google' }
+                maven { url 'https://maven.aliyun.com/repository/central' }
+            }
+        }
+    }
+}
