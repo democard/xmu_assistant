@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,15 +55,17 @@ fun CoursewarePage(
     coursewareUpdatedAtMillis: Long,
     loggedIn: Boolean,
 ) {
-    // 键用课程 id 集合而非列表实例：内容不变的刷新会产生新 list 实例，
-    // 以实例为键会把用户筛选静默重置为「全部」
-    val courseIds = remember(courses) { courses.map { it.id } }
-    var selectedYear by remember(courseIds) { mutableStateOf("全部") }
-    var selectedSemester by remember(courseIds) { mutableStateOf("全部") }
+    var selectedYear by rememberSaveable { mutableStateOf("全部") }
+    var selectedSemester by rememberSaveable { mutableStateOf("全部") }
+    var courseQuery by rememberSaveable { mutableStateOf("") }
+    val focus = LocalFocusManager.current
     val years = remember(courses) { courseYears(courses) }
     val semesters = listOf("全部", "第一学期", "第二学期", "第三学期")
-    val filteredCourses = remember(courses, selectedYear, selectedSemester) {
-        filterCourses(courses, selectedYear, selectedSemester)
+    val filteredCourses = remember(courses, selectedYear, selectedSemester, courseQuery) {
+        filterCourses(courses, selectedYear, selectedSemester, courseQuery)
+    }
+    LaunchedEffect(years) {
+        if (courses.isNotEmpty() && selectedYear !in years) selectedYear = "全部"
     }
     val counts = remember(coursewareItems) { coursewareCounts(coursewareItems) }
     val downloadEnabled = remember(selectedIds, downloadLoading) {
@@ -76,11 +81,12 @@ fun CoursewarePage(
     var coursewareRevealRequestId by remember { mutableIntStateOf(0) }
 
     fun selectCourseAndReveal(course: CourseSummary) {
+        focus.clearFocus()
         onCourseSelected(course)
         coursewareRevealRequestId += 1
     }
 
-    LaunchedEffect(coursewareRevealRequestId) {
+    LaunchedEffect(coursewareRevealRequestId, selectedCourse?.id) {
         if (coursewareRevealRequestId > 0 && selectedCourse != null) {
             // 等待列表至少接受标题 item：仅在「未选课程 → 选中课程」时列表从 1 项
             // 变为 ≥2+课程数 项，此时若立即滚动会越界；切课场景 totalItemsCount 沿用旧值
@@ -129,9 +135,20 @@ fun CoursewarePage(
                         )
                     }
                 } else {
+                    OutlinedTextField(
+                        value = courseQuery,
+                        onValueChange = { courseQuery = it },
+                        label = { Text("搜索课程") },
+                        placeholder = { Text("课程名称或学期") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            if (courseQuery.isNotEmpty()) TextButton(onClick = { courseQuery = "" }) { Text("清除") }
+                        },
+                    )
                     OptionRow(stringResource(R.string.courseware_page_filter_year), years, selectedYear) { selectedYear = it }
                     OptionRow(stringResource(R.string.courseware_page_filter_semester), semesters, selectedSemester) { selectedSemester = it }
-                    Text(stringResource(R.string.courseware_page_course_list_label), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${stringResource(R.string.courseware_page_course_list_label)} · ${filteredCourses.size} / ${courses.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (filteredCourses.isEmpty()) {
                         EmptyState(
                             stringResource(R.string.courseware_page_no_match_title),

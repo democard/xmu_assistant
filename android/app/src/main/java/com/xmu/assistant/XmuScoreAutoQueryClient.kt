@@ -270,8 +270,7 @@ class XmuScoreAutoQueryClient internal constructor(
             // 同账号短时间 20+ 次登录被 ids 限流，登录页不再返回表单）。
             // 时间源用 System.nanoTime()：单调时钟（用户改系统时间无法绕过冷却，
             // 且 JVM 单测可用——SystemClock 在 JVM 抛 not mocked）。
-            val sinceBlocked = System.nanoTime() - lastLoginBlockedAtNanos
-            if (sinceBlocked < LOGIN_BLOCKED_COOLDOWN_NANOS) {
+            if (loginCooldownActive(lastLoginBlockedAtNanos)) {
                 throw AcademicLoginBlockedException("教务登录请求过于频繁，请约 30 分钟后重试")
             }
             jar.clear()
@@ -483,13 +482,18 @@ class XmuScoreAutoQueryClient internal constructor(
         /** 登录被服务端拒绝/限流后的进程级冷却：窗口内不再尝试 CAS 登录（防反复打登录延长风控）。
          *  时间源 System.nanoTime()：单调时钟，JVM 单测可用，用户改系统时间无法绕过。 */
         @Volatile
-        private var lastLoginBlockedAtNanos = 0L
+        private var lastLoginBlockedAtNanos: Long? = null
 
         private const val LOGIN_BLOCKED_COOLDOWN_NANOS = 30 * 60 * 1_000_000_000L
 
+        // nanoTime 的原点不固定；0 不是「从未被限流」的合法哨兵值。
+        // 否则设备刚启动不足 30 分钟时，首次教务登录会被误判为冷却中。
+        internal fun loginCooldownActive(blockedAtNanos: Long?, nowNanos: Long = System.nanoTime()): Boolean =
+            blockedAtNanos != null && nowNanos - blockedAtNanos < LOGIN_BLOCKED_COOLDOWN_NANOS
+
         /** 测试隔离：重置登录冷却（JVM 单测共享进程级状态，避免用例间污染）。 */
         internal fun clearLoginBlockedForTests() {
-            lastLoginBlockedAtNanos = 0L
+            lastLoginBlockedAtNanos = null
         }
 
         internal fun existingSessionOnly(

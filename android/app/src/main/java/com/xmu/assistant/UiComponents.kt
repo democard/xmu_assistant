@@ -150,6 +150,8 @@ fun XmuMobileTheme(themeMode: String = THEME_MODE_SYSTEM, content: @Composable (
                     onSurfaceVariant = Color(0xFF9FB0C0),
                     background = Color(0xFF0D1117),
                     onBackground = Color(0xFFE3EBF3),
+                    outline = Color(0xFF8294A6),
+                    outlineVariant = Color(0xFF2D3C4B),
                 )
             } else {
                 lightColorScheme(
@@ -162,6 +164,8 @@ fun XmuMobileTheme(themeMode: String = THEME_MODE_SYSTEM, content: @Composable (
                     onSurfaceVariant = Color(0xFF55708A),
                     background = Color(0xFFF6F8FA),
                     onBackground = Color(0xFF082B4A),
+                    outline = Color(0xFF73879A),
+                    outlineVariant = Color(0xFFDDE6EE),
                 )
             }
         }
@@ -243,32 +247,22 @@ internal fun themeFailedCard(): Color =
     if (LocalXmuDarkTheme.current) Color(0xFF3A2323) else Color(0xFFFFEDEA)
 
 @Composable
-fun BrandHeader(loggedIn: Boolean) {
+fun BrandHeader(loggedIn: Boolean, page: String = "首页") {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AppHeaderBrush, RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 2.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LargeLogo(Modifier.size(52.dp), "xmu助手 Logo")
+        AppLogo(Modifier.size(38.dp), null)
         Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text("xmu助手", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        }
-        Surface(
-            color = themeSoftAmber(),
-            shape = RoundedCornerShape(999.dp),
-        ) {
-            Text(
-                "XMU",
-                color = themeOnAmber(),
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Spacer(Modifier.width(8.dp))
+        Text(
+            if (page == "首页") "xmu助手" else page,
+            modifier = Modifier.weight(1f),
+            color = themePrimary(),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
         Surface(
             color = if (loggedIn) themeSoftGreen() else themeSoftRed(),
             shape = RoundedCornerShape(999.dp),
@@ -315,69 +309,6 @@ fun AppLogo(modifier: Modifier = Modifier, contentDescription: String? = null) {
 }
 
 @Composable
-fun TopTabs(
-    selected: String,
-    notificationSettings: NotificationSettings,
-    downloadingCount: Int,
-    onSelected: (String) -> Unit,
-) {
-    val pages = listOf("首页", "签到情况", "成绩", "课表", "考试安排", "课程课件", "通知", "教程", "策略")
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier
-            .fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(7.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            pages.forEach { page ->
-                val title = when {
-                    page == "课程课件" && downloadingCount > 0 -> "$page · $downloadingCount"
-                    page == "通知" && notificationSettingsMissing(notificationSettings) -> "$page · 缺少配置"
-                    else -> page
-                }
-                val active = selected == page
-                Surface(
-                    color = if (active) themeSelectedTab() else MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(999.dp),
-                    border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier
-                        // 无障碍：Tab 角色 + 选中态（读屏可感知当前页）
-                        .selectable(
-                            selected = active,
-                            role = Role.Tab,
-                            onClick = { onSelected(page) },
-                        )
-                        .defaultMinSize(minHeight = 48.dp),
-                ) {
-                    // Box 垂直居中：defaultMinSize(48dp) 撑高后，文字必须居中而非顶部对齐
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text(
-                            title,
-                            color = if (active) Color.White else themePrimary(),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun StatusStack(
     account: String,
     monitor: String,
@@ -411,8 +342,10 @@ fun StatusRow(label: String, value: String) {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-        Text(value, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.35f))
+        Spacer(Modifier.width(12.dp))
+        Text(value, modifier = Modifier.weight(0.65f), fontWeight = FontWeight.Bold,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End, maxLines = 3, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -454,18 +387,17 @@ fun ToggleRow(label: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
 }
 
 @Composable
-fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+fun SectionCard(title: String, showTitle: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val surface = MaterialTheme.colorScheme.surface
     val line = MaterialTheme.colorScheme.outlineVariant
     Card(
         colors = CardDefaults.cardColors(containerColor = surface),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, line),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            HorizontalDivider(color = line)
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (showTitle) Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             content()
         }
     }
@@ -879,49 +811,10 @@ fun syncScheduleWidget(
     inferredCalendar: XmuAcademicCalendar? = null,
     manualWeek: Int = 0,
 ) {
-    // 反推/手动校准结果优先，官方校历表兜底，与课表页一致。
-    val calendar = inferredCalendar ?: xmuAcademicCalendarForTerm(termCode)
-    val today = LocalDate.now()
-    val totalWeeks = calendar?.totalWeeks ?: 19
-    val academicWeek = if (manualWeek in 1..totalWeeks && inferredCalendar == null) {
-        XmuAcademicWeek(
-            phase = XmuTermPhase.DURING,
-            week = manualWeek,
-            totalWeeks = totalWeeks,
-            date = today,
-        )
-    } else {
-        xmuAcademicWeekFor(calendar, today)
-    }
-    val week = academicWeek.week
-    val todayWeekday = xmuWeekdayFrom(today)
-    if (week == null) {
-        // 不在教学周内（寒暑假），Widget 显示"今天没有课"
-        ScheduleWidgetData.save(
-            context,
-            ScheduleWidgetSnapshot(todayWeekday, 0, termCode, emptyList()),
-        )
-        ScheduleWidgetProvider.refreshAll(context)
-        return
-    }
-    val todayCourses = entries
-        .filter { it.weekday == todayWeekday }
-        .filter { isXmuScheduleEntryActiveInWeek(it, week) }
-        .groupForDisplay()
-        .map { group ->
-            ScheduleWidgetCourse(
-                courseName = group.courseName,
-                startTime = group.startTime,
-                endTime = group.endTime,
-                startSection = group.startSection,
-                endSection = group.endSection,
-                location = group.rooms.firstOrNull().orEmpty(),
-            )
-        }
-    ScheduleWidgetData.save(
-        context,
-        ScheduleWidgetSnapshot(todayWeekday, week, termCode, todayCourses),
+    val days = projectScheduleWidgetDays(
+        entries, termCode, inferredCalendar ?: xmuAcademicCalendarForTerm(termCode),
+        manualWeek = if (inferredCalendar == null) manualWeek else 0,
     )
+    ScheduleWidgetData.saveUpcoming(context, days)
     ScheduleWidgetProvider.refreshAll(context)
 }
-

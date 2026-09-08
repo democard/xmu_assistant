@@ -26,6 +26,13 @@ class AssistantSettings private constructor(context: Context) {
         writeStored = { value -> prefs.edit().putString("auto_login_policy", value).apply() },
     )
 
+    val rankCacheJson: String get() = synchronized(RankStorageLock) { prefs.getString("rank_cache_json", "").orEmpty() }
+
+    /** Synchronous durable marker before a non-idempotent POST; called off the UI thread. */
+    fun storeRankCache(value: String, active: () -> Boolean): Boolean = synchronized(RankStorageLock) {
+        if (!active()) false else prefs.edit().putString("rank_cache_json", value).commit()
+    }
+
     var username: String
         get() = prefs.getString("username", "") ?: ""
         set(value) = prefs.edit().putString("username", value).apply()
@@ -247,6 +254,7 @@ class AssistantSettings private constructor(context: Context) {
     }
 
     fun clearSession() {
+        storeRankCache("", { true })
         prefs.edit()
             .remove("cookie_header")
             .remove("score_cookie_header")
@@ -336,3 +344,5 @@ class AssistantSettings private constructor(context: Context) {
         }
     }
 }
+
+private object RankStorageLock

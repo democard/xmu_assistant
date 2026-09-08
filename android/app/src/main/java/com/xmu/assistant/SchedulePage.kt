@@ -2,7 +2,6 @@ package com.xmu.assistant
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,15 +14,21 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -105,7 +110,7 @@ private val scheduleGroupListSaver = listSaver<XmuScheduleGroup?, Any>(
     },
 )
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SchedulePage(
     entries: List<XmuScheduleEntry>,
@@ -181,24 +186,8 @@ fun SchedulePage(
     var selectedCourse by rememberSaveable(termCode, stateSaver = scheduleGroupListSaver) {
         mutableStateOf<XmuScheduleGroup?>(null)
     }
-    // 点击课程后自动滚动到上方详情卡片（与课件页 reveal 同思路）。
-    // 课表页外层是普通 verticalScroll Column（非 LazyColumn），所有内容一次组合，
-    // BringIntoViewRequester 在这里有效（不会像 LazyColumn 那样对未组合节点静默失效）。
-    val courseDetailsBringIntoViewRequester = remember { BringIntoViewRequester() }
-    var courseRevealRequestId by remember { mutableIntStateOf(0) }
-
     fun selectCourseAndReveal(group: XmuScheduleGroup) {
         selectedCourse = group
-        courseRevealRequestId += 1
-    }
-
-    LaunchedEffect(courseRevealRequestId) {
-        if (courseRevealRequestId > 0 && selectedCourse != null) {
-            // 等详情卡片完成组合与布局后滚动到它；快速连点多个课程时旧协程被取消，
-            // 新协程以最新 requestId 重启，不会堆积。
-            kotlinx.coroutines.yield()
-            courseDetailsBringIntoViewRequester.bringIntoView()
-        }
     }
 
     val clampedWeek = selectedWeek.coerceIn(1, totalWeeks)
@@ -251,7 +240,14 @@ fun SchedulePage(
         }
     }
 
-    SectionCard("课表") {
+    selectedCourse?.let { group ->
+        ModalBottomSheet(onDismissRequest = { selectedCourse = null }, containerColor = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+                SelectionContainer { ScheduleCourseDetails(group, onClose = { selectedCourse = null }) }
+            }
+        }
+    }
+    SectionCard("课表", showTitle = false) {
         ScheduleAcademicHeader(
             calendar = calendar,
             academicWeek = academicWeek,
@@ -259,6 +255,8 @@ fun SchedulePage(
             today = today,
             loading = loading,
             onRefresh = onRefresh,
+            onExport = ::exportScheduleIcs,
+            canExport = !exporting && entries.isNotEmpty(),
         )
 
         ScheduleWeekNavigator(
@@ -272,33 +270,25 @@ fun SchedulePage(
             },
         )
 
-        ScheduleModeToggle(viewMode = viewMode, onModeChanged = { viewModeName = it.name })
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f)) {
+                ScheduleModeToggle(viewMode = viewMode, onModeChanged = { viewModeName = it.name })
+            }
+            TextButton(onClick = {
+                selectedWeek = defaultWeek
+                selectedDay = todayWeekday
+                viewModeName = ScheduleViewMode.AGENDA.name
+                selectedCourse = null
+            }, enabled = academicWeek.week != null) {
+                Text("今天")
+            }
+        }
 
         RefreshStateBanner(
             loading = loading,
             errorMessage = refreshError,
             hasData = entries.isNotEmpty(),
         )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End,
-        ) {
-            if (updatedAtMillis > 0L) {
-                Text(
-                    formatMonitorTime(updatedAtMillis),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
-            OutlinedButton(
-                onClick = ::exportScheduleIcs,
-                enabled = !exporting && entries.isNotEmpty(),
-            ) {
-                Text(if (exporting) "生成中…" else "导出日历")
-            }
-        }
 
         if (entries.isEmpty()) {
             // 空态三档之「未登录」：登出后清空缓存时给出登录引导而非"暂无数据"
@@ -308,23 +298,6 @@ fun SchedulePage(
                 EmptyState("暂无课表", "点击右上角刷新，从教务系统读取原始排课数据。")
             }
             return@SectionCard
-        }
-
-        ScheduleNextCourseCard(
-            groups = weekGroups,
-            selectedIsCurrent = selectedIsCurrent,
-            todayWeekday = todayWeekday,
-            nowValue = nowValue,
-            phase = academicWeek.phase,
-            onCourseSelected = ::selectCourseAndReveal,
-        )
-
-        selectedCourse?.let { group ->
-            ScheduleCourseDetails(
-                group = group,
-                onClose = { selectedCourse = null },
-                modifier = Modifier.bringIntoViewRequester(courseDetailsBringIntoViewRequester),
-            )
         }
 
         if (weekGroups.isEmpty()) {
@@ -354,6 +327,19 @@ fun SchedulePage(
                 onCourseSelected = ::selectCourseAndReveal,
             )
         }
+        if (viewMode == ScheduleViewMode.WEEK) ScheduleNextCourseCard(
+            groups = weekGroups,
+            selectedIsCurrent = selectedIsCurrent,
+            todayWeekday = todayWeekday,
+            nowValue = nowValue,
+            phase = academicWeek.phase,
+            onCourseSelected = ::selectCourseAndReveal,
+        )
+        Text(
+            listOfNotNull(calendar?.displayLabel, updatedAtMillis.takeIf { it > 0 }?.let(::formatMonitorTime)).joinToString(" · "),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 
@@ -379,10 +365,13 @@ private fun ScheduleAcademicHeader(
     today: LocalDate,
     loading: Boolean,
     onRefresh: () -> Unit,
+    onExport: () -> Unit,
+    canExport: Boolean,
 ) {
+    var actionsExpanded by remember { mutableStateOf(false) }
     val headline = when (academicWeek.phase) {
         XmuTermPhase.BEFORE -> beforeTermLabel(calendar)
-        XmuTermPhase.DURING -> if (academicWeek.week == selectedWeek) "第${selectedWeek}周 · 本周" else "第${selectedWeek}周"
+        XmuTermPhase.DURING -> if (academicWeek.week == selectedWeek) "第${selectedWeek}周 · 本周" else "第${selectedWeek}周 · 非本周"
         XmuTermPhase.AFTER -> "学期已结束"
         XmuTermPhase.UNKNOWN -> "第${selectedWeek}周"
     }
@@ -400,13 +389,8 @@ private fun ScheduleAcademicHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(headline, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = themePrimary())
-            Text(supporting, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                calendar?.displayLabel ?: "学期代码 ${calendar?.termCode.orEmpty().ifBlank { "待识别" }}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelMedium,
-            )
+            Text(headline, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = themePrimary())
+            Text(supporting, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         OutlinedButton(
             onClick = onRefresh,
@@ -416,6 +400,12 @@ private fun ScheduleAcademicHeader(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Text(if (loading) "…" else "刷新")
+        }
+        Box {
+            TextButton(onClick = { actionsExpanded = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.width(48.dp)) { Text("更多") }
+            DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                DropdownMenuItem(text = { Text("导出日历") }, enabled = canExport, onClick = { actionsExpanded = false; onExport() })
+            }
         }
     }
 }
@@ -427,79 +417,36 @@ private fun ScheduleWeekNavigator(
     currentWeek: Int?,
     onWeekSelected: (Int) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            OutlinedButton(
-                onClick = { onWeekSelected((selectedWeek - 1).coerceAtLeast(1)) },
-                enabled = selectedWeek > 1,
-                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            ) {
-                Text("‹", style = MaterialTheme.typography.titleLarge)
+    var choosingWeek by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton(
+            onClick = { onWeekSelected(selectedWeek - 1) }, enabled = selectedWeek > 1,
+            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        ) { Text("‹", style = MaterialTheme.typography.titleLarge) }
+        Box(Modifier.weight(1f)) {
+            TextButton(onClick = { choosingWeek = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("第${selectedWeek}周 ▾", fontWeight = FontWeight.Bold)
             }
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val first = (selectedWeek - 2).coerceAtLeast(1)
-                val last = (selectedWeek + 2).coerceAtMost(totalWeeks)
-                (first..last).forEach { week ->
-                    val active = week == selectedWeek
-                    Surface(
-                        color = if (active) themeSelectedChip() else MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = if (active) Color.White else themePrimary(),
-                        shape = RoundedCornerShape(999.dp),
-                        border = BorderStroke(1.dp, if (active) themeSelectedChip() else MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = 48.dp)
-                            .clickable { onWeekSelected(week) },
-                    ) {
-                        // Box 垂直居中：defaultMinSize(48dp) 撑高后文字必须居中而非顶部对齐
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) {
-                            Text(
-                                if (week == currentWeek) "第${week}周·本周" else "第${week}周",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 13.dp),
-                                maxLines = 1,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            )
-                        }
-                    }
+            DropdownMenu(expanded = choosingWeek, onDismissRequest = { choosingWeek = false }) {
+                (1..totalWeeks).forEach { week ->
+                    DropdownMenuItem(
+                        text = { Text(if (week == currentWeek) "第${week}周 · 本周" else "第${week}周") },
+                        onClick = { choosingWeek = false; onWeekSelected(week) },
+                    )
                 }
-            }
-            OutlinedButton(
-                onClick = { onWeekSelected((selectedWeek + 1).coerceAtMost(totalWeeks)) },
-                enabled = selectedWeek < totalWeeks,
-                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            ) {
-                Text("›", style = MaterialTheme.typography.titleLarge)
             }
         }
         if (currentWeek != null && selectedWeek != currentWeek) {
-            Text(
-                "回到第${currentWeek}周（本周）",
-                color = themePrimary(),
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .clickable { onWeekSelected(currentWeek) }
-                    .defaultMinSize(minHeight = 48.dp)
-                    .padding(vertical = 8.dp),
-            )
+            TextButton(onClick = { onWeekSelected(currentWeek) }) { Text("本周") }
         }
+        OutlinedButton(
+            onClick = { onWeekSelected(selectedWeek + 1) }, enabled = selectedWeek < totalWeeks,
+            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        ) { Text("›", style = MaterialTheme.typography.titleLarge) }
     }
 }
-
 @Composable
 private fun ScheduleModeToggle(
     viewMode: ScheduleViewMode,
@@ -512,14 +459,11 @@ private fun ScheduleModeToggle(
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        listOf(
-            ScheduleViewMode.WEEK to "周视图",
-            ScheduleViewMode.AGENDA to "日程",
-        ).forEach { (mode, label) ->
+        listOf(ScheduleViewMode.WEEK to "周课表", ScheduleViewMode.AGENDA to "日程").forEach { (mode, label) ->
             val selected = viewMode == mode
             Surface(
                 color = if (selected) themeSurface() else Color.Transparent,
-                // 胶囊选中态与 TopTabs 分段控件规范一致（全应用分段控件统一令牌）
+                // 与全应用使用一致的选中态配色。
                 shape = RoundedCornerShape(999.dp),
                 border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
                 modifier = Modifier
@@ -580,108 +524,6 @@ private fun ScheduleNextCourseCard(
 }
 
 @Composable
-internal fun ScheduleWeekGrid(
-    groups: List<XmuScheduleGroup>,
-    weekStart: LocalDate?,
-    selectedIsCurrent: Boolean,
-    todayWeekday: Int,
-    nowValue: Int,
-    onCourseSelected: (XmuScheduleGroup) -> Unit,
-) {
-    // 一天最多 11 节课，网格固定渲染到第 11 节
-    val maxSection = maxOf(11, groups.maxOfOrNull { it.endSection } ?: 11)
-    val scrollState = rememberScrollState()
-    val sectionHeight = 76.dp
-    val dayWidth = 100.dp
-    val sectionWidth = 56.dp
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(scrollState),
-    ) {
-        Row {
-            ScheduleGridHeaderCell("节次", sectionWidth, highlighted = false)
-            (1..7).forEach { weekday ->
-                val dateLabel = weekStart?.plusDays((weekday - 1).toLong())?.let { "${it.monthValue}/${it.dayOfMonth}" }.orEmpty()
-                ScheduleGridHeaderCell(
-                    text = "周${xmuWeekdayShort(weekday)}\n$dateLabel",
-                    width = dayWidth,
-                    highlighted = selectedIsCurrent && weekday == todayWeekday,
-                )
-            }
-        }
-        Box(
-            modifier = Modifier
-                .width(sectionWidth + dayWidth * 7)
-                .height(sectionHeight * maxSection),
-        ) {
-            Column {
-                (1..maxSection).forEach { section ->
-                    Row {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                            modifier = Modifier
-                                .width(sectionWidth)
-                                .height(sectionHeight),
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                            ) {
-                                Text("$section", fontWeight = FontWeight.Bold, color = themePrimary())
-                                Text("节", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        (1..7).forEach { weekday ->
-                            Surface(
-                                color = if (selectedIsCurrent && weekday == todayWeekday) themeTodayColumn() else MaterialTheme.colorScheme.surface,
-                                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                                modifier = Modifier
-                                    .width(dayWidth)
-                                    .height(sectionHeight),
-                            ) {}
-                        }
-                    }
-                }
-            }
-            groups.forEach { group ->
-                val safeStart = group.startSection.coerceIn(1, maxSection)
-                val safeEnd = group.endSection.coerceIn(safeStart, maxSection)
-                val isPast = selectedIsCurrent && group.weekday == todayWeekday && group.endTime < nowValue
-                val span = safeEnd - safeStart + 1
-                ScheduleGridCourseBlock(
-                    group = group,
-                    dimmed = isPast,
-                    inProgress = selectedIsCurrent &&
-                        group.weekday == todayWeekday &&
-                        group.startTime <= nowValue &&
-                        group.endTime >= nowValue,
-                    onClick = { onCourseSelected(group) },
-                    modifier = Modifier
-                        .offset(
-                            x = sectionWidth + dayWidth * (group.weekday.coerceIn(1, 7) - 1),
-                            y = sectionHeight * (safeStart - 1),
-                        )
-                        .width(dayWidth)
-                        // 高度自适应内容：格子不够高时课程块自动变高，保证课程名/地点完整显示（无省略号）。
-                        // 极端超长课程名可能盖住下方格子：zIndex 按开始节次分层，后开始的课程在上层，
-                        // 保证点击命中与文字优先可见（完整显示优先于紧凑，属用户要求的取舍）。
-                        .zIndex(safeStart.toFloat())
-                        .heightIn(min = sectionHeight * span)
-                        .padding(3.dp),
-                )
-            }
-        }
-    }
-    Text(
-        "左右滑动查看一周 · 点击课程查看完整信息",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
 internal fun ScheduleGridHeaderCell(text: String, width: androidx.compose.ui.unit.Dp, highlighted: Boolean) {
     Surface(
         color = if (highlighted) themeSelectedChip() else MaterialTheme.colorScheme.surfaceVariant,
@@ -689,7 +531,7 @@ internal fun ScheduleGridHeaderCell(text: String, width: androidx.compose.ui.uni
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier
             .width(width)
-            .height(54.dp),
+            .heightIn(min = 44.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
@@ -703,37 +545,37 @@ internal fun ScheduleGridHeaderCell(text: String, width: androidx.compose.ui.uni
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ScheduleGridCourseBlock(
     group: XmuScheduleGroup,
     dimmed: Boolean,
     inProgress: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    overlapping: Boolean = false,
 ) {
     val color = scheduleCourseColor(group.courseName)
     val dark = LocalXmuDarkTheme.current
     // 深色模式：课程色底加深、文字改浅，避免半透明色叠深底后深字不可读
-    val blockColor = if (dark) color.copy(alpha = 0.28f) else color.copy(alpha = 0.18f)
+    val blockColor = color.copy(alpha = if (dark) 0.28f else 0.18f).compositeOver(MaterialTheme.colorScheme.surface)
     // inProgress 在深色下也换深底浅字：浅绿底 + 近白字对比不足（审查 M2）
     val inProgressBlock = if (dark) Color(0xFF1E3A32) else Color(0xFFD9F5E7)
     val textColor = if (dark) Color(0xFFE3EBF3) else Color(0xFF16283A)
     val detailColor = if (dark) Color(0xFF9FB0C0) else Color(0xFF425B72)
     Surface(
         color = if (inProgress) inProgressBlock else blockColor,
-        // 5dp 小圆角是密集网格的有意取舍（2026-08-28 拍板保持现状）：单格节次高度有限，
-        // 大圆角（12dp+）会在小格子/超长课程块上压缩可用文字区并弱化网格对齐感；
-        // 与卡片区（页级容器 12dp）分层——块级元素用更小圆角保持紧凑。
-        shape = RoundedCornerShape(5.dp),
+        shape = RoundedCornerShape(10.dp),
         border = BorderStroke(if (inProgress) 2.dp else 1.dp, if (inProgress) AppSuccess else color.copy(alpha = 0.55f)),
         modifier = modifier
             .alpha(if (dimmed) 0.48f else 1f)
             .clickable(onClick = onClick),
     ) {
-        Column(modifier = Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            // 课程名完整显示，不省略：内容多时块随 heightIn(min) 自适应变高
+        Column(modifier = Modifier.padding(7.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (overlapping) Text("时间重叠", style = MaterialTheme.typography.labelSmall, color = themeWarning())
+            // 完整显示文字，网格按实际换行测量后，统一全部节次的行高。
             Text(
                 group.courseName,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = textColor,
             )
@@ -742,10 +584,15 @@ internal fun ScheduleGridCourseBlock(
                 style = MaterialTheme.typography.labelSmall,
                 color = detailColor,
             )
+            FlowRow {
+                Text(formatXmuTime(group.startTime), style = MaterialTheme.typography.labelSmall, color = detailColor)
+                Text("–${formatXmuTime(group.endTime)}", style = MaterialTheme.typography.labelSmall, color = detailColor)
+            }
             Text(
                 scheduleLocationSummary(group),
-                style = MaterialTheme.typography.labelSmall,
-                color = detailColor,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = textColor,
             )
         }
     }
@@ -888,7 +735,7 @@ private fun ScheduleCourseDetails(
                 )
             }
         } else {
-            Text("教室：${group.rooms.joinToString("、").ifBlank { "未标注" }}")
+            Text("教室：\n${scheduleLocationSummary(group)}")
             Text("教师：${group.teachers.joinToString("、").ifBlank { "未标注" }}")
         }
     }
@@ -908,11 +755,8 @@ internal fun scheduleCourseColor(courseName: String): Color {
     return SCHEDULE_COLOR_PALETTE[index]
 }
 
-internal fun scheduleLocationSummary(group: XmuScheduleGroup): String = when {
-    group.rooms.isEmpty() -> "教室未标注"
-    group.rooms.size == 1 -> group.rooms.first()
-    else -> "${group.rooms.first()} 等${group.rooms.size}个教室"
-}
+internal fun scheduleLocationSummary(group: XmuScheduleGroup): String =
+    group.rooms.map { it.trim() }.filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) }.distinct().joinToString("\n").ifBlank { "教室未标注" }
 
 internal fun weekdayName(weekday: Int): String = when (weekday) {
     1 -> "星期一"

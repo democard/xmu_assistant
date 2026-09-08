@@ -11,8 +11,8 @@ android {
         applicationId = "com.xmu.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.5.0"
+        versionCode = 17
+        versionName = "1.6.1"
         buildConfigField("boolean", "NETWORK_METRICS", "false")
     }
 
@@ -33,6 +33,15 @@ android {
     packaging {
         resources {
             excludes += setOf("META-INF/NOTICE.md", "META-INF/LICENSE.md")
+            // R8 removes these unused post-quantum algorithms, but retains their large
+            // parameter resources. PDF text extraction and our TLS/storage do not use them.
+            excludes += setOf(
+                "org/bouncycastle/pqc/crypto/picnic/lowmc.properties",
+                "org/bouncycastle/pqc/crypto/sike/p434.properties",
+                "org/bouncycastle/pqc/crypto/sike/p503.properties",
+                "org/bouncycastle/pqc/crypto/sike/p610.properties",
+                "org/bouncycastle/pqc/crypto/sike/p751.properties",
+            )
         }
     }
 
@@ -80,6 +89,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.pdfbox.android)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)

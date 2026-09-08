@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +16,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
@@ -24,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -31,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
@@ -258,12 +265,21 @@ internal fun MainScreen(
     }
 
     XmuMobileTheme(themeMode = themeMode) {
+        val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        val dark = LocalXmuDarkTheme.current
+        DisposableEffect(activity, dark) {
+            val bars = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
+            activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+            onDispose { }
+        }
+        AppBackNavigation(page, onSelected = onModuleEntered)
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
-                    .safeDrawingPadding(),
+                    .safeDrawingPadding()
+                    .imePadding(),
             ) {
                 Column(
                     modifier = Modifier
@@ -271,21 +287,16 @@ internal fun MainScreen(
                         .widthIn(max = 760.dp)
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    BrandHeader(loggedIn = loggedIn)
-                    TopTabs(
-                        selected = page,
-                        notificationSettings = notificationSettings,
-                        downloadingCount = downloadingCount,
-                        onSelected = onModuleEntered,
-                    )
+                    BrandHeader(loggedIn = loggedIn, page = page)
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
                     ) {
+                        PageStateHost(page = page, owner = if (loggedIn) username else "") {
                         when (page) {
                             "签到情况" -> RollcallStatusPage(
                                 events = rollcall.events,
@@ -312,7 +323,10 @@ internal fun MainScreen(
                                 updatedAtMillis = scores.updatedAtMillis,
                                 onRefresh = { scores.refresh() },
                                 onShareScore = { scores.shareLongImage() },
+                                rankLabel = scores.ranking.label,
+                                onOpenRank = { onModuleEntered("专业排名") },
                             )
+                            "专业排名" -> RankPage(scores.ranking) { onModuleEntered("成绩") }
                             "考试安排" -> ExamPage(
                                 summary = exam.summary,
                                 validTerms = exam.validTerms,
@@ -362,6 +376,7 @@ internal fun MainScreen(
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     when (page) {
+                                        "更多" -> MorePage(notificationSettings, downloadingCount, onSelected = onModuleEntered)
                                         "课表" -> SchedulePage(
                                             entries = schedule.entries,
                                             termCode = schedule.termCode,
@@ -485,6 +500,7 @@ internal fun MainScreen(
                                             username = username,
                                             password = password,
                                             loggedIn = loggedIn,
+                                            monitorRunning = monitorRunning,
                                             accountTransitionInProgress = accountTransitionInProgress,
                                             monitorTransitionInProgress = monitor.monitorTransitionInProgress,
                                             monitorStatus = monitorStatusText(monitorRunning, monitorConsecutiveFailures),
@@ -519,10 +535,12 @@ internal fun MainScreen(
                                                 show(if (enabled) "已开启自动签到" else "已关闭自动签到")
                                             },
                                             onOpenBackgroundSettings = onOpenBackgroundSettings,
+                                            onNavigate = onModuleEntered,
                                         )
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 // 底部提示收敛为单条：原先三条 ToastBar（成绩刷新中 / busy / toast）会同时渲染，
@@ -544,6 +562,12 @@ internal fun MainScreen(
                     else -> ToastSeverity.INFO
                 }
                 if (activeToast.isNotBlank()) ToastBar(activeToast, severity = activeSeverity)
+                if (!keyboardVisible) AppNavigationBar(
+                    selected = page,
+                    notificationSettings = notificationSettings,
+                    downloadingCount = downloadingCount,
+                    onSelected = onModuleEntered,
+                )
             }
 
             if (widgetGuideOpen) {

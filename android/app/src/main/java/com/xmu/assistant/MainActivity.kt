@@ -369,6 +369,8 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
             setScoreCookieHeader = { settings.scoreCookieHeader = it },
             setScoreRecordsJson = { settings.scoreRecordsJson = it },
             setScoreUpdatedAtMillisPref = { settings.scoreUpdatedAtMillis = it },
+            readRankCache = { settings.rankCacheJson },
+            writeRankCache = { json, active -> settings.storeRankCache(json, active) },
             scoreRecordsInitial = xmuScoreRecordsFromJson(settings.scoreRecordsJson),
             scoreUpdatedAtMillisInitial = settings.scoreUpdatedAtMillis,
         )

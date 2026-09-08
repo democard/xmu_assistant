@@ -3,7 +3,7 @@
          文字换浅色系，accent 提亮保证对比度（体检报告 §6-UX②） -->
     <color name="widget_background">#12171D</color>
     <color name="widget_stroke">#22303F</color>
-    <color name="widget_accent">#2DD4BF</color>
+    <color name="widget_accent">#6FA8DC</color>
     <color name="widget_primary_text">#E3EBF3</color>
     <color name="widget_secondary_text">#9FB0C0</color>
 </resources>

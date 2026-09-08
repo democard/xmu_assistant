@@ -6,6 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UiDerivedStateTest {
+    @Test fun `course search combines words without discarding term filters`() {
+        val courses = listOf(
+            CourseSummary("1", "Data Structures", "2025-2026 第一学期"),
+            CourseSummary("2", "Data Science", "2025-2026 第二学期"),
+            CourseSummary("3", "高等数学", "2025-2026 第一学期"),
+        )
+        assertEquals(listOf("1"), filterCourses(courses, "2025-2026", "第一学期", "  DATA  2025 ").map { it.id })
+        assertEquals(listOf("3"), filterCourses(courses, "全部", "全部", "高等数学").map { it.id })
+        assertEquals(courses, filterCourses(courses, "全部", "全部", "   "))
+        assertEquals(emptyList<CourseSummary>(), filterCourses(courses, "全部", "全部", "未开设课程"))
+    }
     @Test
     fun `course years prepends all and retains distinct parsed years`() {
         val courses = listOf(

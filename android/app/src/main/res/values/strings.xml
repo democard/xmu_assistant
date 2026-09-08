@@ -3,7 +3,7 @@
     <string name="schedule_widget_description">显示今日课程安排</string>
     <string name="schedule_widget_default_title">今日课程</string>
     <string name="schedule_widget_empty">今天没有课</string>
-    <string name="schedule_widget_no_data">暂无课表，打开 App 刷新后自动更新</string>
+    <string name="schedule_widget_open">点击查看完整课表</string>
 
     <string name="shortcut_rollcall_short">签到情况</string>
     <string name="shortcut_rollcall_long">查看签到情况</string>
@@ -70,4 +70,5 @@
     <string name="courseware_page_empty_body">如果平台暂时没有返回课件，请稍后再试。</string>
     <!-- 快捷设置磁贴名称（AndroidManifest MonitorControlTileService label） -->
     <string name="tile_service_label">签到监控</string>
+    <string name="schedule_widget_overflow">另有 %1$d 门课 · 点击查看</string>
 </resources>

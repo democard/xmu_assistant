@@ -13,11 +13,16 @@ fun filterCourses(
     courses: List<CourseSummary>,
     selectedYear: String,
     selectedSemester: String,
-): List<CourseSummary> = courses.filter { course ->
+    query: String = "",
+): List<CourseSummary> {
+    val words = query.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    return courses.filter { course ->
     // 与 courseYears 用同一归一化函数比较：原始学期名含空格（"2025 - 2026"）时
     // contains("2025-2026") 会静默筛掉全部课程
     (selectedYear == "全部" || courseYear(course.term) == selectedYear) &&
-        (selectedSemester == "全部" || courseSemesterLabel(course.semesterCode, course.term) == selectedSemester)
+        (selectedSemester == "全部" || courseSemesterLabel(course.semesterCode, course.term) == selectedSemester) &&
+        words.all { word -> course.displayName.contains(word, ignoreCase = true) }
+    }
 }
 
 fun coursewareCounts(items: List<CoursewareUiItem>): CoursewareCounts {

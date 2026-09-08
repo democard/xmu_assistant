@@ -20,3 +20,7 @@
 
 # Kotlin Metadata 保留（Compose/反射元数据）
 -keepclassmembers class kotlin.Metadata { *; }
+
+# PDFBox's optional JPEG2000 renderer is unused: ranking reads the PDF text layer only.
+# Image-only certificates remain exportable even when no rank can be extracted.
+-dontwarn com.gemalto.jp2.JP2Decoder

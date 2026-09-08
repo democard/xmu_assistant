@@ -3,6 +3,7 @@ package com.xmu.assistant
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 
 /**
  * Widget 专用的「今日课程摘要」缓存。
@@ -33,9 +34,21 @@ data class ScheduleWidgetSnapshot(
 object ScheduleWidgetData {
     private const val PREFS = "schedule_widget"
     private const val KEY_JSON = "today_summary"
+    private const val KEY_DAYS = "upcoming_summaries"
 
     fun save(context: Context, snapshot: ScheduleWidgetSnapshot) {
-        val json = JSONObject()
+        saveUpcoming(context, listOf(snapshot))
+    }
+
+    fun saveUpcoming(context: Context, snapshots: List<ScheduleWidgetSnapshot>) {
+        if (snapshots.isEmpty()) return clear(context)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_JSON, encode(snapshots.first()).toString())
+            .putString(KEY_DAYS, JSONArray(snapshots.map(::encode)).toString())
+            .apply()
+    }
+
+    private fun encode(snapshot: ScheduleWidgetSnapshot): JSONObject = JSONObject()
             .put("weekday", snapshot.weekday)
             .put("week", snapshot.week)
             .put("termCode", snapshot.termCode)
@@ -52,17 +65,21 @@ object ScheduleWidgetData {
                         .put("location", course.location)
                 }),
             )
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_JSON, json.toString())
-            .apply()
-    }
 
-    fun load(context: Context): ScheduleWidgetSnapshot? = runCatching {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_JSON, null)
+    fun load(context: Context, today: LocalDate = LocalDate.now()): ScheduleWidgetSnapshot? = runCatching {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // A failed or delayed network refresh must not make a known timetable disappear at midnight.
+        val days = runCatching { JSONArray(preferences.getString(KEY_DAYS, "[]")) }.getOrDefault(JSONArray())
+        for (index in 0 until days.length()) {
+            val day = days.optJSONObject(index) ?: continue
+            if (day.optLong("savedEpochDay") == today.toEpochDay()) return decode(day)
+        }
+        val raw = preferences.getString(KEY_JSON, null)
             ?: return null
-        val root = JSONObject(raw)
+        decode(JSONObject(raw))
+    }.getOrNull()
+
+    private fun decode(root: JSONObject): ScheduleWidgetSnapshot {
         val rows = root.optJSONArray("courses") ?: JSONArray()
         val courses = ArrayList<ScheduleWidgetCourse>(rows.length())
         for (index in 0 until rows.length()) {
@@ -76,7 +93,7 @@ object ScheduleWidgetData {
                 location = row.optString("location"),
             )
         }
-        ScheduleWidgetSnapshot(
+        return ScheduleWidgetSnapshot(
             weekday = root.optInt("weekday"),
             week = root.optInt("week"),
             termCode = root.optString("termCode"),
@@ -84,12 +101,13 @@ object ScheduleWidgetData {
             // 旧快照无该字段：optLong 默认 0，视为「未知日期」→ Widget 提示刷新
             savedEpochDay = root.optLong("savedEpochDay", 0L),
         )
-    }.getOrNull()
+    }
 
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .remove(KEY_JSON)
+            .remove(KEY_DAYS)
             .apply()
     }
 }

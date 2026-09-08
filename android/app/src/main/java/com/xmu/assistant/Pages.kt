@@ -47,96 +47,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 @Composable
-fun HomePage(
-    username: String,
-    password: String,
-    loggedIn: Boolean,
-    accountTransitionInProgress: Boolean,
-    monitorTransitionInProgress: Boolean,
-    monitorStatus: String,
-    monitorLastCheck: String,
-    monitorFailureCount: Int,
-    monitorLastError: String,
-    autoEnabled: Boolean,
-    recentEvent: RollcallEvent?,
-    onUsername: (String) -> Unit,
-    onPassword: (String) -> Unit,
-    onLogin: () -> Unit,
-    onLogout: () -> Unit,
-    onStartMonitor: () -> Unit,
-    onStopMonitor: () -> Unit,
-    onAutoChanged: (Boolean) -> Unit,
-    onOpenBackgroundSettings: () -> Unit,
-) {
-    SectionCard("首页") {
-        Text("账号登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        OutlinedTextField(
-            value = username,
-            onValueChange = onUsername,
-            label = { Text("学号") },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !accountTransitionInProgress,
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = password,
-            onValueChange = onPassword,
-            label = { Text("密码") },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !accountTransitionInProgress,
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onLogin,
-                enabled = !loggedIn && !accountTransitionInProgress,
-                modifier = Modifier.weight(1f),
-            ) { Text("登录") }
-            OutlinedButton(
-                onClick = onLogout,
-                enabled = loggedIn && !accountTransitionInProgress,
-                modifier = Modifier.weight(1f),
-            ) { Text("退出登录") }
-        }
-    }
-    StatusStack(
-        account = if (loggedIn) "已登录" else "未登录",
-        monitor = monitorStatus,
-        monitorLastCheck = monitorLastCheck,
-        monitorFailureCount = monitorFailureCount,
-        monitorLastError = monitorLastError,
-        auto = if (autoEnabled) "已开启" else "未开启",
-        recent = recentEvent?.let { "${it.courseTitle} / ${it.type} / ${it.status}" } ?: "-",
-    )
-    SectionCard("快速操作") {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onStartMonitor,
-                enabled = !monitorTransitionInProgress && !accountTransitionInProgress,
-                modifier = Modifier.weight(1f),
-            ) { Text("启动监控") }
-            OutlinedButton(
-                onClick = onStopMonitor,
-                enabled = !monitorTransitionInProgress && !accountTransitionInProgress,
-                modifier = Modifier.weight(1f),
-            ) { Text("暂停监控") }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = autoEnabled, onCheckedChange = onAutoChanged)
-            Spacer(Modifier.width(8.dp))
-            Text("开启自动签到", fontWeight = FontWeight.Bold)
-        }
-    }
-    SectionCard("后台运行建议") {
-        Text("为了让手机锁屏后仍能提醒，请允许通知，并在系统设置里把 xmu助手 的电池策略设为不限制或允许后台运行。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedButton(onClick = onOpenBackgroundSettings, modifier = Modifier.fillMaxWidth()) {
-            Text("打开系统设置")
-        }
-    }
-}
-
-@Composable
 fun RollcallStatusPage(
     events: List<RollcallEvent>,
     openedEventId: String,
@@ -237,6 +147,8 @@ fun ScorePage(
     updatedAtMillis: Long,
     onRefresh: () -> Unit,
     onShareScore: () -> Unit,
+    rankLabel: String = "尚未获取",
+    onOpenRank: (() -> Unit)? = null,
 ) {
     val summary = remember(records) { xmuScoreSummary(records) }
     val recordsByTerm = remember(records) {
@@ -315,6 +227,7 @@ fun ScorePage(
             }
         }
         if (records.isEmpty()) {
+            if (onOpenRank != null) item { RankEntry(rankLabel, onOpenRank) }
             item {
                 // 空态三档之「未登录」：登出后成绩清空时给出登录引导而非"暂无成绩"
                 if (!loggedIn) {
@@ -327,6 +240,7 @@ fun ScorePage(
             item {
                 ScoreSummaryPanel(summary)
             }
+            if (onOpenRank != null) item { RankEntry(rankLabel, onOpenRank) }
             recordsByTerm.forEach { (term, termRecords) ->
                 item(key = "term:$term") {
                     TermHeader(term, termRecords.size)

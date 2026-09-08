@@ -4,8 +4,8 @@
     <!-- 桌面小卡片配色（体检报告 §6-UX②）：布局/背景一律引用资源，
          夜间变体见 values-night/colors.xml -->
     <color name="widget_background">#FFFFFF</color>
-    <color name="widget_stroke">#E0E8E6</color>
-    <color name="widget_accent">#0F766E</color>
-    <color name="widget_primary_text">#17312E</color>
-    <color name="widget_secondary_text">#6B7D79</color>
+    <color name="widget_stroke">#DDE6EE</color>
+    <color name="widget_accent">#0B4F8A</color>
+    <color name="widget_primary_text">#18324F</color>
+    <color name="widget_secondary_text">#55708A</color>
 </resources>

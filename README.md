@@ -98,6 +98,14 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
 
+### v1.6.1 更新
+
+- 成绩页新增独立专业排名页：用户手动申请绩点计算、读取本次证明排名，成绩变化仅标记待更新；中断后继续查询不重复申请，原始 PDF 支持导出与本地清理。
+- 优化首页与底部导航；课表固定 11 节、节次对齐，多个教室逐行显示；桌面小组件沿用紧凑布局并适配不同尺寸。
+- 移除顶部标语并对齐标题；精简未使用的算法资源，Android 安装包约 3.95 MB。501 项 Android 测试通过。
+- 排名接口依据接口文档实现，尚未使用真实校园账号联调。Windows 端沿用 v1.5.0，无功能改动。
+- 下载：[v1.6.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.1)。PDF 文字读取使用 [PDFBox Android](https://github.com/tomroush/pdfbox-android)（Apache-2.0）。
+
 ### 签到监控（移动端）
 
 - 前台服务 `RollcallMonitorService` 常驻轮询，检测到签到后推送本地通知（含课程、类型、剩余时间、状态）；

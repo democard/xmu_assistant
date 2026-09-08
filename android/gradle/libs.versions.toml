@@ -1,6 +1,7 @@
 # 版本目录：所有依赖/插件版本集中管理（xmu助手）
 # 修改版本只动这里；依赖引用见 app/build.gradle.kts
 [versions]
+pdfbox = "2.0.27.0"
 agp = "8.5.2"
 kotlin = "1.9.24"
 composeCompiler = "1.5.14"
@@ -17,6 +18,7 @@ robolectric = "4.14.1"
 work = "2.9.1"
 
 [libraries]
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfbox" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "composeUi" }

@@ -45,6 +45,8 @@ internal class ScoreSectionState(
     private val setScoreCookieHeader: (String) -> Unit,
     private val setScoreRecordsJson: (String) -> Unit,
     private val setScoreUpdatedAtMillisPref: (Long) -> Unit,
+    private val readRankCache: () -> String = { "" },
+    private val writeRankCache: (String, () -> Boolean) -> Boolean = { _, _ -> true },
     /** 客户端工厂注入（E2 行为测试用 fake transport；默认与原内联构造逐字等价）。 */
     private val createScoreClient: (String, String, String, () -> Boolean) -> XmuScoreAutoQueryClient =
         { accountUsername, accountPassword, cookie, mayRelogin ->
@@ -53,6 +55,11 @@ internal class ScoreSectionState(
     scoreRecordsInitial: List<XmuScoreRecord> = emptyList(),
     scoreUpdatedAtMillisInitial: Long = 0L,
 ) {
+    val ranking = RankSectionState(activity, requestGate, sessionEpoch, sessionOwner, scope,
+        loggedIn, cookieHeader, username, password, accountTransitionInProgress,
+        scoreCookieHeader, setScoreCookieHeader, readRankCache, writeRankCache, show,
+        scoreRecordsInitial)
+
     /** 成绩记录（内存可观察；持久化在 settings，登出/换号时清）。 */
     var scoreRecords by mutableStateOf(scoreRecordsInitial)
         private set
@@ -126,6 +133,7 @@ internal class ScoreSectionState(
                             setScoreUpdatedAtMillisPref(updatedAt)
                         }
                     }
+                    ranking.onScoresChanged(records, fetchResult.failedTermNames.isEmpty())
                     scoreRecords = records
                     updatedAtMillis = updatedAt
                     show(
@@ -184,11 +192,13 @@ internal class ScoreSectionState(
 
     /** 会话失效时仅复位加载中标志（保留已展示数据，供 invalidateMainSessionUi 使用）。 */
     fun clearLoadingState() {
+        ranking.clearLoadingState()
         loading = false
     }
 
     /** 登出/换号清理：清内存状态（持久化由调用方一并清理，与拆分前一致）。 */
     fun clearAll() {
+        ranking.clearAll()
         scoreRecords = emptyList()
         loading = false
         refreshError = ""

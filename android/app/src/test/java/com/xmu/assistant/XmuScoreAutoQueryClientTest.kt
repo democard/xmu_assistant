@@ -12,6 +12,18 @@ import org.junit.Before
 import org.junit.Test
 
 class XmuScoreAutoQueryClientTest {
+    @Test
+    fun `first login is never cooled down by the monotonic clock origin`() {
+        listOf(-100L, 0L, 1_000_000L).forEach { now ->
+            assertFalse(XmuScoreAutoQueryClient.loginCooldownActive(null, now))
+        }
+        val cooldown = TimeUnit.MINUTES.toNanos(30)
+        assertTrue(XmuScoreAutoQueryClient.loginCooldownActive(0L, 1L))
+        assertTrue(XmuScoreAutoQueryClient.loginCooldownActive(-100L, -99L))
+        assertTrue(XmuScoreAutoQueryClient.loginCooldownActive(0L, cooldown - 1))
+        assertFalse(XmuScoreAutoQueryClient.loginCooldownActive(0L, cooldown))
+    }
+
     @Before
     fun resetLoginCooldown() {
         // 登录冷却是进程级状态（companion），JVM 单测用例间共享，必须重置防污染

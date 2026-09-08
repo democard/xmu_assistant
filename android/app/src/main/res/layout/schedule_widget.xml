@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -7,12 +8,13 @@
     android:background="@drawable/schedule_widget_bg">
 
     <LinearLayout
+        android:id="@+id/widget_header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <TextView
+        <TextView android:includeFontPadding="false"
             android:id="@+id/widget_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -24,7 +26,7 @@
             android:maxLines="1"
             android:ellipsize="end" />
 
-        <TextView
+        <TextView android:includeFontPadding="false"
             android:id="@+id/widget_week"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -33,7 +35,7 @@
             android:maxLines="1" />
     </LinearLayout>
 
-    <TextView
+    <TextView android:includeFontPadding="false"
         android:id="@+id/widget_empty"
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -41,7 +43,8 @@
         android:gravity="center"
         android:text="@string/schedule_widget_empty"
         android:textColor="@color/widget_secondary_text"
-        android:textSize="13sp" />
+        android:textSize="13sp"
+        android:lineSpacingExtra="5dp" />
 
     <LinearLayout
         android:id="@+id/widget_courses"
@@ -49,5 +52,17 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:orientation="vertical" />
+
+    <TextView android:includeFontPadding="false"
+        android:id="@+id/widget_footer"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/schedule_widget_open"
+        android:textColor="@color/widget_secondary_text"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:ellipsize="end" />
 
 </LinearLayout>
