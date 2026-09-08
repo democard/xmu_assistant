@@ -6,6 +6,10 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
+**当前版本：Android v1.6.1（3.95 MB） · Windows v1.5.0**
+
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.1)
+
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
 </div>
@@ -46,6 +50,8 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 | 课表（教务系统全学期排课，周 / 日程视图） | — | ✅ |
 | 桌面小卡片（今日课程 Widget） | — | ✅ |
 | 成绩统计（GPA / 加权 / 学分）与长图分享 | — | ✅ |
+| 专业排名（手动申请、成绩变化标记待更新） | — | ✅ |
+| 绩点证明 PDF 导出与本地清理 | — | ✅ |
 | 考试安排查询与考前提醒（精确闹钟 + 全屏强提醒） | — | ✅ |
 | 深链接直达（`xmurollcall://`） | — | ✅ |
 | 快捷设置磁贴一键开关监控 | — | ✅ |
@@ -115,16 +121,26 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 - **快捷设置磁贴**：通知栏快捷面板添加「签到监控」磁贴，不打开 App 一键启动 / 暂停监控；未登录时置灰并引导去首页；
 - **桌面图标快捷方式**：长按 App 图标可直达「签到情况 / 课表 / 成绩」三个高频页面。
 
-### 教务三件套（本端独立实现）
+### 课表、成绩与考试
 
-- **课表**：从教务系统读取全学期排课，周 / 日程双视图；格子显示课程名、节次、当周教室，点击查看老师、完整周次与平行教学班详情；支持**导出日历（.ics）**，单双周自动隔周重复、断档周次不错排，系统日历/邮箱均可导入；
+- **课表**：每周 7 天、每天固定 11 节，支持周 / 日程视图；全表节次等高，课程块按实际节次对齐，多个教室逐行完整列出；文字较多时统一增高并可滚动查看。点击查看老师、完整周次与平行教学班详情；支持**导出日历（.ics）**，单双周自动隔周重复、断档周次不错排；
 - **成绩**：百分制成绩 + 统计面板（平均绩点 / 加权绩点 / 平均分数 / 加权分数 / 已修总学分），一键渲染成**竖版长图**分享；
 - **考试安排**：当前学期 + 历史学期查询，未排考课程识别；支持下拉刷新与首载骨架占位；每场未完成考试在开考前指定分钟数触发**精确闹钟提醒**（可选锁屏全屏强提醒，Android 13+ 自动引导通知授权）。
 
-### 桌面小卡片（Widget）
+### 专业排名与绩点证明
 
-- 桌面「今日课程」卡片：当天课程、时间、地点一目了然；
-- 策略页一键添加、可开关；卡片只读取非敏感摘要，不含学号 / 密码 / Cookie。
+- 从「成绩」进入独立的「专业排名」页，点击「获取专业排名」才提交新的绩点计算申请，进入页面不会自动申请。
+- 成绩新增或更正后，旧排名标记为「待更新」，是否重新获取由用户决定；页面以红字提醒不要频繁申请。
+- 申请响应丢失或短时等待未完成时，可「继续查询结果」，不会重复提交；查询失败保留已有排名与日期。
+- 「导出绩点证明」通过系统文件选择器保存原始 PDF。「清理 PDF」仅删除应用内证明，保留排名与日期，不影响已经导出的文件。
+- 排名以本次计算范围和时间为准。该接口依据文档接入，尚未使用真实校园账号联调，学校接口或证明模板变化时可能需要适配。
+
+### 页面导航与桌面小组件（Widget）
+
+- 底部固定「首页 / 课表 / 成绩 / 签到 / 更多」，课件、考试、通知和策略集中在更多页；顶部标题与图标、登录状态对齐。
+- 桌面「今日课程」小组件默认申请 4×1，支持缩窄和拉高；宽尺寸分列显示时间、课程和教室，窄尺寸使用两行摘要，优先展示尚未结束的课程。
+- 根据可用尺寸安排课程数量；缓存未来 14 天课程摘要，跨日读取本地排课，超出缓存范围提示刷新。支持浅色、深色及点击打开课表。
+- 策略页一键添加、可开关；组件只读取非敏感摘要，不含学号 / 密码 / Cookie。具体尺寸和刷新时机受系统及桌面启动器影响。
 
 ### 内置教程
 
@@ -154,6 +170,13 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 构建产物发布在 GitHub Releases（仓库内 `release/` 仅保留 SHA256SUMS.txt 校验文件）：
 
+| 平台 | 当前版本 | 下载 |
+| --- | --- | --- |
+| Android 8.0 及以上 | 1.6.1，约 3.95 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant-release.apk) |
+| Windows | 沿用 1.5.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant.exe) |
+
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+
 ```text
 GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.5.0，DPAPI 凭据加密）
                                               #   复现构建：pyinstaller xmu-assistant.spec（或 scripts/build_dashboard_exe.bat）
@@ -164,7 +187,7 @@ release/SHA256SUMS.txt                        # 当前产物 SHA-256 校验值�
 - **Windows**：下载 `xmu-assistant.exe` 双击运行。首次登录后在「首页」输入学号密码，程序自动恢复 / 保存 TronClass Cookie、刷新签到情况、读取课件列表并预加载默认课程课件；账号等敏感信息经 DPAPI 加密落盘。
 - **Android**：通过 ADB 或系统安装器安装 `xmu-assistant-release.apk`；系统通知 / 电池策略 / 小卡片按内置教程配置即可。
 
-> 仅需要 Windows 系统 + 可访问厦大统一认证与 LNT/TronClass 的网络环境。
+> 根据所选客户端使用 Windows 或 Android；校园功能需要可访问厦大统一认证、LNT/TronClass 和教务系统的网络环境。
 
 ### 从源码运行（二次开发）
 
