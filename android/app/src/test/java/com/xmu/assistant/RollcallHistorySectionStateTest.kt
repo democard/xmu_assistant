@@ -128,7 +128,7 @@ class RollcallHistorySectionStateTest {
         val transport = StubTransport(
             coursesPayload = """{"courses":[{"id":"c1","name":"课程一","semester":{"code":"2026-1"}}]}""",
             rollcallsPayload = """{"rollcalls":[{"id":"fresh-1","rollcall_time":"2026-07-01T08:00:00","is_radar":true}]}""",
-            detailPayload = """{"student_rollcalls":[{"user_no":"u1","updated_at":"2026-07-01T08:05:00"}]}""",
+            detailPayload = """{"student_rollcalls":[{"user_no":"u1","status":"signed","updated_at":"2026-07-01T08:05:00"}]}""",
         )
         val (state, _, _, _, _) = newHarness(transport)
         state.refreshHistory()

@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.6.1（3.95 MB） · Windows v1.5.0**
+**当前版本：Android v1.6.3（3.95 MB） · Windows v1.5.0**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.1)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.3/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.3/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.3)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -104,6 +104,11 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
 
+### v1.6.3 更新
+
+- 签到历史状态判定修正：本人状态仅凭明确状态词判定（已签 / 未签 / 缺勤），不再凭更新时间／提交时间误判为已签；历史明细未回时仅作展示兜底，原始状态与缓存保持不变。
+- 下载：[v1.6.3 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.3)。
+
 ### v1.6.1 更新
 
 - 成绩页新增独立专业排名页：用户手动申请绩点计算、读取本次证明排名，成绩变化仅标记待更新；中断后继续查询不重复申请，原始 PDF 支持导出与本地清理。
@@ -172,10 +177,10 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.6.1，约 3.95 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant-release.apk) |
-| Windows | 沿用 1.5.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/xmu-assistant.exe) |
+| Android 8.0 及以上 | 1.6.3，约 3.95 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.3/xmu-assistant-release.apk) |
+| Windows | 沿用 1.5.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.3/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.1/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.3/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
 GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.5.0，DPAPI 凭据加密）

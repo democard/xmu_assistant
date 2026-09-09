@@ -31,6 +31,41 @@ class RollcallHistoryClientTest {
     )
 
     @Test
+    fun `timestamps never override absence or prove attendance`() {
+        val cases = listOf(
+            "\"status\":\"absent\"" to "缺勤",
+            "\"status\":\"缺勤\"" to "缺勤",
+            "\"status\":\"not_signed\"" to "未签",
+            "\"status\":\"signed\"" to STATUS_SIGNED,
+            "\"status\":\"on_call_fine\"" to STATUS_SIGNED,
+            "\"status\":\"present\"" to STATUS_SIGNED,
+            "\"status\":\"missed\"" to "缺勤",
+            "\"status\":\"unsigned\"" to "未签",
+            "\"status\":\"success\"" to STATUS_UNKNOWN,
+            "\"status\":\"refine\"" to STATUS_UNKNOWN,
+            "\"status\":\"已到\"" to STATUS_SIGNED,
+            "\"status\":\"pending\"" to STATUS_UNKNOWN,
+            "\"status\":null,\"rollcall_status\":\"absent\"" to "缺勤",
+            "\"status\":null" to STATUS_UNKNOWN,
+        )
+        for ((fields, expected) in cases) {
+            val transport = FakeHistoryTransport(
+                courses = listOf(course("c1", "数据结构", "2026-1")),
+                rollcallsByCourse = mapOf("c1" to listOf(rollcallJson("r1", "2026-09-09T07:57:00"))),
+                detailsByRollcallId = mapOf("r1" to """{"student_rollcalls":[{"user_no":"u1",$fields,"updated_at":"2026-09-09T08:00:00","answered_at":"2026-09-09T07:58:00","submitted_at":"2026-09-09T07:58:00"}]}"""),
+            )
+            assertEquals(fields, expected, client(transport).fetchRecentRollcalls("u1", fakeCourses()).single().ownStatus)
+        }
+    }
+
+    @Test
+    fun `old potentially incorrect signed cache is rejected`() {
+        val file = temporaryFolder.newFile()
+        file.writeText("""{"version":1,"account_id":"u1","fetched_at":123,"items":[]}""")
+        assertNull(loadRollcallHistoryCache(file, "u1"))
+    }
+
+    @Test
     fun `parses times sorts descending and keeps only newest ten`() {
         val transport = FakeHistoryTransport(
             courses = listOf(course("c1", "课程一", "2026-1")),
@@ -109,8 +144,8 @@ class RollcallHistoryClientTest {
                 ),
             ),
             detailsByRollcallId = mapOf(
-                // 时间戳 → 已签
-                "signed" to """{"student_rollcalls":[{"user_no":"u1","updated_at":"2026-07-03T08:01:00"}]}""",
+                // 本人明确 signed → 已签
+                "signed" to """{"student_rollcalls":[{"user_no":"u1","status":"signed","updated_at":"2026-07-03T08:01:00"}]}""",
                 // 本人明确未签 → 未签
                 "unsigned" to """{"student_rollcalls":[{"user_no":"u1","status":"not_signed"}]}""",
                 // 没有本人记录 → 未知（绝不冒充聚合状态）
@@ -217,7 +252,7 @@ class RollcallHistoryClientTest {
                 ),
             ),
             detailsByRollcallId = mapOf(
-                "r1" to """{"student_rollcalls":[{"user_no":"u1","updated_at":"2026-07-02T08:05:00"}]}""",
+                "r1" to """{"student_rollcalls":[{"user_no":"u1","status":"signed","updated_at":"2026-07-02T08:05:00"}]}""",
                 "r2" to """{"student_rollcalls":[{"user_no":"u1","status":"not_signed"}]}""",
             ),
         )

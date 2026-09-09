@@ -127,8 +127,8 @@ fun RollcallStatusPage(
                             InfoCard {
                                 Text(item.courseTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                 Text("${item.type} · ${item.timeDisplay}")
-                                // 单条状态位：明细未回显示「核实中…」，回包后为准确本人状态
-                                Text("本人状态：${item.ownStatus.ifBlank { "核实中…" }}")
+                                // 用户指定显示兜底：未知显示已签，原始状态与缓存保持不变。
+                                Text("本人状态：${historyRollcallDisplayStatus(item.ownStatus)}")
                             }
                         }
                     }

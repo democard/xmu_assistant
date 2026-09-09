@@ -76,11 +76,11 @@ fun normalizedRollcallStatus(raw: String): String {
         // 先判「未签」：unsigned 含 signed 子串，顺序颠倒会把 unsigned 误判为已签；
         // "not_signed" 分词成 [not, signed] 会命中下方 signed 分支误判已签，必须在此先行拦截；
         // missed/unanswered 与桌面端 infer_signed_status 词表对齐
-        raw in listOf("未签", "未签到") ||
+        raw.trim() in listOf("未签", "未签到", "缺勤", "未到") ||
             "unsigned" in tokens || "absent" in tokens || "miss" in tokens ||
             "missed" in tokens || "unanswered" in tokens ||
             ("not" in tokens && "signed" in tokens) -> "未签"
-        raw in listOf("已签", "已签到") ||
+        raw.trim() in listOf("已签", "已签到", "已到") ||
             "signed" in tokens || "fine" in tokens || "success" in tokens ||
             "present" in tokens || "attended" in tokens || "done" in tokens -> "已签"
         else -> "未知"

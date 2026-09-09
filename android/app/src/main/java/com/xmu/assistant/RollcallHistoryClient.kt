@@ -146,7 +146,7 @@ internal class RollcallHistoryClient internal constructor(
         }
     }
 
-    /** 本人状态判定：时间戳→已签；本人状态词→normalizedRollcallStatus；再否则「未知」。 */
+    /** 本人明确状态才是签到结果；更新时间及提交时间均不能证明到勤。 */
     private fun resolveOwnStatus(rollcallId: String, username: String): String {
         val detail = try {
             getJson("$baseUrl/api/rollcall/$rollcallId/student_rollcalls")
@@ -156,15 +156,10 @@ internal class RollcallHistoryClient internal constructor(
             return STATUS_UNKNOWN
         }
         val own = findOwnStudentRollcall(detail, username) ?: return STATUS_UNKNOWN
-        if (
-            own.optRealString("updated_at").isNotBlank() ||
-            own.optRealString("answered_at").isNotBlank() ||
-            own.optRealString("submitted_at").isNotBlank()
-        ) {
-            return STATUS_SIGNED
-        }
-        val word = firstString(own, "status", "rollcall_status", "state")
-        return if (word.isBlank()) STATUS_UNKNOWN else normalizedRollcallStatus(word)
+        val word = arrayOf("status", "rollcall_status", "state")
+            .firstNotNullOfOrNull { key -> own.optRealString(key).takeIf { it.isNotBlank() } }
+            ?: return STATUS_UNKNOWN
+        return historyRollcallStatus(word)
     }
 
     private fun findOwnStudentRollcall(payload: Any, username: String): JSONObject? {
@@ -294,6 +289,26 @@ data class RollcallHistoryItem(
 
 internal const val STATUS_SIGNED = "已签"
 internal const val STATUS_UNKNOWN = "未知"
+
+/** User-selected presentation fallback only; never use this to confirm attendance or persist a verdict. */
+internal fun historyRollcallDisplayStatus(status: String): String = when {
+    status.isBlank() -> "核实中…"
+    status == STATUS_UNKNOWN -> STATUS_SIGNED
+    else -> status
+}
+
+/** Align with desktop classify_rollcall_status tokens, preserving explicit absence for display. */
+internal fun historyRollcallStatus(raw: String): String {
+    val text = raw.trim().lowercase()
+    val tokens = text.split(Regex("[^a-z0-9]+")).filter { it.isNotBlank() }.toSet()
+    return when {
+        text in setOf("缺勤", "缺席", "未到") || tokens.any { it in setOf("absent", "missed", "miss") } -> "缺勤"
+        "未签" in text || "unsigned" in tokens || "unanswered" in tokens ||
+            ("not" in tokens && "signed" in tokens) -> "未签"
+        "已签" in text || text == "已到" || tokens.any { it in setOf("signed", "present", "attended", "fine", "done") } -> STATUS_SIGNED
+        else -> STATUS_UNKNOWN
+    }
+}
 internal const val ROLLCALL_HISTORY_LIMIT = 10
 
 /** 历史区块后台重校的新鲜窗口（用户拍板保持 5 分钟；成绩窗亦已放宽为 5 分钟）。 */
@@ -304,8 +319,8 @@ internal const val ROLLCALL_HISTORY_FRESHNESS_MILLIS = 300_000L
 // `.tmp`+rename 原子写；进页面先渲缓存再后台刷新原位更新，失败保留缓存只报错。
 // ---------------------------------------------------------------------------
 
-/** 缓存结构版本：字段增删不兼容时 +1 使旧缓存整体失效。 */
-internal const val ROLLCALL_HISTORY_CACHE_VERSION = 1
+/** 版本 2 废弃按更新时间误判的旧状态缓存；结构或判定语义变更时递增。 */
+internal const val ROLLCALL_HISTORY_CACHE_VERSION = 2
 private const val ROLLCALL_HISTORY_CACHE_FILE = "rollcall_history_cache.json"
 private const val TAG = "RollcallHistoryClient"
 
