@@ -1367,6 +1367,11 @@ class DashboardWindow(
     def _ev_notification_result(self, event):
         ok = event[1]
         detail = event[2]
+        if self.session is None:
+            # 登出后在途通知 worker 的晚到结果：不得改写通知页摘要/弹 Toast
+            #（与 error/answer_result 等已工作会话事件同族守卫），丢弃留痕。
+            self.log(f"忽略登出后迟到的通知结果：{detail}")
+            return
         self.notification_summary.setText(detail)
         self.log(("通知发送成功：" if ok else "通知发送失败：") + detail)
         self._show_toast(detail, ok=ok)

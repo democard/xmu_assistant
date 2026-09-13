@@ -234,5 +234,34 @@ class AnswerSelectedEvictedRowGuardTest(unittest.TestCase):
         self.assertEqual(host.answer_calls, [("r1", event)])
 
 
+class NotificationResultLogoutGuardTest(unittest.TestCase):
+    """登出后在途通知 worker 的晚到结果不得改写通知页摘要/弹 Toast。"""
+
+    def _host(self, session):
+        host = types.SimpleNamespace(session=session, logs=[])
+        host.log = host.logs.append
+        host.notification_summary = types.SimpleNamespace(texts=[])
+        host.notification_summary.setText = host.notification_summary.texts.append
+        host._show_toast = lambda *a, **k: host.logs.append("toast")
+        return host
+
+    def test_late_notification_result_discarded_after_logout(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(None)
+        DW._ev_notification_result(host, ("notification_result", True, "测试通知已发送"))
+        self.assertEqual(host.notification_summary.texts, [])
+        self.assertFalse(any(str(m) == "toast" for m in host.logs))
+        self.assertTrue(any("忽略登出后迟到的通知结果" in str(m) for m in host.logs))
+
+    def test_notification_result_lands_when_logged_in(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(object())
+        DW._ev_notification_result(host, ("notification_result", False, "SMTP 认证失败"))
+        self.assertEqual(host.notification_summary.texts, ["SMTP 认证失败"])
+        self.assertTrue(any(str(m) == "toast" for m in host.logs))
+
+
 if __name__ == "__main__":
     unittest.main()
