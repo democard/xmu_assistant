@@ -46,6 +46,20 @@ class SchedulePlannerTest {
     }
 
     @Test
+    fun `week parser treats a combined parity token as no parity constraint`() {
+        // 「单双」是"单双周都上"的合并写法，不带奇偶约束：不能因为
+        // "1-16周单双" 以「双」结尾（或含「双周」）就被判成只上双周。
+        assertEquals((1..16).toSet(), parseXmuWeekExpression("1-16周单双").weeks)
+        assertEquals((1..16).toSet(), parseXmuWeekExpression("1-16单双周").weeks)
+        assertEquals((1..16).toSet(), parseXmuWeekExpression("第1-16周（单双）").weeks)
+        // 混排：带「单双」的 token 保持全周，另一个 token 仍按自身「单周」约束
+        assertEquals(
+            setOf(1, 2, 3, 5, 7, 9, 11, 13, 15),
+            parseXmuWeekExpression("1-2单双,3-15单周").weeks,
+        )
+    }
+
+    @Test
     fun `malformed or blank week metadata remains visible`() {
         assertFalse(parseXmuWeekExpression("").parseable)
         assertFalse(parseXmuWeekExpression("待定").parseable)

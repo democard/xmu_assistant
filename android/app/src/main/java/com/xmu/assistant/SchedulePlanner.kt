@@ -53,6 +53,10 @@ fun parseXmuWeekExpression(value: String): ParsedWeekExpression {
         val hasOdd = token.contains("单周") || token.endsWith("单")
         val hasEven = token.contains("双周") || token.endsWith("双")
         val parity = when {
+            // 「单双」表示该范围不带单双周约束，必须先于单/双后缀判定：
+            // "1-16周单双" 会命中 endsWith("双") 被误判为只上双周，丢掉一半课次。
+            // 与上方面向整串的 parityMarkers 判定口径保持一致。
+            token.contains("单双") -> null
             hasOdd && !hasEven -> 1
             hasEven && !hasOdd -> 0
             else -> globalParity
