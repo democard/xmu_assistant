@@ -59,6 +59,17 @@ class RollcallHistoryClientTest {
     }
 
     @Test
+    fun `display fallback keeps unknown visible without changing the raw status`() {
+        // v1.6.3 语义：本人状态只作展示兜底，绝不参与出勤判定或持久化。
+        assertEquals("核实中…", historyRollcallDisplayStatus(""))
+        assertEquals("核实中…", historyRollcallDisplayStatus("   "))
+        assertEquals(STATUS_SIGNED, historyRollcallDisplayStatus(STATUS_UNKNOWN))
+        assertEquals("未签", historyRollcallDisplayStatus("未签"))
+        assertEquals("缺勤", historyRollcallDisplayStatus("缺勤"))
+        assertEquals(STATUS_SIGNED, historyRollcallDisplayStatus(STATUS_SIGNED))
+    }
+
+    @Test
     fun `old potentially incorrect signed cache is rejected`() {
         val file = temporaryFolder.newFile()
         file.writeText("""{"version":1,"account_id":"u1","fetched_at":123,"items":[]}""")
