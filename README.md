@@ -347,7 +347,8 @@ $env:PYTHONPATH=(Resolve-Path .\xmu-rollcall-cli).Path; python -m xmu_rollcall.d
 .\scripts\build_dashboard_exe.bat   # 产物 dist\xmu-assistant.exe
 
 # 发布（改版本号 → 测试 → 打包 → 算 SHA256 → 打 tag → 上 GitHub Releases）
-gh release create vx.y.z .\dist\xmu-assistant.exe --title "vx.y.z" --notes "Release notes"
+# 资产固定三件：exe、apk、SHA256SUMS.txt（与 release/ 目录一致）
+gh release create vx.y.z .\release\xmu-assistant.exe .\release\xmu-assistant-release.apk .\release\SHA256SUMS.txt --title "vx.y.z" --notes "Release notes"
 ```
 
 Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到模拟器并启动应用——按优先级探测 Android SDK（环境变量 > Android Studio 默认路径），复用已在运行的模拟器，否则拉起 `xmu_assistant_api30`；等待开机完成后 `adb install -r` 安装 `android/app/build/outputs/apk/release/app-release.apk` 并 `am start` 启动 MainActivity，日志写入桌面 `xmu-android-test.log`。该脚本不构建、不跑 JVM 测试（APK 需先经 `android/gradlew assembleRelease` 构建）；JVM 单测在 `android/` 目录执行 `gradlew :app:testDebugUnitTest`。
@@ -366,7 +367,7 @@ Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到�
   独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
 - **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.5.0 重建（含 DPAPI 凭据加密）；复现构建请执行
   `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
-- 发布前检查：产物与源码 HEAD 一致（`release/` 一起提交）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
+- 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
 
 ---
 
