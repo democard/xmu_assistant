@@ -35,6 +35,11 @@ class RollcallEngine:
             # payload.get 上以 AttributeError 收场且每 interval 重复报「轮询失败」，
             # 不如按可重试错误上抛（复用既有 RuntimeError 分类的用户文案）
             raise RuntimeError("平台返回了非 JSON 对象（服务可能异常），请稍后重试")
+        # 嵌套字段形态防御：平台异常时 rollcalls 可能是 null/标量。放行会让
+        # build_events 的 for 与 core 侧的 len() 双双 TypeError，同样每 interval
+        # 复报「轮询失败」。与顶层守卫同族，在单一来源归一化为空列表。
+        if not isinstance(payload.get("rollcalls"), list):
+            payload["rollcalls"] = []
         return payload
 
     def build_events(self, payload: dict) -> list[RollcallEvent]:

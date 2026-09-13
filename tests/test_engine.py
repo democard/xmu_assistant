@@ -39,6 +39,18 @@ class RollcallEngineTests(unittest.TestCase):
 
         self.assertEqual(payload, {"rollcalls": [{"rollcall_id": "1"}]})
 
+    def test_poll_payload_normalizes_non_list_rollcalls(self):
+        # 平台异常形态（null/标量）不得让下游 for / len() 抛 TypeError 并每 interval
+        # 复报「轮询失败」：在单一来源 poll_payload 归一化为空列表。
+        for malformed in (None, 0, "rollcalls", {"a": 1}):
+            with self.subTest(rollcalls=malformed):
+                engine = RollcallEngine(FakeSession({"rollcalls": malformed}))
+
+                payload = engine.poll_payload()
+
+                self.assertEqual(payload["rollcalls"], [])
+                self.assertEqual(engine.build_events(payload), [])
+
     def test_build_events_filters_non_dict_items(self):
         engine = RollcallEngine(FakeSession({}))
 
