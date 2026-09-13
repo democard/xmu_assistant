@@ -30,6 +30,16 @@ def _combo(text: str) -> SimpleNamespace:
     return SimpleNamespace(currentText=lambda: text)
 
 
+class _TableStub:
+    """仅满足空态路径的最小表格桩（不构造任何 Qt 控件）。"""
+
+    def __init__(self):
+        self.row_count = 0
+
+    def setRowCount(self, count):
+        self.row_count = count
+
+
 class CoursesPageLogicTest(unittest.TestCase):
     @staticmethod
     def _host(**attrs):
@@ -90,6 +100,40 @@ class CoursesPageLogicTest(unittest.TestCase):
             ["B", "A", "D", "C", "E"],
             "排序 = 状态优先级（未签<未知<已签<无记录）→ 同级新时间在前 → 课程名",
         )
+
+    def test_only_unsigned_filter_has_its_own_empty_message(self):
+        host = self._host(
+            course_records=[_record("已签到")],
+            only_unsigned_check=SimpleNamespace(isChecked=lambda: True),
+            time_range_combo=_combo("本学期"),
+            course_table=_TableStub(),
+            course_summary=SimpleNamespace(setText=lambda text: None),
+        )
+        captured = []
+        host._set_table_empty_state = lambda table, message: captured.append(message)
+
+        host._refresh_course_table()
+
+        self.assertEqual(
+            captured,
+            ["当前筛选下没有未签记录"],
+            "有记录但被「只显示未签」滤空时不得说「暂无签到记录」（汇总行同时显示未签 0）",
+        )
+
+    def test_no_records_at_all_keeps_the_login_hint(self):
+        host = self._host(
+            course_records=[],
+            only_unsigned_check=SimpleNamespace(isChecked=lambda: True),
+            time_range_combo=_combo("本学期"),
+            course_table=_TableStub(),
+            course_summary=SimpleNamespace(setText=lambda text: None),
+        )
+        captured = []
+        host._set_table_empty_state = lambda table, message: captured.append(message)
+
+        host._refresh_course_table()
+
+        self.assertEqual(captured, ["登录后可查看签到情况"])
 
     def test_summary_base_text_counts_all_records(self):
         host = self._host(course_records=[

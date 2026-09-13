@@ -311,6 +311,10 @@ class CoursesPageMixin:
         if not records:
             if not self.course_records:
                 empty_message = "登录后可查看签到情况"
+            elif self.only_unsigned_check.isChecked():
+                # 有记录但都被「只显示未签」滤掉：不能说"暂无签到记录"
+                #（汇总行同时显示未签 0），否则误导用户以为整个范围没有数据。
+                empty_message = "当前筛选下没有未签记录"
             elif self.time_range_combo.currentText() == "今天":
                 empty_message = "今天暂无签到记录"
             elif self.time_range_combo.currentText() == "本周":
