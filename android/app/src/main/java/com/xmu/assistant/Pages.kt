@@ -572,8 +572,12 @@ fun StrategyPage(
     onOpenFullScreenSettings: () -> Unit = {},
 ) {
     var interval by rememberSaveable { mutableStateOf(current.pollIntervalSeconds.toString()) }
-    var number by rememberSaveable { mutableStateOf(current.autoAnswerNumber) }
-    var radar by rememberSaveable { mutableStateOf(current.autoAnswerRadar) }
+    // 自动签到两开关以「当前已保存值」为键：首页的自动签到开关会改写同一份
+    // RollcallSettings。若本地副本只靠 rememberSaveable 跨导航保留（v1.6.1 起
+    // PageStateHost 会保留页面状态），回到策略页仍是旧值，用户按「确认更改」
+    // 会把刚开启的自动签到静默写回关闭。键随外部值变化即重取初值。
+    var number by rememberSaveable(current.autoAnswerNumber) { mutableStateOf(current.autoAnswerNumber) }
+    var radar by rememberSaveable(current.autoAnswerRadar) { mutableStateOf(current.autoAnswerRadar) }
     // 手动周次用本地 State 持有，确保切换开关/选周时 UI 立即重组（settings 非 State）。
     // 以 termCode 为键：学期变化（新学期/缓存重载）后重读该学期的校准值，
     // 否则本地副本停留在旧学期，与 SchedulePage 实际生效值不一致。

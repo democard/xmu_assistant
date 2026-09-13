@@ -523,6 +523,27 @@ class MainActivitySourceContractTest {
         )
     }
 
+    @Test
+    fun `strategy page re-reads auto answer toggles when settings change elsewhere`() {
+        val source = pagesSource()
+        val strategy = source
+            .substringAfter("fun StrategyPage(", missingDelimiterValue = "")
+            .substringBefore("SectionCard(\"策略\")")
+
+        assertTrue("strategy page was not found", strategy.isNotBlank())
+        // 首页的自动签到开关会改写同一份 RollcallSettings：策略页本地副本若只靠
+        // rememberSaveable 跨导航保留（PageStateHost 自 v1.6.1 起保留页面状态），
+        // 会停留在旧值，按「确认更改」即把用户刚开启的自动签到静默写回关闭。
+        assertTrue(
+            "auto answer number toggle must be keyed on the persisted value",
+            "rememberSaveable(current.autoAnswerNumber) { mutableStateOf(current.autoAnswerNumber) }" in strategy,
+        )
+        assertTrue(
+            "auto answer radar toggle must be keyed on the persisted value",
+            "rememberSaveable(current.autoAnswerRadar) { mutableStateOf(current.autoAnswerRadar) }" in strategy,
+        )
+    }
+
     private fun mainActivitySource(): String {
         val relativePath = "src/main/java/com/xmu/assistant/MainActivity.kt"
         val sourceFile = sequenceOf(
