@@ -147,6 +147,30 @@ class CoursewareTests(unittest.TestCase):
         self.assertEqual(courses[0].semester_code, "2025-2026-2")
         self.assertIn("2025-2026", courses[0].search_text)
 
+    def test_empty_course_payload_reports_a_non_blank_reason(self):
+        # 六端点全部 200 但列表为空：errors 为空，旧实现拼出「课程列表接口读取失败：」
+        # 的空尾文案（用户看不到任何原因）。必须给出可读的兜底原因。
+        class EmptyJsonResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"courses": []}
+
+        class EmptyCourseSession:
+            def get(self, url, **kwargs):
+                return EmptyJsonResponse()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            fetch_courses(EmptyCourseSession())
+
+        message = str(ctx.exception)
+        self.assertTrue(message.startswith("课程列表接口读取失败："))
+        self.assertNotEqual(message.strip(), "课程列表接口读取失败：")
+        self.assertGreater(len(message.split("：", 1)[1].strip()), 0)
+
     def test_homework_is_filtered_before_detail_request(self):
         class JsonResponse:
             status_code = 200

@@ -210,7 +210,12 @@ def fetch_courses(session) -> tuple[list[CourseSummary], str]:
         if courses:
             remember_good_endpoint("courses", endpoint)
             return courses, endpoint
-    raise RuntimeError("课程列表接口读取失败：" + "；".join(errors[:4]))
+    if errors:
+        raise RuntimeError("课程列表接口读取失败：" + "；".join(errors[:4]))
+    # 六个候选端点都返回了 200，却没解析出任何课程：可能是本账号当期无课，也可能是
+    # 端点形状不再被识别。此处只保证用户可见文案不出现空尾（返回空列表还是报错的
+    # 语义取舍需拍板，暂维持报错）。
+    raise RuntimeError("课程列表接口读取失败：平台返回了空的课程列表（可尝试重新登录后刷新）")
 
 
 def _module_lookup(modules: list) -> tuple[dict[str, str], dict[str, str]]:
