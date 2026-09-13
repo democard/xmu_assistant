@@ -16,6 +16,7 @@ from xmu_rollcall.config import (  # noqa: E402
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     normalize_app_settings,
+    normalize_notification_settings,
     normalize_rollcall_settings,
 )
 
@@ -37,6 +38,41 @@ class RollcallSettingsTests(unittest.TestCase):
         settings = normalize_app_settings({"launch_on_startup": 1})
 
         self.assertIs(settings["launch_on_startup"], True)
+
+
+class BooleanCoercionTests(unittest.TestCase):
+    """手编配置的布尔写法：明确的否串不得被原生 bool() 判成真。"""
+
+    def test_manual_confirm_rejects_falsey_text(self):
+        for text in ("false", "False", "0", "no", "off", " false "):
+            with self.subTest(value=text):
+                settings = normalize_rollcall_settings({"manual_confirm": text})
+
+                self.assertIs(settings["manual_confirm"], False)
+
+    def test_manual_confirm_keeps_truthy_values(self):
+        for value in (True, 1, "true", "yes", "1"):
+            with self.subTest(value=value):
+                settings = normalize_rollcall_settings({"manual_confirm": value})
+
+                self.assertIs(settings["manual_confirm"], True)
+
+    def test_notification_sections_reject_falsey_text(self):
+        settings = normalize_notification_settings(
+            {
+                "system": {"enabled": "false"},
+                "pushplus": {"enabled": "0"},
+                "qq_mail": {"enabled": "off"},
+            }
+        )
+
+        for section in ("system", "pushplus", "qq_mail"):
+            self.assertIs(settings[section]["enabled"], False)
+
+    def test_launch_on_startup_rejects_falsey_text(self):
+        self.assertIs(normalize_app_settings({"launch_on_startup": "false"})["launch_on_startup"], False)
+        self.assertIs(normalize_app_settings({"launch_on_startup": 0})["launch_on_startup"], False)
+        self.assertIs(normalize_app_settings({"launch_on_startup": "yes"})["launch_on_startup"], True)
 
 
 class ConfigShapeDefenseTests(unittest.TestCase):

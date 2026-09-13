@@ -86,6 +86,21 @@ DEFAULT_CONFIG = {
 }
 
 
+_FALSEY_BOOL_TEXT = ("", "false", "0", "no", "off")
+
+
+def _coerce_bool(value) -> bool:
+    """把手编配置里常见的布尔写法收敛为 bool。
+
+    bool("false") is True：字符串 "false"/"0"/"no"/"off" 会被原生 bool() 判成真，
+    静默打开通知、手动确认或开机自启等开关（与用户写入的意图相反）。这里只对
+    明确的否定文本返回 False，其余沿用真值语义（非空其它字符串/非零数字为真）。
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSEY_BOOL_TEXT
+    return bool(value)
+
+
 def normalize_rollcall_settings(settings: dict | None) -> dict:
     if not isinstance(settings, dict):
         settings = None
@@ -124,7 +139,7 @@ def normalize_rollcall_settings(settings: dict | None) -> dict:
 
     if merged.get("wait_before_answer_mode") not in ("none", "fixed", "random"):
         merged["wait_before_answer_mode"] = "none"
-    merged["manual_confirm"] = bool(merged.get("manual_confirm", False))
+    merged["manual_confirm"] = _coerce_bool(merged.get("manual_confirm", False))
     return merged
 
 
@@ -142,7 +157,7 @@ def normalize_notification_settings(settings: dict | None) -> dict:
             merged[section].update(values)
 
     for section in ("system", "pushplus", "qq_mail"):
-        merged[section]["enabled"] = bool(merged[section].get("enabled", False))
+        merged[section]["enabled"] = _coerce_bool(merged[section].get("enabled", False))
 
     for key in ("token",):
         merged["pushplus"][key] = str(merged["pushplus"].get(key, "")).strip()
@@ -160,7 +175,7 @@ def normalize_app_settings(settings: dict | None) -> dict:
         settings = None
     merged = DEFAULT_APP_SETTINGS.copy()
     merged.update(settings or {})
-    merged["launch_on_startup"] = bool(merged.get("launch_on_startup", False))
+    merged["launch_on_startup"] = _coerce_bool(merged.get("launch_on_startup", False))
     # 主题模式归一化：只接受 system / light / dark，非法值回退 system
     theme = str(merged.get("theme_mode", "system")).lower()
     merged["theme_mode"] = theme if theme in ("system", "light", "dark") else "system"
