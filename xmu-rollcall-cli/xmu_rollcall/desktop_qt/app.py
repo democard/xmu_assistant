@@ -1313,6 +1313,10 @@ class DashboardWindow(
             )
 
     def _ev_courseware_download_progress(self, event):
+        if self.session is None:
+            # 登出后在途批次的进度事件：状态表/摘要已随登出清空，不得重建
+            #「下载中」孤儿键、重绘表格或改写导航徽标（item_done 与 done 同款守卫）
+            return
         index = event[1]
         total = event[2]
         filename = event[3]

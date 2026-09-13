@@ -151,6 +151,45 @@ class DownloadDoneLogoutGuardTest(unittest.TestCase):
         self.assertTrue(any(str(m) == "modal" for m in host.logs))
 
 
+class DownloadProgressLogoutGuardTest(unittest.TestCase):
+    """登出后晚到的下载进度：不得重建状态表/摘要/徽标。
+
+    _courseware_download_worker 在每项循环开头、逐项登录校验**之前**发进度事件，
+    登出后剩余各项仍会依次送入；item_done/done 已各有守卫，进度这处此前漏了。
+    """
+
+    def _host(self, session):
+        host = types.SimpleNamespace(session=session, logs=[])
+        host.log = host.logs.append
+        host.courseware_download_status = {}
+        host._refresh_courseware_table = lambda: host.logs.append("table")
+        host._update_nav_badges = lambda: host.logs.append("badges")
+        host.courseware_summary = types.SimpleNamespace(texts=[])
+        host.courseware_summary.setText = host.courseware_summary.texts.append
+        return host
+
+    def test_late_progress_after_logout_is_dropped(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(None)
+        DW._ev_courseware_download_progress(
+            host, ("courseware_download_progress", 2, 5, "讲义.pdf", "k1"),
+        )
+        self.assertEqual(host.courseware_download_status, {})
+        self.assertEqual(host.courseware_summary.texts, [])
+        self.assertFalse(any(str(m) in ("table", "badges") for m in host.logs))
+
+    def test_progress_lands_when_logged_in(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(object())
+        DW._ev_courseware_download_progress(
+            host, ("courseware_download_progress", 2, 5, "讲义.pdf", "k1"),
+        )
+        self.assertEqual(host.courseware_download_status, {"k1": "下载中"})
+        self.assertEqual(len(host.courseware_summary.texts), 1)
+
+
 class ErrorEventLogoutGuardTest(unittest.TestCase):
     """登出后晚到 error 不得触发紧急通知/第三方推送。"""
 
