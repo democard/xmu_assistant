@@ -934,12 +934,16 @@ class DashboardWindow(
         # A2 二期（H3）：应答是唯一写 cookie 的并发路径（PUT Set-Cookie）。克隆会话隔离
         # 写入口，避免与其余只读 worker / GUI 读共享 cookiejar 发生跨线程竞争写；
         # session 为 None（登出在途）时明确返回，不再偶发 AttributeError。
+        # 账号归属快照必须在克隆会话**之前**读：clone_session 会在锁内复制 cookiejar
+        # （多毫秒窗口）。原先先克隆后读账号，换号恰好插在中间时会得到「旧账号会话 +
+        # 新账号 id」，逐项守卫因两者相等而放行 → 用旧账号会话提交并把旧 cookie merge
+        # 进新账号主会话（跨账号污染）。先读 id 则失败朝安全侧（守卫判账号已变即取消），
+        # 与 courses_page._courseware_courses_worker 的既有顺序一致。
+        worker_account_id = str((self.account or {}).get("id") or "")
         session = clone_session(self.session) if self.session is not None else None
         if session is None:
             self._emit(("answer_result", event_id, False, "已退出登录"))
             return
-        # 账号归属快照：merge 回写时只允许写回同一账号的主会话（防登出/换号污染）
-        worker_account_id = str((self.account or {}).get("id") or "")
         ok = False
         detail = "提交失败"
         try:

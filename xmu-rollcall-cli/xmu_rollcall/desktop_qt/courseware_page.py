@@ -338,8 +338,11 @@ class CoursewarePageMixin:
         # cookiejar，不与 GUI 线程/其它 worker 竞争写主 jar；账号 id 快照用于逐项
         # 校验，防止登出在途时误报失败、换号后用新账号会话续下旧账号课件（跨账号污染）。
         # 批次级 clone 用完即弃：不做模块级缓存（D4 教训——模块级会话会滞留旧 cookie）。
-        worker_session = clone_session(self.session) if self.session is not None else None
+        # 账号 id 必须先于 clone 读取（clone_session 在锁内复制 cookiejar，是毫秒级
+        # 窗口）：倒序时换号插在中间会得到「旧账号会话 + 新账号 id」，逐项守卫放行 →
+        # 用旧账号会话续下旧账号课件并把旧 cookie merge 进新账号主会话（跨账号污染）。
         worker_account_id = str((self.account or {}).get("id") or "")
+        worker_session = clone_session(self.session) if self.session is not None else None
         try:
             for index, item in enumerate(items, start=1):
                 key = self._courseware_key(item)
