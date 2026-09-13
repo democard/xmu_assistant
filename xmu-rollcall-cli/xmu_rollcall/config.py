@@ -118,7 +118,9 @@ def normalize_rollcall_settings(settings: dict | None) -> dict:
     ):
         try:
             merged[key] = max(0, int(merged.get(key, DEFAULT_ROLLCALL_SETTINGS[key])))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError：json.load 会把 1e999 解析成 inf，int(inf) 抛它——不捕就
+            # 会让 load_config 永久失败（登录/新增账号全废），自愈路径反被绕过。
             merged[key] = DEFAULT_ROLLCALL_SETTINGS[key]
 
     merged["poll_interval_seconds"] = min(
@@ -298,7 +300,8 @@ def get_next_account_id(config: dict) -> int:
         # 不参与最大值竞争），此前裸 int() 会让「新增账号」直接 ValueError
         try:
             return int(account.get("id", 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # id 被写成 1e999（json → inf）时 int() 抛 OverflowError，同样按非法处理
             return 0
 
     return max(

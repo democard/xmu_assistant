@@ -75,6 +75,56 @@ class BooleanCoercionTests(unittest.TestCase):
         self.assertIs(normalize_app_settings({"launch_on_startup": "yes"})["launch_on_startup"], True)
 
 
+class NonFiniteNumberDefenseTests(unittest.TestCase):
+    """json.load 会把 1e999 解析成 inf；int(inf) 抛 OverflowError，不在原捕获元组内，
+    会让 load_config 每次调用都失败（登录/新增账号全废，自愈路径被绕过）。"""
+
+    def test_extreme_rollcall_settings_fall_back_to_defaults(self):
+        for value in (float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                settings = normalize_rollcall_settings({"poll_interval_seconds": value})
+
+                self.assertEqual(settings["poll_interval_seconds"], DEFAULT_POLL_INTERVAL_SECONDS)
+
+    def test_extreme_account_id_is_treated_as_illegal(self):
+        from xmu_rollcall.config import get_next_account_id
+
+        self.assertEqual(get_next_account_id({"accounts": [{"id": float("inf")}]}), 1)
+        self.assertEqual(
+            get_next_account_id({"accounts": [{"id": float("inf")}, {"id": 3}]}),
+            4,
+        )
+
+    def test_load_config_survives_non_finite_numbers_in_file(self):
+        import tempfile
+        from pathlib import Path
+        from xmu_rollcall import config
+
+        tmpdir = tempfile.mkdtemp(prefix="xmu_config_nonfinite_")
+        orig_file, orig_dir = config.CONFIG_FILE, config.CONFIG_DIR
+        config.CONFIG_DIR = Path(tmpdir)
+        config.CONFIG_FILE = Path(tmpdir) / "config.json"
+        try:
+            # 1e999 经 json.load 变成 inf，最终落到 normalize_rollcall_settings 的 int()
+            config.CONFIG_FILE.write_text(
+                '{"accounts": [{"id": 1, "username": "u1", "password": "",'
+                ' "rollcall_settings": {"poll_interval_seconds": 1e999}}]}',
+                encoding="utf-8",
+            )
+
+            loaded = config.load_config()
+
+            self.assertEqual(
+                loaded["accounts"][0]["rollcall_settings"]["poll_interval_seconds"],
+                DEFAULT_POLL_INTERVAL_SECONDS,
+            )
+        finally:
+            config.CONFIG_FILE, config.CONFIG_DIR = orig_file, orig_dir
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 class ConfigShapeDefenseTests(unittest.TestCase):
     """config.json 形态防御：容器/条目类型异常不得让 load_config 永久失败。
 
