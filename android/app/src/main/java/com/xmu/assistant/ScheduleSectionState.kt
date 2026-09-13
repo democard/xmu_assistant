@@ -280,11 +280,15 @@ internal class ScheduleSectionState(
     }
 
     /** 落盘挪到后台线程：策略页每次校准/清除都在 UI 线程写整个学期 JSON 会卡顿
-     *  （刷新路径已约定「避免主线程磁盘 IO」，此处对齐）。 */
+     *  （刷新路径已约定「避免主线程磁盘 IO」，此处对齐）。
+     *  与 refresh 的落盘同款世代校验：手动校准也可能在登出/换号前一刻发起，
+     *  晚到的写会把 deleteScheduleSnapshotFile 刚删掉的缓存文件重建出来，
+     *  下次冷启动即被新账号读走（串号展示）。 */
     private fun persistSnapshotAsync(snapshot: XmuScheduleSnapshot) {
         val context = activity
+        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
         scope.launch(Dispatchers.IO) {
-            saveScheduleSnapshotToFile(context, snapshot)
+            if (sessionEpoch.isCurrent(session)) saveScheduleSnapshotToFile(context, snapshot)
         }
     }
 

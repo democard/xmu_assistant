@@ -556,6 +556,27 @@ class MainActivitySourceContractTest {
         )
     }
 
+    @Test
+    fun `schedule snapshot persistence is epoch guarded like the refresh path`() {
+        val schedule = scheduleSectionSource()
+        val persist = schedule
+            .substringAfter("private fun persistSnapshotAsync(", missingDelimiterValue = "")
+            .substringBefore("fun clearLoadingState()")
+
+        assertTrue("persistSnapshotAsync was not found", persist.isNotBlank())
+        // 手动校准/清除也会落盘：登出/换号后仍在途的 IO 会把刚删除的缓存文件重建出来，
+        // 下次冷启动被新账号读走。此处无法用 JVM 测试确定性复现交错（IO 调度不可控），
+        // 故锁定不可变量本身——快照 + 世代校验必须与 refresh 的落盘同款。
+        assertTrue(
+            "persist must snapshot the session before hopping to IO",
+            "val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())" in persist,
+        )
+        assertTrue(
+            "persist must skip the write once the generation moved on",
+            "if (sessionEpoch.isCurrent(session)) saveScheduleSnapshotToFile(context, snapshot)" in persist,
+        )
+    }
+
     private fun mainActivitySource(): String {
         val relativePath = "src/main/java/com/xmu/assistant/MainActivity.kt"
         val sourceFile = sequenceOf(
