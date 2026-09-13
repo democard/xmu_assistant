@@ -42,6 +42,16 @@ class ClassifyRollcallStatusTests(unittest.TestCase):
         self.assertEqual(classify_rollcall_status("已签到"), "已签到")
         self.assertEqual(classify_rollcall_status("已签"), "已签到")
 
+    def test_chinese_status_variants_align_with_android(self):
+        # 平台真实词表（与 Android normalizedRollcallStatus / historyRollcallStatus 对齐）：
+        # 「已到」= 已签，「缺勤/缺席/未到」= 未签；此前 PC 把这几类全归「未知」。
+        self.assertEqual(classify_rollcall_status("已到"), "已签到")
+        for raw in ("缺勤", "缺席", "未到"):
+            self.assertEqual(classify_rollcall_status(raw), "未签到", raw)
+        # 不含上述词的其它中文仍为未知（不得放宽成子串匹配）
+        self.assertIsNone(classify_rollcall_status("已交作业"))
+        self.assertIsNone(classify_rollcall_status("到场提醒"))
+
     def test_empty_and_unknown(self):
         self.assertIsNone(classify_rollcall_status(""))
         self.assertIsNone(classify_rollcall_status(None))

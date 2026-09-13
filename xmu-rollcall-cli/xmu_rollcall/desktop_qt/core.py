@@ -325,9 +325,12 @@ def classify_rollcall_status(value) -> str | None:
     lowered = str(value or "").strip().lower()
     if not lowered:
         return None
-    if "未签" in lowered:
+    # 中文状态：平台不同页面用词不一（已签到/已签/已到；未签到/未签/缺勤/缺席/未到），
+    # 词表与 Android normalizedRollcallStatus / historyRollcallStatus 对齐——此前 PC 只认
+    # 「未签」「已签」，把「已到」「缺勤」等真实值全归为未知（用户看不到确定结论）。
+    if "未签" in lowered or lowered in ("缺勤", "缺席", "未到"):
         return "未签到"
-    if "已签" in lowered:
+    if "已签" in lowered or lowered == "已到":
         return "已签到"
     tokens = {token for token in re.split(r"[^a-z0-9]+", lowered) if token}
     if (
