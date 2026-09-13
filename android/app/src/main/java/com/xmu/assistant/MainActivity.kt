@@ -964,7 +964,9 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
             if (reminder.enabled) requestNotificationPermissionIfNeeded()
         },
         onOpenExamAlarmSettings = {
-            activity.startActivity(ExamReminder.exactAlarmSettingsIntent(activity))
+            // 走 ExamReminder 的兜底封装：Android 8-11 无此系统设置页，
+            // 直接 startActivity 会 ActivityNotFoundException 崩进程。
+            ExamReminder.openExactAlarmSettings(activity)
         },
         onOpenFullScreenSettings = {
             activity.startActivity(ExamReminder.fullScreenSettingsIntent(activity))

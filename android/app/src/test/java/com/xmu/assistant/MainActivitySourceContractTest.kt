@@ -499,6 +499,30 @@ class MainActivitySourceContractTest {
         assertTrue("reminder changes must delegate to the holder", "exam.rescheduleReminders()" in main)
     }
 
+    @Test
+    fun `exact alarm settings entry is guarded against missing system activities`() {
+        val reminder = examReminderSource()
+        val openHelper = reminder
+            .substringAfter("fun openExactAlarmSettings(", missingDelimiterValue = "")
+            .substringBefore("fun fullScreenSettingsIntent(")
+
+        assertTrue("exact alarm settings helper was not found", openHelper.isNotBlank())
+        // ACTION_REQUEST_SCHEDULE_EXACT_ALARM 是 API 31+ 才有的设置页：Android 8-11
+        // （minSdk 26）直接 startActivity 会抛 ActivityNotFoundException 崩进程。
+        assertTrue(
+            "opening the exact alarm settings page must be guarded",
+            "runCatching { context.startActivity(exactAlarmSettingsIntent(context)) }" in openHelper,
+        )
+        assertTrue(
+            "the strategy page entry must go through the guarded helper",
+            "ExamReminder.openExactAlarmSettings(activity)" in mainActivitySource(),
+        )
+        assertTrue(
+            "unguarded exact alarm startActivity must not return",
+            "activity.startActivity(ExamReminder.exactAlarmSettingsIntent(activity))" !in mainActivitySource(),
+        )
+    }
+
     private fun mainActivitySource(): String {
         val relativePath = "src/main/java/com/xmu/assistant/MainActivity.kt"
         val sourceFile = sequenceOf(
@@ -616,6 +640,18 @@ class MainActivitySourceContractTest {
         ).firstOrNull(File::isFile)
 
         return requireNotNull(sourceFile) { "ExamSectionState.kt was not found from ${File(".").absolutePath}" }
+            .readText()
+    }
+
+    private fun examReminderSource(): String {
+        val relativePath = "src/main/java/com/xmu/assistant/ExamReminder.kt"
+        val sourceFile = sequenceOf(
+            File(relativePath),
+            File("app", relativePath),
+            File("android/app", relativePath),
+        ).firstOrNull(File::isFile)
+
+        return requireNotNull(sourceFile) { "$relativePath was not found from ${File(".").absolutePath}" }
             .readText()
     }
 

@@ -134,6 +134,17 @@ internal object ExamReminder {
             data = android.net.Uri.parse("package:${context.packageName}")
         }
 
+    /**
+     * 打开系统"闹钟与提醒"授权页，返回是否真的打开。
+     * ACTION_REQUEST_SCHEDULE_EXACT_ALARM 是 API 31 才有的设置页：Android 8-11（本应用
+     * minSdk 26）没有任何 Activity 处理它，直接 startActivity 会抛
+     * ActivityNotFoundException 崩进程。低版本本就不需要精确闹钟授权
+     * （canScheduleExactAlarm 恒 true），静默返回 false 即可。
+     */
+    @android.annotation.SuppressLint("InlinedApi")
+    fun openExactAlarmSettings(context: Context): Boolean =
+        runCatching { context.startActivity(exactAlarmSettingsIntent(context)) }.isSuccess
+
     /** 生成"全屏通知"系统设置 Intent（Android 14+ 应用通知设置页）。 */
     fun fullScreenSettingsIntent(context: Context): Intent =
         Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
