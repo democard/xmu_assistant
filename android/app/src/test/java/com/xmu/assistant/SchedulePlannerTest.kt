@@ -46,6 +46,42 @@ class SchedulePlannerTest {
     }
 
     @Test
+    fun `huge ranges are clamped before the range is materialised`() {
+        // 钳制必须作用在端点上：若先构造 (start..end) 再过滤，"1-2147483647周"
+        // 要遍历 20 亿项（JVM 上约 1 秒，ART/主线程上就是卡死/ANR）。
+        // 用相对耗时判定，避免依赖机器绝对速度。
+        repeat(3) {
+            parseXmuWeekExpression("1-25周")
+            parseXmuWeekExpression("1-2147483647周")
+        }
+        val smallMs = measureMillis { repeat(20) { parseXmuWeekExpression("1-25周") } }
+        val hugeMs = measureMillis { parseXmuWeekExpression("1-2147483647周") }
+
+        assertEquals((1..25).toSet(), parseXmuWeekExpression("1-2147483647周").weeks)
+        assertTrue(
+            "huge range must be clamped before materialising (huge=${hugeMs}ms small=${smallMs}ms)",
+            hugeMs < smallMs * 100 + 100,
+        )
+    }
+
+    @Test
+    fun `single week forms are bounded by the teaching week cap`() {
+        assertEquals(setOf(3), parseXmuWeekExpression("第3周").weeks)
+        assertEquals(setOf(1, 24), parseXmuWeekExpression("第1周,第24周").weeks)
+        // 越界单周不再产出天文数字周次（ICS 会写成数千万年后的日程）；空结果
+        // 与越界区间同口径（parseable=false）
+        assertEquals(emptySet<Int>(), parseXmuWeekExpression("第2147483647周").weeks)
+        assertFalse(parseXmuWeekExpression("第2147483647周").parseable)
+        assertEquals(emptySet<Int>(), parseXmuWeekExpression("100-200周").weeks)
+    }
+
+    private fun measureMillis(block: () -> Unit): Long {
+        val started = System.nanoTime()
+        block()
+        return (System.nanoTime() - started) / 1_000_000
+    }
+
+    @Test
     fun `week parser treats a combined parity token as no parity constraint`() {
         // 「单双」是"单双周都上"的合并写法，不带奇偶约束：不能因为
         // "1-16周单双" 以「双」结尾（或含「双周」）就被判成只上双周。

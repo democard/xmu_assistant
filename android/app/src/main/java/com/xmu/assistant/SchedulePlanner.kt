@@ -67,19 +67,28 @@ fun parseXmuWeekExpression(value: String): ParsedWeekExpression {
                 val start = match.groupValues[1].toIntOrNull()
                 val end = match.groupValues[2].toIntOrNull()
                 if (start != null && end != null && start > 0 && end >= start) {
-                    (start..end)
-                        .filter { week -> week <= MAX_XMU_WEEK && (parity == null || week % 2 == parity) }
-                        .forEach(result::add)
+                    // 上界必须钳在端点上再建区间：原先只对区间元素做 <= MAX 过滤，
+                    // (start..end) 本身仍要生成到 end 项——"1-2147483647周" 要遍历
+                    // 20 亿次，而课表、桌面组件与 ICS 导出都在主线程调用，直接卡死
+                    // （ANR 级）。语法有效即计入可解析，与单周分支口径一致。
+                    val last = end.coerceAtMost(MAX_XMU_WEEK)
+                    if (start <= last) {
+                        (start..last)
+                            .filter { week -> parity == null || week % 2 == parity }
+                            .forEach(result::add)
+                    }
                     sawValidRange = true
                 }
             }
         } else {
             // Also accept "第1周、第3周" and other single-week forms.
+            // 单周同样按上界钳制：原先无上界，"第2147483647周" 会产出天文数字周次
+            // 并被 ICS 写成数千万年后的日程。
             WEEK_NUMBER_PATTERN.findAll(token)
-                .mapNotNull { it.value.toIntOrNull()?.takeIf { week -> week > 0 } }
+                .mapNotNull { it.value.toIntOrNull() }
                 .forEach { week ->
-                    if (parity == null || week % 2 == parity) result += week
                     sawValidRange = true
+                    if (week in 1..MAX_XMU_WEEK && (parity == null || week % 2 == parity)) result += week
                 }
             }
     }
