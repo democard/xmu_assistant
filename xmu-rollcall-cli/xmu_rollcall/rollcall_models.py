@@ -66,7 +66,9 @@ def build_rollcall_event(rollcall: dict) -> RollcallEvent:
     ))
 
     return RollcallEvent(
-        rollcall_id=str(rollcall.get("rollcall_id", "")),
+        # 显式 None 不能走 str()：会得到字面 "None" 被当作合法 id（去重吞掉后续
+        # null 事件、自动应答去打 /api/rollcall/None）。与同函数其它字段一致用 or ""。
+        rollcall_id=str(rollcall.get("rollcall_id") or ""),
         course_title=str(rollcall.get("course_title") or rollcall.get("course_name") or "未知课程"),
         teacher=teacher,
         rollcall_type=rollcall_type,

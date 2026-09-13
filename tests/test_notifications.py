@@ -119,6 +119,17 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("登录已过期", friendly_error_message("403 Forbidden"))
         self.assertIn("资源地址已失效", friendly_error_message("404 Client Error: NOT FOUND"))
 
+    def test_build_rollcall_event_does_not_turn_a_null_id_into_the_string_none(self):
+        # 平台给 rollcall_id: null 时 str(None) 会产出字面 "None"：它非空，于是被当成
+        # 合法事件进轮询（去重后后续 null 事件被静默吞掉），自动应答还会去打
+        # /api/rollcall/None（必 404）。空值必须归一为 ""。
+        for raw in (None, "", "   "):
+            with self.subTest(rollcall_id=raw):
+                event = build_rollcall_event({"rollcall_id": raw, "course_title": "数学"})
+
+                self.assertNotEqual(event.rollcall_id, "None")
+                self.assertFalse(event.rollcall_id.strip())
+
     def test_build_rollcall_event_exposes_deadline_and_remaining_seconds(self):
         event = build_rollcall_event(
             {
