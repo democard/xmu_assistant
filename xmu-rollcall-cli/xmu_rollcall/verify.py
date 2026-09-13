@@ -30,7 +30,10 @@ def find_number_code(data, depth=0, max_depth=10):
         return None
     if isinstance(data, dict):
         number_code = data.get("number_code")
-        if number_code is not None:
+        # 空串/全空白视为「本层没有码」继续下探：Android findNumberCode 用
+        # takeIf { it.isNotBlank() }，而 PC 原先遇空串即 return "" 并停止——
+        # 平台返回聚合壳（外层 number_code 为空、真码在嵌套层）时 PC 永远取不到码。
+        if number_code is not None and str(number_code).strip():
             return str(number_code)
         for value in data.values():
             nested_code = find_number_code(value, depth + 1, max_depth)

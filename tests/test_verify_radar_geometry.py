@@ -107,6 +107,19 @@ class FindNumberCodeTests(unittest.TestCase):
     def test_missing_and_falsy(self):
         self.assertIsNone(find_number_code({}))
         self.assertIsNone(find_number_code({"number_code": None}))
+
+    def test_blank_code_keeps_digging_like_android(self):
+        # 聚合壳（外层 number_code 为空）+ 嵌套真码：Android takeIf{isNotBlank} 会继续
+        # 下探，PC 原先遇空串即 return "" 并停止，永远取不到码也不会去应答。
+        self.assertEqual(
+            find_number_code({"number_code": "", "nested": {"number_code": "424242"}}),
+            "424242",
+        )
+        self.assertEqual(
+            find_number_code({"number_code": "   ", "nested": {"number_code": "424242"}}),
+            "424242",
+        )
+        self.assertIsNone(find_number_code({"number_code": ""}))
         self.assertIsNone(find_number_code({"other": "text"}))
         self.assertIsNone(find_number_code([]))
         self.assertIsNone(find_number_code("plain"))
