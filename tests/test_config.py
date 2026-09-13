@@ -39,6 +39,52 @@ class RollcallSettingsTests(unittest.TestCase):
         self.assertIs(settings["launch_on_startup"], True)
 
 
+class ConfigShapeDefenseTests(unittest.TestCase):
+    """config.json 形态防御：容器/条目类型异常不得让 load_config 永久失败。
+
+    accounts 被手工或外部工具写成 null/标量时，旧实现 setdefault 不替换既有键，
+    下游 for 抛 TypeError 且每次 load 都失败——登录（add_account 需先 load）
+    永久不可用。此处锁定「归一化为空列表」与「滤除非 dict 条目」两条入口防御。
+    """
+
+    def setUp(self):
+        from xmu_rollcall import config
+
+        self._tmpdir = tempfile.mkdtemp(prefix="xmu_config_shape_")
+        self._orig_config_file = config.CONFIG_FILE
+        self._orig_config_dir = config.CONFIG_DIR
+        config.CONFIG_DIR = Path(self._tmpdir)
+        config.CONFIG_FILE = Path(self._tmpdir) / "config.json"
+        self.config = config
+
+    def tearDown(self):
+        self.config.CONFIG_FILE = self._orig_config_file
+        self.config.CONFIG_DIR = self._orig_config_dir
+        import shutil
+
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _write(self, text: str) -> None:
+        self.config.CONFIG_FILE.write_text(text, encoding="utf-8")
+
+    def test_non_list_accounts_container_falls_back_to_empty(self):
+        for malformed in ("null", "5", '"accounts"', "{}"):
+            with self.subTest(accounts=malformed):
+                self._write('{"accounts": %s}' % malformed)
+
+                loaded = self.config.load_config()
+
+                self.assertEqual(loaded["accounts"], [])
+
+    def test_non_dict_account_entries_are_dropped(self):
+        self._write('{"accounts": [null, "x", 3, {"id": 1, "username": "u1"}]}')
+
+        loaded = self.config.load_config()
+
+        self.assertEqual(len(loaded["accounts"]), 1)
+        self.assertEqual(loaded["accounts"][0]["username"], "u1")
+
+
 class SecretsProtectionTests(unittest.TestCase):
     """DPAPI 加密往返：仅 Windows 平台真实加解密；非 Windows 跳过。"""
 

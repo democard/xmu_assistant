@@ -217,10 +217,13 @@ def _load_config_locked() -> dict:
             "app_settings": config.get("app_settings"),
         }
 
-    config.setdefault("accounts", [])
-    # 形态防御：手工/外部工具写入的 accounts 可能混入非 dict 条目，穿透 load
-    # 后 get_account_by_id / get_next_account_id 对其调 .get 抛 AttributeError，
-    # 连「新增账号」自愈路径也一并堵死——在入口直接滤除
+    # 容器形态防御：accounts 可能被手工/外部工具写成 null 或标量。setdefault 不会
+    # 替换既有键，若不先判类型，下游的 for / 下标访问会抛 TypeError；而 load_config
+    # 每次调用都失败意味着登录（add_account 需先 load）永久不可用，连自愈路径也堵死。
+    if not isinstance(config.get("accounts"), list):
+        config["accounts"] = []
+    # 形态防御：列表内混入非 dict 条目，穿透 load 后 get_account_by_id /
+    # get_next_account_id 对其调 .get 抛 AttributeError——在入口直接滤除
     if not all(isinstance(entry, dict) for entry in config["accounts"]):
         config["accounts"] = [entry for entry in config["accounts"] if isinstance(entry, dict)]
     config.setdefault("current_account_id", None)
