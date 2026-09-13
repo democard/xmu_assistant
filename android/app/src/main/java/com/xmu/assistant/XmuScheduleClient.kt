@@ -1,6 +1,5 @@
 package com.xmu.assistant
 
-import org.json.JSONObject
 import java.io.IOException
 import java.util.Locale
 
@@ -210,7 +209,9 @@ internal fun selectXmuCurrentTermCode(termCodes: List<String>): String? =
  * 寒暑假等异常情况返回 null（调用方决定是否采信）。
  */
 internal fun parseXmuCurrentWeek(body: String): Int? = runCatching {
-    val root = JSONObject(body)
+    // 教务同族响应出现过 BOM 前缀：走共享的 xmuJsonRoot（与课表/考试/排名解析一致），
+    // 否则 JSONException 被 runCatching 吞成 null，学期外周的周次推断静默失效。
+    val root = xmuJsonRoot(body)
     val raw = root.optString("currentZc").toIntOrNull()
     if (raw != null && raw in 1..25) raw else null
 }.getOrNull()

@@ -69,6 +69,17 @@ class XmuScheduleModelsTest {
     }
 
     @Test
+    fun `current week parser reads bom prefixed payloads`() {
+        // getZcxx.do 与课表同族响应：带 BOM 时必须仍能解析出周次，
+        // 否则 runCatching 把 JSONException 吞成 null，学期外周的周次推断静默失效。
+        assertEquals(3, parseXmuCurrentWeek("""{"currentZc":"3"}"""))
+        assertEquals(3, parseXmuCurrentWeek("\uFEFF" + """{"currentZc":"3"}"""))
+        // 越界与非法响应仍返回 null（调用方决定是否采信）
+        org.junit.Assert.assertNull(parseXmuCurrentWeek("""{"currentZc":"0"}"""))
+        org.junit.Assert.assertNull(parseXmuCurrentWeek("\uFEFF" + "<html>app</html>"))
+    }
+
+    @Test
     fun `malformed time values render empty instead of impossible clock`() {
         org.junit.Assert.assertEquals("", formatXmuTime(870)) // 8:70 不存在
         org.junit.Assert.assertEquals("", formatXmuTime(-5))
