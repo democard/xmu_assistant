@@ -101,9 +101,12 @@ internal object ExamReminder {
 
     fun cancelAll(context: Context) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
-        // 取消一段范围内的 requestCode（预留 100 个槽位）
+        // 取消一段范围内的 requestCode（预留 100 个槽位）。
+        // 用 FLAG_NO_CREATE 取已注册的实例：从未注册过的槽位直接跳过，不再为每个
+        // 空槽位现造 PendingIntent（100 次 binder 往返）。PendingIntent 匹配只比较
+        // requestCode 与 Intent 的 filterEquals 字段，extras 不参与，故无需带考试信息。
         for (code in REQUEST_CODE_BASE until REQUEST_CODE_BASE + 100) {
-            alarmManager.cancel(reminderPendingIntent(context, code, XmuExam(id = code.toString(), courseName = "", date = "", timeRange = "", room = "", mode = "", examName = "")))
+            alarmManager.cancel(existingReminderPendingIntent(context, code) ?: continue)
         }
     }
 
@@ -166,6 +169,15 @@ internal object ExamReminder {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
+
+    /** 取「已注册」的提醒 PendingIntent（FLAG_NO_CREATE）：不存在返回 null。取消路径专用。 */
+    private fun existingReminderPendingIntent(context: Context, requestCode: Int): PendingIntent? =
+        PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            Intent(context, ExamReminderReceiver::class.java),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     /** 考试提醒触发时刻：考试日期 + 开始时间 - advanceMinutes。
      *  开始时刻永远在考试当天（结束早于开始仅表示结束跨到次日，不影响开始日期）。解析失败返回 null。 */
