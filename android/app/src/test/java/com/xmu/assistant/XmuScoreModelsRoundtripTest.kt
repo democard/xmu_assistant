@@ -14,6 +14,7 @@ class XmuScoreModelsRoundtripTest {
     private fun record(
         courseCode: String = "CS1001",
         courseName: String = "数据结构",
+        credit: Double = 3.0,
         score: Double? = 92.0,
         gradePoint: Double? = 4.0,
         countsForStatistics: Boolean = true,
@@ -24,7 +25,7 @@ class XmuScoreModelsRoundtripTest {
         courseName = courseName,
         term = "2025-2026学年第二学期",
         termCode = "20251",
-        credit = 3.0,
+        credit = credit,
         score = score,
         gradePoint = gradePoint,
         gradeMode = "百分制",
@@ -52,6 +53,37 @@ class XmuScoreModelsRoundtripTest {
         assertEquals(null, restored.single().score)
         assertEquals(null, restored.single().gradePoint)
         assertEquals("合格", restored.single().resultText)
+    }
+
+    @Test
+    fun `non finite numbers are sanitised instead of throwing`() {
+        // JSONObject.put(String, double) 对 NaN 与 Infinity 都抛 JSONException：畸形
+        // 平台数值（如 "1e999"）会让序列化崩在刷新结果回调里，缓存也永远写不进。
+        val records = listOf(
+            record(
+                credit = Double.POSITIVE_INFINITY,
+                score = Double.POSITIVE_INFINITY,
+                gradePoint = Double.NEGATIVE_INFINITY,
+            ),
+        )
+
+        val restored = xmuScoreRecordsFromJson(xmuScoreRecordsToJson(records))
+
+        assertEquals(0.0, restored.single().credit, 0.0)
+        assertEquals(null, restored.single().score)
+        assertEquals(null, restored.single().gradePoint)
+    }
+
+    @Test
+    fun `non finite values in a corrupt cache are rejected on read`() {
+        val restored = xmuScoreRecordsFromJson(
+            """[{"courseCode":"CS1","courseName":"X","term":"t","termCode":"c","credit":1e999,"score":1e999,"gradePoint":1e999,"gradeMode":"百分制","resultText":"通过","countsForStatistics":true,"countsForCompletedCredit":true,"courseSeq":"01"}]""",
+        )
+
+        assertEquals(1, restored.size)
+        assertEquals(0.0, restored.single().credit, 0.0)
+        assertEquals(null, restored.single().score)
+        assertEquals(null, restored.single().gradePoint)
     }
 
     @Test

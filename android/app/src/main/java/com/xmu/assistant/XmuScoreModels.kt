@@ -99,9 +99,14 @@ fun xmuScoreRecordsToJson(records: List<XmuScoreRecord>): String =
             .put("courseName", record.courseName)
             .put("term", record.term)
             .put("termCode", record.termCode)
-            .put("credit", record.credit)
-            .put("score", record.score)
-            .put("gradePoint", record.gradePoint)
+            // JSONObject.put(String, double) 对 NaN **与 Infinity** 都抛 JSONException。
+            // 平台给出畸形数值（如 "1e999"）时，非有限值会一路带到这里；序列化发生在
+            // 刷新结果回调（主线程、无 try/catch）里，抛异常既崩进程又让缓存永远写不进。
+            // 非有限值按「无该数值」落盘：credit 归 0，score/gradePoint 落 null（与原本的
+            // null 序列化形状一致：put(name, null) 等同于不写该键）。
+            .put("credit", record.credit.takeIf { it.isFinite() } ?: 0.0)
+            .put("score", record.score?.takeIf { it.isFinite() })
+            .put("gradePoint", record.gradePoint?.takeIf { it.isFinite() })
             .put("gradeMode", record.gradeMode)
             .put("resultText", record.resultText)
             .put("countsForStatistics", record.countsForStatistics)
@@ -120,8 +125,9 @@ fun xmuScoreRecordsFromJson(value: String): List<XmuScoreRecord> = runCatching {
             term = item.optString("term"),
             termCode = item.optString("termCode"),
             // 损坏缓存 credit 非数字时 optDouble 返回 NaN 入库污染统计（credits>0
-            // 判断对 NaN 恒 false），fallback 0.0
-            credit = item.optDouble("credit", 0.0).takeUnless { it.isNaN() } ?: 0.0,
+            // 判断对 NaN 恒 false），fallback 0.0。非有限值同样拦下（Infinity 会让
+            // 后续 JSONObject.put 抛异常，见 xmuScoreRecordsToJson 注释）。
+            credit = item.optDouble("credit", 0.0).takeIf { it.isFinite() } ?: 0.0,
             score = item.optNullableDouble("score"),
             gradePoint = item.optNullableDouble("gradePoint"),
             gradeMode = item.optString("gradeMode"),
@@ -141,6 +147,6 @@ fun xmuScoreRecordsFromJson(value: String): List<XmuScoreRecord> = runCatching {
 }.getOrDefault(emptyList())
 
 private fun JSONObject.optNullableDouble(key: String): Double? =
-    if (isNull(key)) null else optDouble(key).takeUnless { it.isNaN() }
+    if (isNull(key)) null else optDouble(key).takeIf { it.isFinite() }
 
 private fun Double.roundScoreMetric(): Double = round(this * 100.0) / 100.0
