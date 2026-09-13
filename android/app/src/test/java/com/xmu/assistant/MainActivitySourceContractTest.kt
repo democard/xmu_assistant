@@ -524,23 +524,35 @@ class MainActivitySourceContractTest {
     }
 
     @Test
-    fun `strategy page re-reads auto answer toggles when settings change elsewhere`() {
+    fun `strategy page resyncs auto answer toggles from the saved settings`() {
         val source = pagesSource()
         val strategy = source
             .substringAfter("fun StrategyPage(", missingDelimiterValue = "")
             .substringBefore("SectionCard(\"策略\")")
+        val helper = source
+            .substringAfter("internal fun rememberSyncedBoolean(", missingDelimiterValue = "")
+            .substringBefore("fun StrategyPage(", missingDelimiterValue = "")
 
         assertTrue("strategy page was not found", strategy.isNotBlank())
-        // 首页的自动签到开关会改写同一份 RollcallSettings：策略页本地副本若只靠
-        // rememberSaveable 跨导航保留（PageStateHost 自 v1.6.1 起保留页面状态），
-        // 会停留在旧值，按「确认更改」即把用户刚开启的自动签到静默写回关闭。
+        assertTrue("synced toggle helper was not found", helper.isNotBlank())
+        // rememberSaveable 的 inputs 只在组合内做失效检测，状态恢复路径不校验
+        // （恢复出的旧值优先于 init），因此跨导航保留的副本必须靠 LaunchedEffect
+        // 在每次进入组合时重同步——否则首页改了自动签到后回到策略页仍是旧值。
         assertTrue(
-            "auto answer number toggle must be keyed on the persisted value",
-            "rememberSaveable(current.autoAnswerNumber) { mutableStateOf(current.autoAnswerNumber) }" in strategy,
+            "helper must keep a saveable local copy",
+            "rememberSaveable { mutableStateOf(saved) }" in helper,
         )
         assertTrue(
-            "auto answer radar toggle must be keyed on the persisted value",
-            "rememberSaveable(current.autoAnswerRadar) { mutableStateOf(current.autoAnswerRadar) }" in strategy,
+            "helper must resync from the saved value on every composition",
+            "LaunchedEffect(saved) { state.value = saved }" in helper,
+        )
+        assertTrue(
+            "auto answer number toggle must use the synced helper",
+            "val number = rememberSyncedBoolean(current.autoAnswerNumber)" in strategy,
+        )
+        assertTrue(
+            "auto answer radar toggle must use the synced helper",
+            "val radar = rememberSyncedBoolean(current.autoAnswerRadar)" in strategy,
         )
     }
 

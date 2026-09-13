@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -555,6 +556,23 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
     }
 }
 
+/**
+ * 本地可编辑的布尔副本，并在每次进入组合时以「已保存值」为准重同步。
+ *
+ * 为什么不能用 `rememberSaveable(saved) { ... }` 的 inputs 同步：inputs 只在**组合内**
+ * 做失效检测，**状态恢复路径不校验**——SaveableStateHolder 恢复出的旧值优先于 init，
+ * 因此跨页面保留的本地副本会一直沿用旧值。策略页正是这种情况：首页改写了同一份
+ * RollcallSettings 的自动签到开关，回到策略页仍是旧值，按「确认更改」就把刚开启的
+ * 自动签到静默写回（v1.6.1 引入 PageStateHost 后可达）。LaunchedEffect 在每次进入
+ * 组合时必跑，故用它重同步；值未变时写入同值不触发重组。
+ */
+@Composable
+internal fun rememberSyncedBoolean(saved: Boolean): MutableState<Boolean> {
+    val state = rememberSaveable { mutableStateOf(saved) }
+    LaunchedEffect(saved) { state.value = saved }
+    return state
+}
+
 @Composable
 fun StrategyPage(
     settings: AssistantSettings,
@@ -572,12 +590,11 @@ fun StrategyPage(
     onOpenFullScreenSettings: () -> Unit = {},
 ) {
     var interval by rememberSaveable { mutableStateOf(current.pollIntervalSeconds.toString()) }
-    // 自动签到两开关以「当前已保存值」为键：首页的自动签到开关会改写同一份
-    // RollcallSettings。若本地副本只靠 rememberSaveable 跨导航保留（v1.6.1 起
-    // PageStateHost 会保留页面状态），回到策略页仍是旧值，用户按「确认更改」
-    // 会把刚开启的自动签到静默写回关闭。键随外部值变化即重取初值。
-    var number by rememberSaveable(current.autoAnswerNumber) { mutableStateOf(current.autoAnswerNumber) }
-    var radar by rememberSaveable(current.autoAnswerRadar) { mutableStateOf(current.autoAnswerRadar) }
+    // 自动签到两开关：首页的自动签到开关会改写同一份 RollcallSettings，本地副本
+    // 必须能跟随，否则回到本页按「确认更改」会把刚开启的自动签到静默写回
+    // （修复机理见 rememberSyncedBoolean 的注释）。
+    val number = rememberSyncedBoolean(current.autoAnswerNumber)
+    val radar = rememberSyncedBoolean(current.autoAnswerRadar)
     // 手动周次用本地 State 持有，确保切换开关/选周时 UI 立即重组（settings 非 State）。
     // 以 termCode 为键：学期变化（新学期/缓存重载）后重读该学期的校准值，
     // 否则本地副本停留在旧学期，与 SchedulePage 实际生效值不一致。
@@ -615,12 +632,12 @@ fun StrategyPage(
             },
         )
         Text("二维码签到只提醒；数字签到和雷达签到可按开关自动处理。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        ToggleRow("数字签到自动处理", number) { number = it }
-        ToggleRow("雷达签到自动处理", radar) { radar = it }
+        ToggleRow("数字签到自动处理", number.value) { number.value = it }
+        ToggleRow("雷达签到自动处理", radar.value) { radar.value = it }
         Button(
             onClick = {
                 if (intervalInvalid) return@Button
-                val saved = RollcallSettings((interval.toIntOrNull() ?: 30).coerceIn(1, 300), number, radar)
+                val saved = RollcallSettings((interval.toIntOrNull() ?: 30).coerceIn(1, 300), number.value, radar.value)
                 settings.saveRollcall(saved)
                 onSaved(saved)
             },
