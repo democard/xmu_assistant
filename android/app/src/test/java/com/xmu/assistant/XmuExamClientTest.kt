@@ -262,6 +262,23 @@ class XmuExamClientTest {
     }
 
     @Test
+    fun `probe falls back to blank stop when enrollment window is empty`() {
+        // 学号解析出的入学年份（2026）晚于教务可用学期（2025-2026-1）：
+        // 学号窗口为空，不能因 fullWindow.last() 抛 NoSuchElementException 而整体取不到数据。
+        val transport = FakeExamTransport(
+            termCodes = listOf("2025-2026-1"),
+            termData = mapOf("2025-2026-1" to examBody("历史学期考试")),
+        )
+        val client = XmuExamClient(cookieHeader = "saved=session", username = "12320261234567", transport = transport)
+
+        val result = client.probeValidTerms(today = LocalDate.of(2025, 9, 1))
+
+        // 回落 blank-stop 后仍能取到窗口内的有效学期
+        assertEquals(listOf("2025-2026-1"), result.terms)
+        assertEquals("2025-2026-1", result.latest?.termCode)
+    }
+
+    @Test
     fun `fetch parses exam sample structure`() {
         // 接口结构样例（字段齐全的 mock）：KSRWID/KCM/KSRQ/KSSJMS/JASMC/KSXS_DISPLAY
         val realRows = """[{"KSRWID":"fixture-exam-1","KCM":"课程甲","KSRQ":"2026-01-02","KSSJMS":"2026-01-02 08:00-10:00(星期日)","JASMC":"教学楼A-306","KSXS_DISPLAY":"线下","KSMC":"2025-2026学年 第二学期 期末考试"},{"KSRWID":"fixture-exam-2","KCM":"课程乙","KSRQ":"2026-01-03","KSSJMS":"2026-01-03 10:30-12:30(星期五)","JASMC":"教学楼C-406","KSXS_DISPLAY":"线下","KSMC":"2025-2026学年 第二学期 期末考试"}]"""

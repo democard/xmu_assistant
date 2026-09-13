@@ -240,7 +240,7 @@ internal class XmuExamClient(
         }
         val recent = selectRecentTerm(academicTerms, upperBound)
         return if (recent != null && enrollmentYear != null) {
-            probeEnrollmentWindow(enrollmentYear, recent, knownTerms)
+            probeEnrollmentWindow(enrollmentYear, recent, knownTerms, maxProbe, blankLimit)
         } else {
             probeWithBlankStop(recent ?: currentTermCode(today), maxProbe, blankLimit)
         }
@@ -266,8 +266,14 @@ internal class XmuExamClient(
         enrollmentYear: Int,
         recent: String,
         knownTerms: List<String>,
+        maxProbe: Int,
+        blankLimit: Int,
     ): ExamProbeResult {
         val fullWindow = termsBetween(enrollmentYear, recent) // 新→旧
+        // 学号解析出的入学年份晚于教务可用学期时窗口为空（学号格式漂移 / 教务列表滞后）：
+        // 空窗口没有可锚定的下界，直接回落串行 blank-stop 探测，
+        // 避免 fullWindow.last() 抛 NoSuchElementException 让考试页整体取不到数据。
+        if (fullWindow.isEmpty()) return probeWithBlankStop(recent, maxProbe, blankLimit)
         // 收敛下界：最近已知有效学期往前 2 个学期；更早学期不重探（数据在缓存，列表稳定）
         val newestKnown = knownTerms.firstOrNull()
         val lowerBound = newestKnown?.let { termMinus(it, 2) } ?: fullWindow.last()
