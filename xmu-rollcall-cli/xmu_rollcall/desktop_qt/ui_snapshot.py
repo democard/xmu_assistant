@@ -76,6 +76,10 @@ class UiSnapshotMixin:
             with open(tmp, "w", encoding="utf-8") as file:
                 file.write(text)
             os.replace(tmp, path)
+            # 落盘成功即登记归属账号：换号分支清完旧数据后会把该字段置空，
+            # 若这里不重新登记，**第二次**换号时守卫 `if self._snapshot_account_id and ...`
+            # 恒为假 → 不清上一账号残留的签到记录/课件/事件表（串号展示）。
+            self._snapshot_account_id = str((self.account or {}).get("id") or "")
         except Exception as exc:
             # 静默吞掉但留一线索：快照写盘失败会让下次启动退化为空白首屏
             # （SWR 缓存先行失效），打包 exe 内无 stdout，只能经 diag.log 留痕。

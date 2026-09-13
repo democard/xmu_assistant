@@ -51,5 +51,32 @@ class UiSnapshotTests(unittest.TestCase):
         self.assertIsNone(app_module.ui_snapshot_from_json(text))
 
 
+class UiSnapshotOwnershipTests(unittest.TestCase):
+    """落盘后必须登记归属账号：否则第二次换号的「清旧账号数据」守卫失效。"""
+
+    def test_successful_save_records_the_current_account_as_owner(self):
+        import tempfile
+        from unittest.mock import patch
+        from xmu_rollcall.desktop_qt.ui_snapshot import UiSnapshotMixin
+
+        host = object.__new__(UiSnapshotMixin)
+        host.account = {"id": 7}
+        host.course_records = []
+        host.courseware_courses = []
+        host.log = lambda message: None
+        host._snapshot_account_id = ""  # 上一次换号清完数据后置空的状态
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ui_snapshot.json"
+            with patch(
+                "xmu_rollcall.desktop_qt.ui_snapshot._ui_snapshot_path",
+                return_value=target,
+            ):
+                host._save_ui_snapshot()
+
+            self.assertTrue(target.exists(), "快照应已落盘")
+            self.assertEqual(host._snapshot_account_id, "7", "落盘后必须登记归属账号")
+
+
 if __name__ == "__main__":
     unittest.main()
