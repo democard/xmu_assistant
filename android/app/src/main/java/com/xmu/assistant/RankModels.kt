@@ -75,3 +75,13 @@ internal fun identifyRankRecord(records: List<RankRecord>, pending: RankPending)
     check(candidates.size <= 1) { "发现多条新申请，无法确认本次记录。请在教务系统核对后继续。" }
     return candidates.singleOrNull()
 }
+
+/**
+ * 所选范围内最近一次完整计算记录（参与者 > 0），供兜底采用。
+ * 服务端可能不生成新记录（所选范围已有有效记录会被合并/忽略），
+ * 此时等待新记录永远等不到；只接受成绩范围 ID 精确匹配的记录，
+ * 避免把其他范围的结果当成本范围的排名。
+ */
+internal fun latestCompleteRecordForRange(records: List<RankRecord>, rangeId: String): RankRecord? =
+    records.filter { it.rangeId == rangeId && it.participants > 0 }
+        .maxByOrNull { it.calculatedAt }

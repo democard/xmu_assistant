@@ -29,6 +29,10 @@ internal class RankSectionState(
     private val show: (String) -> Unit,
     initialScores: List<XmuScoreRecord>,
     private val clientFactory: (String, (String) -> String, () -> Boolean) -> XmuRankClient = { c, renew, active -> XmuRankClient(c, renew, active) },
+    /** 等待新记录的轮询节奏：没有可兜底的旧记录时要等满全部机会。可注入以便测试零延迟。 */
+    private val pollDelays: List<Long> = listOf(3000, 3000, 8000, 8000, 8000, 8000, 8000),
+    /** 已有可兜底记录时的缩短节奏：新记录多半不会到来，尽量少让用户干等。 */
+    private val fallbackPollDelays: List<Long> = listOf(3000, 5000, 8000),
 ) {
     var cache by mutableStateOf(rankCacheFromJson(readCache(), rankDigest(username())))
         private set
@@ -108,39 +112,65 @@ internal class RankSectionState(
                     try { withContext(Dispatchers.IO) { client.submit(choice.id) } }
                     catch (e: RankSubmitRejected) { update(working.copy(pending = null)); throw e }
                 }
+                suspend fun finishWith(record: RankRecord, pending: RankPending, adopted: Boolean) {
+                    stage = "正在获取证明"
+                    val pdf = withContext(Dispatchers.IO) { client.certificate(record.id) }
+                    stage = "正在读取排名"
+                    val numbers = withContext(Dispatchers.IO) {
+                        runCatching {
+                            PDFBoxResourceLoader.init(context.applicationContext)
+                            PDDocument.load(pdf).use { document ->
+                                check(document.numberOfPages in 1..10)
+                                rankNumbersFromText(PDFTextStripper().getText(document))
+                            }
+                        }.getOrNull()
+                    }
+                    // 兜底沿用旧记录时的原有指纹（若已持有同一记录），让"待更新"判定仍然可信
+                    val fingerprintForResult = cache.result?.takeIf { it.recordId == record.id }?.fingerprint
+                        ?: pending.fingerprint
+                    val result = RankResult(record.id, numbers?.position, numbers?.participants, pending.range.name,
+                        pending.requestedAt, System.currentTimeMillis(), record.calculatedAt, fingerprintForResult,
+                        withContext(Dispatchers.IO) { Base64.encodeToString(pdf, Base64.NO_WRAP) })
+                    update(working.copy(result = result, pending = null))
+                    stage = ""
+                    when {
+                        numbers == null -> error = "证明已保存，但未识别到 GPA 排名。可导出原始 PDF 核对；不会把历史排名当成本次结果。"
+                        adopted -> error = "教务未生成新记录，已采用所选范围最近一次计算结果（计算于 ${record.calculatedAt.ifBlank { "未知时间" }}）。"
+                    }
+                }
+
                 stage = "正在等待计算"
-                repeat(8) { attempt ->
+                var fallback: RankRecord? = null
+                var ambiguity: String? = null
+                var attempt = 0
+                while (true) {
                     ensureActive(); check(active()) { "会话已改变" }
                     val pending = working.pending ?: error("申请状态缺失")
                     val records = withContext(Dispatchers.IO) { client.records() }
-                    val record = identifyRankRecord(records, pending)
+                    // 多笔新申请并存时无法归因本次申请，但不妨碍兜底采用本范围最近记录
+                    val record = try { identifyRankRecord(records, pending) }
+                    catch (e: IllegalStateException) { ambiguity = e.message; null }
                     if (record != null) {
                         if (pending.recordId.isBlank()) update(working.copy(pending = pending.copy(recordId = record.id)))
                         if (record.participants > 0) {
-                            stage = "正在获取证明"
-                            val pdf = withContext(Dispatchers.IO) { client.certificate(record.id) }
-                            stage = "正在读取排名"
-                            val numbers = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    PDFBoxResourceLoader.init(context.applicationContext)
-                                    PDDocument.load(pdf).use { document ->
-                                        check(document.numberOfPages in 1..10)
-                                        rankNumbersFromText(PDFTextStripper().getText(document))
-                                    }
-                                }.getOrNull()
-                            }
-                            val result = RankResult(record.id, numbers?.position, numbers?.participants, pending.range.name,
-                                pending.requestedAt, System.currentTimeMillis(), record.calculatedAt, pending.fingerprint,
-                                withContext(Dispatchers.IO) { Base64.encodeToString(pdf, Base64.NO_WRAP) })
-                            update(working.copy(result = result, pending = null))
-                            stage = ""
-                            if (numbers == null) error = "证明已保存，但未识别到 GPA 排名。可导出原始 PDF 核对；不会把历史排名当成本次结果。"
+                            finishWith(record, pending, adopted = false)
                             return@launch
                         }
                     }
-                    if (attempt < 7) delay(if (attempt < 2) 3000 else 8000)
+                    latestCompleteRecordForRange(records, pending.range.id)?.let { fallback = it }
+                    val delays = if (fallback != null) fallbackPollDelays else pollDelays
+                    if (attempt >= delays.size) break
+                    delay(delays[attempt])
+                    attempt++
                 }
-                error = "本次计算尚未完成。点击继续查询，不会重复申请。"
+                val adopt = fallback
+                if (adopt != null) {
+                    // 服务端未生成新记录（所选范围已有有效记录时申请会被合并/忽略）：采用最近一次
+                    // 完整计算，明确标注来源，避免用户无限等待；下次点击仍会重新尝试申请。
+                    finishWith(adopt, working.pending ?: error("申请状态缺失"), adopted = true)
+                    return@launch
+                }
+                error = ambiguity ?: "本次计算尚未完成。点击继续查询，不会重复申请。"
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
                 if (active()) error = if (e is java.io.IOException) "网络连接失败；若申请已提交，请继续查询本次结果。" else e.message ?: "获取失败，请稍后重试"

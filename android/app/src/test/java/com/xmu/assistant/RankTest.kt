@@ -29,6 +29,29 @@ class RankTest {
         assertNull(identifyRankRecord(listOf(RankRecord("other", 120)), p.copy(recordId = "new")))
     }
 
+    @Test fun `adoption picks newest complete record of the exact range only`() {
+        val records = listOf(
+            RankRecord("incomplete", 0, "r", "2026-09-20"),
+            RankRecord("other-range", 152, "x", "2026-09-19"),
+            RankRecord("blank-range", 152, "", "2026-09-19"),
+            RankRecord("older", 152, "r", "2026-09-04"),
+            RankRecord("newest", 152, "r", "2026-09-11"),
+        )
+        assertEquals("newest", latestCompleteRecordForRange(records, "r")?.id)
+        assertNull(latestCompleteRecordForRange(records, "none"))
+        assertNull(latestCompleteRecordForRange(listOf(RankRecord("only-incomplete", 0, "r", "2026-09-20")), "r"))
+    }
+
+    @Test fun `parsing accepts thousands separators and real certificate line breaks`() {
+        assertEquals(RankNumbers(56, 1234), rankNumbersFromText("The total number of students in the major is 1,234, with a GPA rank of 56."))
+        assertEquals(
+            RankNumbers(84, 152),
+            rankNumbersFromText(
+                "Since Sep. 2025. The total \nnumber of students in the major is 152, with a GPA rank of 84. All academic records \nare based on the data as of Aug. 21, 2026.",
+            ),
+        )
+    }
+
     @Test fun `owner isolation and pending submission survive cache roundtrip`() {
         val cache = RankCache("owner", RankResult("r", 12, 120, "全部", 1, 2, "", "fp", "pdf"),
             RankPending(setOf("r"), RankRange("scope", "全部"), 3, "fp"))
