@@ -1,2 +1,2 @@
 e6809411d5346aaafb263ebe457519408ec06915115f6f9873604717b4b442f1 *xmu-assistant.exe
-fcd0a4bacd935273385c04a9c9c6c457c33073eeceead88b62be44f021789cc6 *xmu-assistant-release.apk
+4f59616f01dbba834a9f8bd094694f5ea03b764a0a977c5bab3f575fa131e675 *xmu-assistant-release.apk
