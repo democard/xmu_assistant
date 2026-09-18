@@ -75,6 +75,8 @@ internal fun RankPage(state: RankSectionState, onBack: () -> Unit) {
                     Text(when {
                         state.loading -> state.stage
                         pending != null -> "继续查询结果"
+                        // 多范围必须先选：按钮此时禁用，直接说明原因，避免“点了没反应”
+                        state.ranges.size > 1 && state.selectedRange.isBlank() -> "请先选择计算范围"
                         result != null -> "重新获取专业排名"
                         else -> "获取专业排名"
                     })
