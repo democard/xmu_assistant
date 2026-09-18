@@ -94,6 +94,32 @@ internal class RankSectionState(
                 check(active()) { "会话已改变" }
                 working = value; cache = value
             }
+            suspend fun finishWith(record: RankRecord, pending: RankPending, reuseNote: String?) {
+                stage = "正在获取证明"
+                val pdf = withContext(Dispatchers.IO) { client.certificate(record.id) }
+                stage = "正在读取排名"
+                val numbers = withContext(Dispatchers.IO) {
+                    runCatching {
+                        PDFBoxResourceLoader.init(context.applicationContext)
+                        PDDocument.load(pdf).use { document ->
+                            check(document.numberOfPages in 1..10)
+                            rankNumbersFromText(PDFTextStripper().getText(document))
+                        }
+                    }.getOrNull()
+                }
+                // 复用旧记录时沿用该记录原有的成绩指纹（若已持有同一记录），让"待更新"判定仍然可信
+                val fingerprintForResult = cache.result?.takeIf { it.recordId == record.id }?.fingerprint
+                    ?: pending.fingerprint
+                val result = RankResult(record.id, numbers?.position, numbers?.participants, pending.range.name,
+                    pending.requestedAt, System.currentTimeMillis(), record.calculatedAt, fingerprintForResult,
+                    withContext(Dispatchers.IO) { Base64.encodeToString(pdf, Base64.NO_WRAP) })
+                update(working.copy(result = result, pending = null))
+                stage = ""
+                when {
+                    numbers == null -> error = "证明已保存，但未识别到 GPA 排名。可导出原始 PDF 核对；不会把历史排名当成本次结果。"
+                    reuseNote != null -> error = reuseNote
+                }
+            }
             try {
                 if (working.pending == null) {
                     val choices = withContext(Dispatchers.IO) { client.ranges() }
@@ -104,39 +130,27 @@ internal class RankSectionState(
                         stage = "请选择计算范围"
                         return@launch
                     }
-                    val before = withContext(Dispatchers.IO) { client.records() }.map { it.id }.toSet()
+                    val snapshot = withContext(Dispatchers.IO) { client.records() }
+                    check(active()) { "会话已改变" }
+                    // 先探测：所选范围已有完整记录就直接复用并说明原因，绝不重复提交
+                    // （教务对已存在的记录会忽略新申请，先申请再等只会白等）
+                    val existing = latestCompleteRecordForRange(snapshot, choice.id)
+                    if (existing != null) {
+                        stage = "已有计算记录，正在读取"
+                        finishWith(
+                            existing,
+                            RankPending(snapshot.map { it.id }.toSet(), choice, System.currentTimeMillis(), startFingerprint),
+                            reuseNote = "所选范围已有计算记录（计算于 ${existing.calculatedAt.ifBlank { "未知时间" }}），已直接读取复用，未重复提交申请。",
+                        )
+                        return@launch
+                    }
+                    val before = snapshot.map { it.id }.toSet()
                     val pending = RankPending(before, choice, System.currentTimeMillis(), startFingerprint)
                     // Persist BEFORE the POST. Process death or a lost response must never cause an automatic resubmit.
                     update(working.copy(pending = pending))
                     stage = "正在提交申请"
                     try { withContext(Dispatchers.IO) { client.submit(choice.id) } }
                     catch (e: RankSubmitRejected) { update(working.copy(pending = null)); throw e }
-                }
-                suspend fun finishWith(record: RankRecord, pending: RankPending, adopted: Boolean) {
-                    stage = "正在获取证明"
-                    val pdf = withContext(Dispatchers.IO) { client.certificate(record.id) }
-                    stage = "正在读取排名"
-                    val numbers = withContext(Dispatchers.IO) {
-                        runCatching {
-                            PDFBoxResourceLoader.init(context.applicationContext)
-                            PDDocument.load(pdf).use { document ->
-                                check(document.numberOfPages in 1..10)
-                                rankNumbersFromText(PDFTextStripper().getText(document))
-                            }
-                        }.getOrNull()
-                    }
-                    // 兜底沿用旧记录时的原有指纹（若已持有同一记录），让"待更新"判定仍然可信
-                    val fingerprintForResult = cache.result?.takeIf { it.recordId == record.id }?.fingerprint
-                        ?: pending.fingerprint
-                    val result = RankResult(record.id, numbers?.position, numbers?.participants, pending.range.name,
-                        pending.requestedAt, System.currentTimeMillis(), record.calculatedAt, fingerprintForResult,
-                        withContext(Dispatchers.IO) { Base64.encodeToString(pdf, Base64.NO_WRAP) })
-                    update(working.copy(result = result, pending = null))
-                    stage = ""
-                    when {
-                        numbers == null -> error = "证明已保存，但未识别到 GPA 排名。可导出原始 PDF 核对；不会把历史排名当成本次结果。"
-                        adopted -> error = "教务未生成新记录，已采用所选范围最近一次计算结果（计算于 ${record.calculatedAt.ifBlank { "未知时间" }}）。"
-                    }
                 }
 
                 stage = "正在等待计算"
@@ -153,7 +167,7 @@ internal class RankSectionState(
                     if (record != null) {
                         if (pending.recordId.isBlank()) update(working.copy(pending = pending.copy(recordId = record.id)))
                         if (record.participants > 0) {
-                            finishWith(record, pending, adopted = false)
+                            finishWith(record, pending, reuseNote = null)
                             return@launch
                         }
                     }
@@ -167,7 +181,8 @@ internal class RankSectionState(
                 if (adopt != null) {
                     // 服务端未生成新记录（所选范围已有有效记录时申请会被合并/忽略）：采用最近一次
                     // 完整计算，明确标注来源，避免用户无限等待；下次点击仍会重新尝试申请。
-                    finishWith(adopt, working.pending ?: error("申请状态缺失"), adopted = true)
+                    finishWith(adopt, working.pending ?: error("申请状态缺失"),
+                        reuseNote = "教务未生成新记录，已采用所选范围最近一次计算结果（计算于 ${adopt.calculatedAt.ifBlank { "未知时间" }}）。")
                     return@launch
                 }
                 error = ambiguity ?: "本次计算尚未完成。点击继续查询，不会重复申请。"
