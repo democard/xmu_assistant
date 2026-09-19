@@ -48,5 +48,27 @@ class PyprojectPackagingTests(unittest.TestCase):
         )
 
 
+class PyInstallerSpecFilterTests(unittest.TestCase):
+    """spec 的 PySide6 过滤规则必须命中真实落盘路径。
+
+    iconengines 规则此前漏写 plugins 段（PyInstaller 6.x 实际路径是
+    PySide6/plugins/iconengines/），规则从未生效，qsvgicon.dll（依赖已被
+    spec 删除的 Qt6Svg）一直被打进 exe——注释宣称的裁剪是假的。
+    """
+
+    def test_iconengine_filter_targets_the_real_plugin_path(self):
+        import re
+
+        spec_text = (ROOT / "xmu-assistant.spec").read_text(encoding="utf-8")
+        match = re.search(r"r'(PySide6[^']*iconengines[^']*)'", spec_text)
+        self.assertIsNotNone(match, "spec 里应存在 iconengines 过滤规则")
+
+        pattern = match.group(1)
+        self.assertIsNotNone(
+            re.search(pattern, "PySide6/plugins/iconengines/qsvgicon.dll"),
+            "iconengines 过滤规则必须命中真实落盘路径 PySide6/plugins/iconengines/",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

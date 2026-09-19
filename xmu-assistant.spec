@@ -39,7 +39,9 @@ _EXCLUDE_BIN_PATTERNS = [
     # - platforms 仅保留 qwindows.dll（必需）；qoffscreen/qminimal/qdirect2d 供无头/测试/直显，删。
     # - styles/qmodernwindowsstyle.dll 保留（现代样式）。
     r'PySide6[\\/]plugins[\\/]imageformats[\\/](?!qico\.dll$).*\.dll$',
-    r'PySide6[\\/]iconengines[\\/].*\.dll$',
+    # PyInstaller 6.x 实际落盘路径带 plugins 段：漏写则规则永不命中，
+    # qsvgicon.dll（依赖已删的 Qt6Svg）会一直被打进 exe（tests/test_pyproject_packaging.py 有守护）。
+    r'PySide6[\\/]plugins[\\/]iconengines[\\/].*\.dll$',
     r'PySide6[\\/]plugins[\\/]generic[\\/].*\.dll$',
     r'PySide6[\\/]plugins[\\/]platforms[\\/]q(offscreen|minimal|direct2d)\.dll$',
     # Qt 翻译资源：应用仅中文，96 个 .qm 中非 zh_CN 的 ~1.84MB 是死重；
