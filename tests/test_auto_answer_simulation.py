@@ -145,7 +145,11 @@ class AutoAnswerSimulationTests(unittest.TestCase):
             ))
         t = threading.Thread(target=auto_task)
         t.start()
-        time.sleep(0.2)  # 让自动 worker 进入延迟等待
+        # 确定性等待：worker 已登记取消事件再取消（原先 sleep(0.2) 猜时机，负载机上
+        # 可能猜早了——取消发生在登记前，worker 会正常延迟并提交，用例偶发假失败）
+        deadline = time.monotonic() + 5.0
+        while "e4" not in self.cancellations and time.monotonic() < deadline:
+            time.sleep(0.005)
         # 用户手动应答：先取消在途自动（与 app._answer_event(auto=False) 同序）
         _simulate_cancel(self.cancellations, "e4")
         t.join(timeout=2.0)

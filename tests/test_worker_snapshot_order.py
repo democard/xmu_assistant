@@ -77,11 +77,12 @@ class DownloadWorkerSnapshotOrderTest(unittest.TestCase):
         import inspect
 
         source = inspect.getsource(DashboardWindow._answer_worker)
-        self.assertLess(
-            source.index('worker_account_id = str((self.account or {}).get("id") or "")'),
-            source.index("clone_session(self.session)"),
-            "_answer_worker 必须先读账号 id 再克隆会话",
-        )
+        id_pos = source.find('worker_account_id = str((self.account or {}).get("id") or "")')
+        clone_pos = source.find("clone_session(self.session)")
+        # 用 find(-1) 而非 index()：锚被重命名/改写时给出可读信息，而不是抛 ValueError
+        self.assertGreaterEqual(id_pos, 0, "锚丢失：_answer_worker 的账号快照语句未找到")
+        self.assertGreaterEqual(clone_pos, 0, "锚丢失：_answer_worker 的会话克隆语句未找到")
+        self.assertLess(id_pos, clone_pos, "_answer_worker 必须先读账号 id 再克隆会话")
 
 
 if __name__ == "__main__":
