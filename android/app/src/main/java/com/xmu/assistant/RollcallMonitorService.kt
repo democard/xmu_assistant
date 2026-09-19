@@ -33,10 +33,22 @@ class RollcallMonitorService : Service() {
         // Android 14+ (targetSdk 34+) 系统要求：两参 startForeground 在某些 ROM
         // （实测 ColorOS/Android 16 的 ForegroundServiceTypeLoggerModule 报
         // "does not have any types"）不会向下游传 FGS 类型。改三参 + 显式类型，
-        // 让系统始终把它当作 dataSync 前台服务，避免被判为"无类型服务"被停。
+        // 让系统始终把它当作带类型的前台服务，避免被判为"无类型服务"被停。
         // 三参重载要求 API29+；API26-28 走两参（无类型语义可传，系统按默认处理），
         // 否则旧设备 onCreate 即 NoSuchMethodError 崩溃。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        //
+        // 类型分派：Android 15（API 35，targetSdk 35 起）对 dataSync 有 24h 内
+        // 6 小时的强制超时——全天候签到监控必然触顶，超时未停即被系统 ANR。
+        // API 35+ 改传 specialUse（无该超时，用途声明见 manifest 的
+        // PROPERTY_SPECIAL_USE_FGS_SUBTYPE）；API 29-34 的 dataSync 无此超时，
+        // 维持原类型；API 26-28 两参。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            startForeground(
+                FOREGROUND_NOTIFICATION_ID,
+                foregroundNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 FOREGROUND_NOTIFICATION_ID,
                 foregroundNotification(),
@@ -45,6 +57,16 @@ class RollcallMonitorService : Service() {
         } else {
             startForeground(FOREGROUND_NOTIFICATION_ID, foregroundNotification())
         }
+    }
+
+    /** dataSync 超时兜底（API 35 回调）：正常路径 API 35+ 已用 specialUse（无超时）
+     *  不会进这里；若个别 ROM 仍按 dataSync 判定超时，优雅自停而不是被系统以
+     *  ForegroundServiceDidNotStopInTimeException 杀进程（监控停摆且用户无感知）。
+     *  用户从首页/磁贴重新点「启动监控」即可恢复。 */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "前台服务超时回调（type=$fgsType）：优雅自停，等待用户手动重启监控")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

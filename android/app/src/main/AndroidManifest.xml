@@ -2,6 +2,10 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- specialUse（API 34+）：签到监控是长时间运行的服务，dataSync 类型在 Android 15
+         有 24h 内 6 小时的强制超时（targetSdk 35 起），监控会被系统停掉。
+         本应用不在 Play 上架，specialUse 无需审核；API 29-34 仍走 dataSync（无超时）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 考试强提醒：精确闹钟（Android 12+ 需授权）+ 全屏通知（Android 14+ 需授权） -->
@@ -53,7 +57,12 @@
         <service
             android:name=".RollcallMonitorService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|specialUse">
+            <!-- specialUse 用途声明（API 34+ 平台要求随服务携带） -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="长时课堂签到监控：后台轮询 TronClass 签到事件并在出现签到时推送提醒，属于持续性校务数据读取，不适用 dataSync 的 6 小时超时" />
+        </service>
 
         <!-- 快捷设置磁贴：一键开/关签到监控（TileService 需 API 24+，minSdk 26 满足）。
              系统绑定要求 BIND_QUICK_SETTINGS_TILE 权限声明 + QS_TILE action。 -->
