@@ -20,8 +20,11 @@ dependencies = [
 [project.scripts]
 xmu-dashboard = "xmu_rollcall.desktop_qt.app:main"
 
-[tool.setuptools]
-packages = ["xmu_rollcall"]
+[tool.setuptools.packages.find]
+# 必须自动发现并包含子包：此前 packages = ["xmu_rollcall"] 漏掉 desktop_qt 子包，
+# pip install 产出的 wheel 不含全部 UI 文件，入口点 xmu-dashboard 直接
+# ModuleNotFoundError（开发一直走 PYTHONPATH 从未暴露）。
+include = ["xmu_rollcall*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "xmu_rollcall.__version__"}
