@@ -218,3 +218,56 @@ class CoursewarePageLogicTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RecordingTable:
+    """只记录行操作的表格桩：验证整表重建不再逐行 insertRow（O(n²) 行插入）。"""
+
+    def __init__(self, existing_rows: int = 0):
+        self.row_count = existing_rows
+        self.set_row_calls: list[int] = []
+        self.insert_row_calls: list[int] = []
+        self.items: list[tuple[int, int]] = []
+
+    def rowCount(self) -> int:
+        return self.row_count
+
+    def item(self, row: int, column: int):
+        return None
+
+    def setRowCount(self, count: int) -> None:
+        self.row_count = count
+        self.set_row_calls.append(count)
+
+    def insertRow(self, row: int) -> None:
+        self.row_count += 1
+        self.insert_row_calls.append(row)
+
+    def setItem(self, row: int, column: int, item) -> None:
+        self.items.append((row, column))
+
+
+class CoursewareTableRebuildTest(unittest.TestCase):
+    """整表重建的行操作形状：一次 setRowCount(n)，不再逐行 insertRow。"""
+
+    def test_rebuild_reserves_all_rows_once(self):
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        host = CoursewarePageLogicTest._host(
+            courseware_items=[CoursewarePageLogicTest._item(), CoursewarePageLogicTest._item()],
+            courseware_download_status={},
+        )
+        table = _RecordingTable(existing_rows=7)
+        host.courseware_table = table
+        host._refresh_courseware_empty_state = lambda: None
+        host._courseware_status_color = lambda value: "#000000"
+
+        host._refresh_courseware_table()
+
+        self.assertEqual(table.set_row_calls, [2], "必须一次 setRowCount(n) 预留全部行")
+        self.assertEqual(
+            table.insert_row_calls,
+            [],
+            "逐行 insertRow 会触发 Qt 每行内部重排（O(n²)）——下载批次里每次事件都重建",
+        )
+        self.assertEqual(len(table.items), 2 * 6, "6 列 × 2 行的单元格仍须全部落位")

@@ -489,9 +489,11 @@ class CoursewarePageMixin:
             if self.courseware_table.item(row, 0)
             and self.courseware_table.item(row, 0).checkState() == Qt.CheckState.Checked
         }
-        self.courseware_table.setRowCount(0)
+        # 一次 setRowCount 预留全部行后直接 setItem：逐行 insertRow 会让 Qt 每行
+        # 内部重排（O(n²)）——下载批次里每次进度/完成事件都整表重建，100 项课件即
+        # 200 次 × O(n²) 的行插入；首页事件表已是 setRowCount(n)+setItem 的 O(n) 版。
+        self.courseware_table.setRowCount(len(self.courseware_items))
         for row_index, item in enumerate(self.courseware_items):
-            self.courseware_table.insertRow(row_index)
             checkbox = QTableWidgetItem("")
             checkbox.setFlags(
                 Qt.ItemFlag.ItemIsEnabled
