@@ -8,7 +8,21 @@ data class AcademicCacheSnapshot(
     val coursesUpdatedAtMillis: Long = 0L,
     val coursewareByCourse: Map<String, List<CoursewareUiItem>> = emptyMap(),
     val coursewareUpdatedAtMillis: Map<String, Long> = emptyMap(),
-)
+) {
+    companion object {
+        /** 进程级课件缓存快照：转屏（Activity 重建）复用内存数据，避免课程+课件大 JSON
+         *  （可达数百 KB）每次重建都全量重解析；登出/换号清理路径置 null（跟随账号会话）。
+         *  与 ScheduleSectionState 的进程级课表快照同范式。 */
+        @Volatile
+        private var processCache: AcademicCacheSnapshot? = null
+
+        fun currentProcessCache(): AcademicCacheSnapshot? = processCache
+
+        fun updateProcessCache(snapshot: AcademicCacheSnapshot?) {
+            processCache = snapshot
+        }
+    }
+}
 
 fun AcademicCacheSnapshot.withCourses(
     courses: List<CourseSummary>,

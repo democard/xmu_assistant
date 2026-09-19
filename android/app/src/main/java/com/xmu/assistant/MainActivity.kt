@@ -198,13 +198,24 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
     // 原在组合期 remember 内主线程执行（拖首帧）；改为初始空快照 + IO 协程解析
     // （与课表 loadCachedSnapshotOnStartup 同款约定）。守卫：仅当组合期仍是初始
     // 空快照才应用，防止覆盖启动期间网络刷新已带回的新数据。
-    var academicCache by remember { mutableStateOf(AcademicCacheSnapshot()) }
+    // 转屏/重建时优先复用进程级快照（与 ScheduleSectionState 同范式），
+    // 避免每次 Activity 重建都把大 JSON 全量重解析一遍。
+    var academicCache by remember {
+        mutableStateOf(AcademicCacheSnapshot.currentProcessCache() ?: AcademicCacheSnapshot())
+    }
     var courses by remember { mutableStateOf(academicCache.courses) }
+    // 课件缓存唯一写入口：组合状态与进程级快照同进同出。next=null 表示登出/换号清空。
+    fun updateAcademicCache(next: AcademicCacheSnapshot?) {
+        AcademicCacheSnapshot.updateProcessCache(next)
+        academicCache = next ?: AcademicCacheSnapshot()
+    }
     LaunchedEffect(Unit) {
-        val initial = withContext(Dispatchers.IO) { academicCacheFromJson(settings.academicCacheJson) }
         if (academicCache.courses.isEmpty() && academicCache.coursewareByCourse.isEmpty()) {
-            academicCache = initial
-            courses = initial.courses
+            val initial = withContext(Dispatchers.IO) { academicCacheFromJson(settings.academicCacheJson) }
+            if (academicCache.courses.isEmpty() && academicCache.coursewareByCourse.isEmpty()) {
+                updateAcademicCache(initial)
+                courses = initial.courses
+            }
         }
     }
     // 记住选中的课程 id（rememberSaveable：转屏/进程重建后恢复），课程对象从 courses 派生。
@@ -423,7 +434,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
             selectedCourseId = { selectedCourseId },
             setSelectedCourseId = { selectedCourseId = it },
             academicCache = { academicCache },
-            setAcademicCache = { academicCache = it },
+            setAcademicCache = { updateAcademicCache(it) },
             setAcademicCacheJson = { settings.academicCacheJson = it },
             isSelectedCourse = { selectedCourse?.id == it },
             setPendingSessionRetry = { pendingSessionRetry = it },
@@ -460,7 +471,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         deleteRollcallHistoryCacheFile(activity)
         ScheduleWidgetData.clear(activity)
         settings.clearManualAcademicWeeks()
-        academicCache = AcademicCacheSnapshot()
+        updateAcademicCache(null)
         courses = emptyList()
         coursesLoading = false
         coursesRefreshError = ""
@@ -540,7 +551,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
                     coursesRefreshError = ""
                     val updatedAt = System.currentTimeMillis()
                     val updatedCache = academicCache.withCourses(list, updatedAt)
-                    academicCache = updatedCache
+                    updateAcademicCache(updatedCache)
                     // 大 JSON 序列化+加密 prefs 写入挪后台线程（镜像
                     // ScheduleSectionState.persistSnapshot 范式，IO 协程 + 会话世代
                     // 校验）；此前 onResult 在主线程同步序列化全量缓存（可达数百 KB）。
@@ -902,7 +913,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         monitorWrites = monitorWrites,
         monitorTransitionInProgressNow = { monitorTransitionInProgress },
         monitorTransitionIdNow = { monitorTransitionId },
-        setAcademicCache = { academicCache = it },
+        setAcademicCache = { updateAcademicCache(it) },
         courseWrites = courseWrites,
         setPendingSessionRetry = { pendingSessionRetry = it },
         setCookieHeader = { cookieHeader = it },

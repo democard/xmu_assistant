@@ -577,6 +577,30 @@ class MainActivitySourceContractTest {
         )
     }
 
+    @Test
+    fun `academic cache writes are funneled through the process snapshot updater`() {
+        val main = mainActivitySource()
+
+        assertTrue(
+            "the updater must sync the process-level snapshot",
+            "AcademicCacheSnapshot.updateProcessCache(next)" in main,
+        )
+        assertTrue(
+            "composition must reuse the process-level snapshot across recreation",
+            "AcademicCacheSnapshot.currentProcessCache() ?: AcademicCacheSnapshot()" in main,
+        )
+        // 旧的直写路径必须消失：所有变更（含登出清空）都走 updateAcademicCache，
+        // 否则进程级快照会滞留旧账号数据（串号展示）。
+        assertTrue(
+            "direct academicCache writes must not remain",
+            "setAcademicCache = { academicCache = it }" !in main,
+        )
+        assertTrue(
+            "logout must clear through the updater",
+            "updateAcademicCache(null)" in main,
+        )
+    }
+
     private fun mainActivitySource(): String {
         val relativePath = "src/main/java/com/xmu/assistant/MainActivity.kt"
         val sourceFile = sequenceOf(
