@@ -99,19 +99,16 @@ class RetryRequestTests(unittest.TestCase):
 
 class SecretsFallbackTests(unittest.TestCase):
     def test_protect_falls_back_to_plaintext_when_win32crypt_missing(self):
-        """P4：依赖清单缺 pywin32 时 protect() 必须显示回退明文（不崩、不伪装加密）。"""
-        import builtins
+        """P4：依赖清单缺 pywin32 时 protect() 必须显示回退明文（不崩、不伪装加密）。
+
+        win32crypt 改为启动期缓存后，"不可用"的注入点从运行时 import 换成
+        启动缓存状态（_win32crypt=None + 失败原因）；回退语义本身不变。
+        """
+        from unittest import mock
 
         from xmu_rollcall import secrets as secrets_mod
 
-        real_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "win32crypt":
-                raise ImportError("No module named 'win32crypt'")
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", side_effect=fake_import):
+        with mock.patch.object(secrets_mod, "_win32crypt", None),                 mock.patch.object(secrets_mod, "_win32crypt_error", "ImportError('fixture')"),                 mock.patch.object(secrets_mod, "_warned_unavailable", True):
             self.assertEqual(secrets_mod.protect("secret"), "secret")
 
     def test_protect_is_idempotent_on_encrypted_value(self):

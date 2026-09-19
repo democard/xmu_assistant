@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import tempfile
@@ -187,6 +188,34 @@ class SecretsProtectionTests(unittest.TestCase):
             self.assertNotEqual(encrypted, plaintext)
             self.assertTrue(encrypted.startswith(secrets.DPAPI_PREFIX))
             self.assertEqual(secrets.unprotect(encrypted), plaintext)
+
+    def test_protect_uses_the_startup_cached_module(self):
+        # 回归锚：protect 必须使用启动期缓存的 win32crypt，不得在保存时才懒加载——
+        # 打包 onefile 的解包目录运行中途可能失效，懒加载会把该次保存写成明文凭据。
+        # 桩模块的返回值是可识别的固定 blob：若走了真实模块/懒加载，断言即失败。
+        from unittest import mock
+
+        class FakeCrypt:
+            def CryptProtectData(self, data, *args, **kwargs):
+                return b"fixture-blob"
+
+        with mock.patch.object(secrets, "_win32crypt", FakeCrypt()):
+            expected = secrets.DPAPI_PREFIX + base64.b64encode(b"fixture-blob").decode("ascii")
+            self.assertEqual(secrets.protect("pw"), expected)
+
+    def test_unavailable_module_warns_once_then_falls_back_to_plaintext(self):
+        # 启动期导入失败的原因必须在首次使用时带根因补发告警，且只发一次；
+        # 该次及后续保存按明文回退（不阻塞保存，与既有降级语义一致）。
+        from unittest import mock
+
+        warnings = []
+
+        with mock.patch.object(secrets, "_win32crypt", None),                 mock.patch.object(secrets, "_win32crypt_error", "ImportError('fixture')"),                 mock.patch.object(secrets, "_warned_unavailable", False),                 mock.patch.object(secrets, "_warn", side_effect=warnings.append):
+            self.assertEqual(secrets.protect("pw"), "pw")
+            self.assertEqual(secrets.protect("pw2"), "pw2")
+
+        self.assertEqual(len(warnings), 1, "不可用告警只补发一次")
+        self.assertIn("ImportError('fixture')", warnings[0])
 
     def test_unprotect_legacy_plaintext_passthrough(self):
         # 旧明文（无 dpapi: 前缀）必须原样返回，保证向后兼容
