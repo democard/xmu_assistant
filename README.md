@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.6.5（3.97 MB） · Windows v1.5.0**
+**当前版本：Android v1.6.6（3.97 MB） · Windows v1.6.6**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.5/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.5/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.5)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.6/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.6/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.6)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -104,6 +104,14 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
 
+### v1.6.6 更新
+
+- 安全：QQ 邮箱通知的两条 SMTP 通道（465/587）补上服务器证书校验（此前标准库默认不验证，局域网中间人可截获授权码）；教务重定向一旦离开厦大域或降级明文，立即剥离会话 Cookie（CAS 登录链不受影响）。
+- 隐私：云备份/换机迁移排除清单补齐——明文考试安排、签到去重集、加密凭据 prefs（MasterKey 不随迁移，密文恢复到新设备会解不开）、外部课件目录不再进备份。
+- 修复：pip 安装包补齐 desktop_qt 子包（此前入口点必挂）；PyInstaller spec 的 iconengines 过滤规则补上 plugins 段（此前从未生效）。
+- 优化：课件表整表重建改为一次预留行（去 O(n²) 行插入，下载过程更顺滑）；课件缓存接入进程级快照，转屏不再全量重解析。527 项 Android 测试通过。
+- 下载：[v1.6.6 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.6)。
+
 ### v1.6.5 更新
 
 - 专业排名读取流程修复：点击「获取专业排名」先探测所选范围的已有记录——已有完整记录直接读取复用并标注原因，不再重复提交申请；教务对已存在记录的范围会忽略重复申请，原先「先提交再等待」必然白等。
@@ -184,13 +192,13 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.6.5，约 3.97 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.5/xmu-assistant-release.apk) |
-| Windows | 沿用 1.5.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.5/xmu-assistant.exe) |
+| Android 8.0 及以上 | 1.6.6，约 3.97 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.6/xmu-assistant-release.apk) |
+| Windows | 1.6.6 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.6/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.5/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.6/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
-GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.5.0，DPAPI 凭据加密）
+GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.6.6，DPAPI 凭据加密）
                                               #   复现构建：pyinstaller xmu-assistant.spec（或 scripts/build_dashboard_exe.bat）
 GitHub Releases → xmu-assistant-release.apk   # Android 端（release 构建，R8 压缩；固定签名，覆盖安装不丢登录数据）
 release/SHA256SUMS.txt                        # 当前产物 SHA-256 校验值（随每次发布更新）
@@ -372,7 +380,7 @@ Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到�
   签名，换取 `install -r` 覆盖升级不丢本地登录态（重签会丢加密数据）。**代价：任何能拿到该密钥的人
   可伪造同签名更新覆盖安装**，触及本地加密凭据——这是刻意权衡。建议评估：如发布到公开渠道，改为产线
   独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
-- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.5.0 重建（含 DPAPI 凭据加密）；复现构建请执行
+- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.6.6 重建（含 DPAPI 凭据加密）；复现构建请执行
   `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
 - 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
 
