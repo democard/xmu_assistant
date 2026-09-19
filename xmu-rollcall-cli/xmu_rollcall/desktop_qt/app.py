@@ -695,7 +695,7 @@ class DashboardWindow(
         try:
             session = xmulogin(type=3, username=username, password=password)
             if not session:
-                self._emit(("login_failed", "登录失败，请检查学号或密码。"))
+                self._emit(("login_failed", "登录失败，请检查学号或密码。", login_epoch))
                 return
 
             try:
@@ -703,25 +703,12 @@ class DashboardWindow(
                 name = profile.get("name") or username
             except Exception:
                 name = username
-
-            # 读-改-写整体持锁：与通知设置保存（GUI 线程）并发时互相覆盖丢失修改
-            with CONFIG_LOCK:
-                config = load_config()
-                account = next((item for item in get_all_accounts(config) if item.get("username") == username), None)
-                if account is None:
-                    account_id = add_account(config, username, password, name)
-                    account = next(item for item in get_all_accounts(config) if item.get("id") == account_id)
-                else:
-                    account["password"] = password
-                    account["name"] = name
-
-                set_current_account(config, account["id"])
-                set_rollcall_settings(account, get_rollcall_settings(account))
-                save_config(config)
-            save_session(session, get_cookies_path(account["id"]))
-            self._emit(("login_success", session, account, login_epoch))
+            # 只回传认证结果，不在 worker 内落盘。GUI 线程先校验
+            # login_epoch，再保存账号/Cookie；否则登录途中点「退出登录」后，
+            # 迟到 worker 仍会把 current_account_id 和可恢复 Cookie 写回磁盘。
+            self._emit(("login_success", session, None, login_epoch, username, password, name))
         except Exception as exc:
-            self._emit(("login_failed", str(exc)))
+            self._emit(("login_failed", str(exc), login_epoch))
 
     def auto_restore_current_session(self):
         if self.session:
@@ -776,6 +763,14 @@ class DashboardWindow(
 
     def logout(self):
         if not self.account and not self.session:
+            if self._login_in_progress:
+                # 初次登录在途时尚无 account/session：此时点退出应取消
+                # 这次转换，不能直接 return 后让迟到结果把用户重新登录。
+                self._login_epoch += 1
+                self._login_in_progress = False
+                self.password_input.clear()
+                self.log("已取消正在进行的登录。")
+                self._show_toast("已取消登录")
             self._set_login_status("未登录", warn=True)
             self.metric_account.setText("未登录")
             return
@@ -1006,14 +1001,50 @@ class DashboardWindow(
         # 四元组，整包解包会对多余字段抛 ValueError（GUI 槽内无声失败，
         # session/account 永不落地——2026-08-24 体检 P0-1）。切片写法容忍
         # 发射端后续追加字段，worker_epoch 仍按下标单独读取。
-        self._login_in_progress = False
         _, session, account = event[:3]
         worker_epoch = event[3] if len(event) > 3 else None
         if worker_epoch is not None and worker_epoch != self._login_epoch:
             # 代数不一致：worker 在途期间发生了登出/换号，晚到的成功结果不得落地，
             # 否则会把刚清空的 session/account "复活"为已登录（状态错乱）。
             self.log("忽略迟到的登录结果（登录状态在途期间已变更）。")
+            try:
+                session.close()
+            except Exception:
+                pass
             return
+        # 只有当前代的结果才能释放登录门：旧 worker 迟到期间用户
+        # 可能已发起新登录，先清门会让新请求被第三次点击并发穿透。
+        self._login_in_progress = False
+        if account is None and len(event) >= 7:
+            # 手动登录的持久化必须在 epoch 校验之后执行；自动恢复仍传
+            # 现有 account，不走此分支。
+            username, password, name = event[4:7]
+            try:
+                with CONFIG_LOCK:
+                    config = load_config()
+                    account = next(
+                        (item for item in get_all_accounts(config) if item.get("username") == username),
+                        None,
+                    )
+                    if account is None:
+                        account_id = add_account(config, username, password, name)
+                        account = next(
+                            item for item in get_all_accounts(config) if item.get("id") == account_id
+                        )
+                    else:
+                        account["password"] = password
+                        account["name"] = name
+                    set_current_account(config, account["id"])
+                    set_rollcall_settings(account, get_rollcall_settings(account))
+                    save_config(config)
+                    save_session(session, get_cookies_path(account["id"]))
+            except Exception as exc:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                self._ev_login_failed(("login_failed", str(exc)))
+                return
         self._login_epoch += 1
         # 换号/重登：旧监控线程绑定的是旧账号的 clone 会话，若不停止会继续按旧
         # 账号轮询并触发自动应答（GUI 已切到新账号，用新会话提交旧签到 = 跨账号
@@ -1075,6 +1106,13 @@ class DashboardWindow(
         self._refresh_after_login()
 
     def _ev_login_failed(self, event):
+        worker_epoch = event[2] if len(event) > 2 else None
+        if worker_epoch is not None and worker_epoch != self._login_epoch:
+            # 取消旧登录后可立即开始新登录；旧失败事件不得释放
+            # 新 worker 占用的门，也不得改写当前登录状态。
+            self.log("忽略迟到的登录失败（已开始新的登录转换）。")
+            return
+        # 旧的二元 login_failed 事件无 epoch，继续按当前结果处理。
         self._login_in_progress = False
         if self.session is not None:
             # 已登录状态下换号直登失败：迟到的失败结果不得把界面翻回「未登录」，
@@ -1116,7 +1154,16 @@ class DashboardWindow(
             # 晚到的「已停止」不得再覆盖，直接丢弃留痕。
             self.log(f"忽略登出后迟到的监控状态：{event[1]}")
             return
+        worker_token = event[2] if len(event) > 2 else None
+        if worker_token is not None and worker_token is not self.monitor_stop_event:
+            self.log(f"忽略旧监控任务迟到的状态：{event[1]}")
+            return
         text = event[1]
+        if worker_token is not None and worker_token.is_set() and text != "已停止":
+            # 当前 worker 已收到暂停信号，其排队中的「运行中」等非终态
+            # 不得覆盖 stop_monitor 已立即写入的「已暂停」。
+            self.log(f"忽略已取消监控任务迟到的状态：{text}")
+            return
         if (
             text == "已停止"
             and self.account
@@ -1137,6 +1184,12 @@ class DashboardWindow(
             # 写回旧账号数值，直接丢弃留痕。
             self.log("忽略登出后迟到的轮询结果。")
             return
+        worker_token = event[4] if len(event) > 4 else None
+        if worker_token is not None and (
+            worker_token is not self.monitor_stop_event or worker_token.is_set()
+        ):
+            self.log("忽略旧监控任务迟到的轮询结果。")
+            return
         checked_at = event[2]
         rollcall_count = event[3]
         self._reset_background_error_state()
@@ -1149,6 +1202,12 @@ class DashboardWindow(
             # 登出清理面已清空今日签到表：晚到的旧账号签到事件不得灌回，
             # 也不得经此触发通知，直接丢弃留痕。
             self.log("忽略登出后迟到的签到事件。")
+            return
+        worker_token = event[2] if len(event) > 2 else None
+        if worker_token is not None and (
+            worker_token is not self.monitor_stop_event or worker_token.is_set()
+        ):
+            self.log("忽略旧监控任务迟到的签到事件。")
             return
         self._add_rollcall_event(event[1])
 
@@ -1365,6 +1424,12 @@ class DashboardWindow(
             # 登出后在途 worker 的晚到错误：不得再走紧急通知/第三方推送
             #（与 poll/rollcall/monitor_status/answer_result 同族守卫），丢弃留痕。
             self.log(f"忽略登出后迟到的错误事件：{event[1]}")
+            return
+        worker_token = event[2] if len(event) > 2 else None
+        if worker_token is not None and (
+            worker_token is not self.monitor_stop_event or worker_token.is_set()
+        ):
+            self.log(f"忽略旧监控任务迟到的错误事件：{event[1]}")
             return
         # 会话过期是终态错误（监控已停止、不会自愈重试，只发这一次）：
         # 若仍走「连续 3 次」阈值将永远凑不满，托盘常驻用户对监控停摆零感知。

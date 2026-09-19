@@ -95,7 +95,10 @@ class CoursewareSectionStateTest {
             selectedCourseId = { selectedCourseId },
             setSelectedCourseId = { selectedCourseId = it },
             academicCache = { cache },
-            setAcademicCache = { cache = it },
+            setAcademicCache = {
+                cache = it
+                AcademicCacheSnapshot.updateProcessCache(it)
+            },
             setAcademicCacheJson = { cacheJsonWrites += it },
             isSelectedCourse = { it == selectedCourseId },
             setPendingSessionRetry = { pendingRetries += it },

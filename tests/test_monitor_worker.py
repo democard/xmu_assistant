@@ -89,8 +89,9 @@ class MonitorWorkerLoopTest(unittest.TestCase):
             events_map={1: [_event("r1")]},
         )
         worker, events, _ = self._run(engine, loops=1)
-        self.assertEqual(events[0], ("monitor_status", "运行中"))
-        self.assertEqual(events[-1], ("monitor_status", "已停止"))
+        self.assertEqual(events[0][:2], ("monitor_status", "运行中"))
+        self.assertEqual(events[-1][:2], ("monitor_status", "已停止"))
+        self.assertIs(events[0][2], events[-1][2], "启停状态必须携带同一 worker 令牌")
         poll_events = [e for e in events if e[0] == "poll"]
         self.assertEqual(len(poll_events), 1)
         self.assertEqual(poll_events[0][1], 1)
@@ -156,8 +157,13 @@ class MonitorWorkerLoopTest(unittest.TestCase):
         worker, events, stop = self._run(engine, loops=5)
         self.assertEqual(engine.poll_calls, 1, "过期是终态：不得继续按 interval 轮询")
         self.assertEqual(stop.wait_args, [], "停机路径不得进入间隔等待")
-        self.assertIn(("error", "轮询失败：登录已过期，请重新登录"), events)
-        self.assertEqual(events[-1], ("monitor_status", "已停止"))
+        self.assertTrue(
+            any(
+                event[:2] == ("error", "轮询失败：登录已过期，请重新登录")
+                for event in events
+            )
+        )
+        self.assertEqual(events[-1][:2], ("monitor_status", "已停止"))
 
     def test_retry_cancelled_stops_silently(self):
         engine = _FakeEngine(payloads=[{"rollcalls": []}], poll_error=RetryCancelled())
@@ -166,7 +172,32 @@ class MonitorWorkerLoopTest(unittest.TestCase):
             any(e[0] == "error" for e in events),
             "暂停/停止打断的重试取消应静默收尾，不算轮询错误",
         )
-        self.assertEqual(events[-1], ("monitor_status", "已停止"))
+        self.assertEqual(events[-1][:2], ("monitor_status", "已停止"))
+
+    def test_stop_during_inflight_request_drops_returned_payload(self):
+        """网络请求返回前发生停止/换号，旧结果不得再 emit。"""
+        events = []
+        stop = threading.Event()
+
+        class StopDuringPollEngine:
+            def poll_payload(self):
+                stop.set()
+                return {"rollcalls": [{"id": "old-account"}]}
+
+            def build_events(self, payload):
+                return [_event("old-account")]
+
+        with mock.patch(
+            "xmu_rollcall.desktop_qt.core.RollcallEngine",
+            return_value=StopDuringPollEngine(),
+        ):
+            worker = MonitorWorker(requests.Session(), events.append, stop, 30)
+        worker.run()
+
+        self.assertFalse(any(event[0] == "poll" for event in events))
+        self.assertFalse(any(event[0] == "rollcall" for event in events))
+        self.assertEqual(events[0][:2], ("monitor_status", "运行中"))
+        self.assertEqual(events[-1][:2], ("monitor_status", "已停止"))
 
     def test_active_rollcall_switches_to_dense_polling_interval(self):
         engine = _FakeEngine(

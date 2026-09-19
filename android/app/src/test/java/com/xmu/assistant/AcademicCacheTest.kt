@@ -167,4 +167,48 @@ class AcademicCacheTest {
         assertEquals(listOf(item), withCourseware.coursewareByCourse.getValue("new"))
         assertEquals(3L, withCourseware.coursewareUpdatedAtMillis.getValue("new"))
     }
+
+    @Test
+    fun `older async snapshot cannot overwrite the latest revision`() {
+        val gate = LatestSnapshotWriteGate()
+        val first = gate.nextRevision()
+        val latest = gate.nextRevision()
+        var persisted = ""
+
+        assertTrue(gate.persistIfLatest(latest) { persisted = "latest" })
+        assertFalse(gate.persistIfLatest(first) { persisted = "stale" })
+
+        assertEquals("latest", persisted)
+    }
+
+    @Test
+    fun `writes are serialized and a later revision wins after an in-flight write`() {
+        val gate = LatestSnapshotWriteGate()
+        val first = gate.nextRevision()
+        val firstStarted = java.util.concurrent.CountDownLatch(1)
+        val releaseFirst = java.util.concurrent.CountDownLatch(1)
+        val writes = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val firstWrite = executor.submit<Boolean> {
+                gate.persistIfLatest(first) {
+                    firstStarted.countDown()
+                    check(releaseFirst.await(2, java.util.concurrent.TimeUnit.SECONDS))
+                    writes += "first"
+                }
+            }
+            assertTrue(firstStarted.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val latest = gate.nextRevision()
+            val latestWrite = executor.submit<Boolean> {
+                gate.persistIfLatest(latest) { writes += "latest" }
+            }
+            releaseFirst.countDown()
+
+            assertTrue(firstWrite.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(latestWrite.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(listOf("first", "latest"), writes)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
 }

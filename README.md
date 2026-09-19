@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.6.8（3.97 MB） · Windows v1.6.8**
+**当前版本：Android v1.6.9 · Windows v1.6.9**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.8/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.8/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.8)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -104,12 +104,19 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
 
-### v1.6.8 更新
+### v1.6.9 更新
+
+- 修复（Windows 桌面端）：登录在途被取消、登出或换号后，迟到的会话不再写入账号和 Cookie；签到监控事件带运行令牌，停止、换号或重启后的旧 worker 事件会被丢弃，避免旧账号事件影响当前界面或触发处理。
+- 修复（Android）：课程列表和课程课件使用的 `academic_cache_json` 在同一会话内按 revision 提交，旧请求完成得更晚时不再覆盖较新的缓存；桌面小组件在本地登录镜像缺失时，只有自动登录策略为 ENABLED 且主 Cookie 非空才允许继续同步，明确退出或无有效主会话时会被拦截。
+- 同时包含此前本地构建的 v1.6.8 修复：Android 15 签到监控前台服务改用 `specialUse` 类型，桌面端 `_MEI` 残留仅在带本应用所有权标记时清理。
+- 532 项 Android 测试、390 项 Windows 桌面端测试通过；下载：[v1.6.9 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9)。
+
+### v1.6.8（本地改动，已随 v1.6.9 发布）
 
 - 修复（Android）：签到监控前台服务在 Android 15 改用 `specialUse` 类型——原先的 `dataSync` 类型在该系统有 24 小时内累计 6 小时的强制超时，全天候监控必然触顶被停；现按系统版本分派 FGS 类型（API 35+ specialUse / 29–34 dataSync / 更早两参版本），manifest 声明用途与权限，并加超时兜底回调。
 - 修复（Windows 桌面端）：后台 `_MEI` 残留清理加「所有权标记」——此前按前缀 + 年龄整树删除 %TEMP% 解包目录，可能误删同机其他 PyInstaller 应用正在使用的目录（对方功能懒加载全失效）；现只清理带本应用标记且超龄的残留，宁可少清也不误删。
 - 528 项 Android 测试、379 项 Windows 桌面端测试通过。
-- 下载：[v1.6.8 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.8)。
+- 本地改动已随 [v1.6.9 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9) 发布。
 
 ### v1.6.7 更新
 
@@ -206,13 +213,13 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.6.8，约 3.97 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.8/xmu-assistant-release.apk) |
-| Windows | 1.6.8 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.8/xmu-assistant.exe) |
+| Android 8.0 及以上 | 1.6.9，约 3.97 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant-release.apk) |
+| Windows | 1.6.9 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.8/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
-GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.6.8，DPAPI 凭据加密）
+GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.6.9，DPAPI 凭据加密）
                                               #   复现构建：pyinstaller xmu-assistant.spec（或 scripts/build_dashboard_exe.bat）
 GitHub Releases → xmu-assistant-release.apk   # Android 端（release 构建，R8 压缩；固定签名，覆盖安装不丢登录数据）
 release/SHA256SUMS.txt                        # 当前产物 SHA-256 校验值（随每次发布更新）
@@ -394,7 +401,7 @@ Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到�
   签名，换取 `install -r` 覆盖升级不丢本地登录态（重签会丢加密数据）。**代价：任何能拿到该密钥的人
   可伪造同签名更新覆盖安装**，触及本地加密凭据——这是刻意权衡。建议评估：如发布到公开渠道，改为产线
   独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
-- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.6.8 重建（含 DPAPI 凭据加密）；复现构建请执行
+- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.6.9 重建（含 DPAPI 凭据加密）；复现构建请执行
   `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
 - 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
 

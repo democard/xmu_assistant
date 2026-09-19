@@ -142,5 +142,132 @@ class LoginFailedSessionGuardTest(unittest.TestCase):
         self.assertEqual(host.status_calls, [("未登录",)])
 
 
+class LoginCancellationPersistenceTest(unittest.TestCase):
+    """手动登录的网络 worker 不得在 epoch 校验前写入本地登录态。"""
+
+    def test_worker_only_emits_authenticated_result_without_persisting(self):
+        session = types.SimpleNamespace()
+        session.get = lambda *a, **k: types.SimpleNamespace(json=lambda: {"name": "Alice"})
+        host = types.SimpleNamespace(events=[])
+        host._emit = host.events.append
+
+        with mock.patch("xmu_rollcall.desktop_qt.app.xmulogin", return_value=session), \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+            DashboardWindow._login_worker(host, "1001", "secret", 7)
+
+        save_config_mock.assert_not_called()
+        save_session_mock.assert_not_called()
+        self.assertEqual(host.events[0][0], "login_success")
+        self.assertIsNone(host.events[0][2], "None account 标记手动登录尚未持久化")
+        self.assertEqual(host.events[0][3:], (7, "1001", "secret", "Alice"))
+
+    def test_cancel_initial_login_invalidates_epoch(self):
+        host = types.SimpleNamespace(
+            account=None,
+            session=None,
+            _login_in_progress=True,
+            _login_epoch=4,
+            logs=[],
+        )
+        host.log = host.logs.append
+        host.password_input = types.SimpleNamespace(clear=lambda: host.logs.append("cleared"))
+        host.metric_account = types.SimpleNamespace(setText=lambda text: host.logs.append(text))
+        host._set_login_status = lambda *a, **k: None
+        host._show_toast = lambda *a, **k: None
+
+        DashboardWindow.logout(host)
+
+        self.assertFalse(host._login_in_progress)
+        self.assertEqual(host._login_epoch, 5)
+        self.assertIn("cleared", host.logs)
+
+    def test_cancelled_result_is_closed_without_persisting(self):
+        session = types.SimpleNamespace(close=mock.Mock())
+        host = types.SimpleNamespace(
+            _login_in_progress=True,
+            _login_epoch=8,
+            logs=[],
+        )
+        host.log = host.logs.append
+        with mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+            DashboardWindow._ev_login_success(
+                host,
+                ("login_success", session, None, 7, "1001", "secret", "Alice"),
+            )
+
+        save_config_mock.assert_not_called()
+        save_session_mock.assert_not_called()
+        session.close.assert_called_once_with()
+        self.assertTrue(host._login_in_progress, "迟到成功不得释放新登录占用的门")
+
+    def test_late_failure_does_not_release_new_login_gate(self):
+        host = types.SimpleNamespace(
+            session=None,
+            account=None,
+            _login_in_progress=True,
+            _login_epoch=9,
+            logs=[],
+        )
+        host.log = host.logs.append
+
+        DashboardWindow._ev_login_failed(
+            host,
+            ("login_failed", "旧请求失败", 8),
+        )
+
+        self.assertTrue(host._login_in_progress, "迟到失败不得释放新登录占用的门")
+        self.assertTrue(any("忽略迟到的登录失败" in message for message in host.logs))
+
+    def test_current_result_persists_then_lands(self):
+        session = types.SimpleNamespace()
+        config = {"accounts": [], "current_account_id": None}
+        host = types.SimpleNamespace(
+            _login_in_progress=True,
+            _login_epoch=7,
+            monitor_worker=None,
+            session=None,
+            account=None,
+            _snapshot_account_id="",
+            logs=[],
+        )
+        host.log = host.logs.append
+        host._reset_background_error_state = lambda: None
+        host._set_login_status = lambda *a, **k: None
+        host.metric_account = types.SimpleNamespace(setText=lambda *_: None)
+        host._load_rollcall_settings = lambda *_: None
+        host._show_toast = lambda *a, **k: None
+        host._refresh_after_login = lambda: None
+
+        with mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock, \
+             mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value="cookies.json"):
+            DashboardWindow._ev_login_success(
+                host,
+                ("login_success", session, None, 7, "1001", "secret", "Alice"),
+            )
+
+        save_config_mock.assert_called_once_with(config)
+        save_session_mock.assert_called_once_with(session, "cookies.json")
+        self.assertIs(host.session, session)
+        self.assertEqual(host.account["username"], "1001")
+        self.assertEqual(config["current_account_id"], host.account["id"])
+        self.assertEqual(host._login_epoch, 8)
+
+    def test_failed_login_does_not_persist(self):
+        host = types.SimpleNamespace(events=[])
+        host._emit = host.events.append
+        with mock.patch("xmu_rollcall.desktop_qt.app.xmulogin", return_value=None), \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
+             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+            DashboardWindow._login_worker(host, "1001", "wrong", 3)
+        save_config_mock.assert_not_called()
+        save_session_mock.assert_not_called()
+        self.assertEqual(host.events[0][0], "login_failed")
+        self.assertEqual(host.events[0][2], 3, "失败事件必须携带启动时的 epoch")
+
+
 if __name__ == "__main__":
     unittest.main()

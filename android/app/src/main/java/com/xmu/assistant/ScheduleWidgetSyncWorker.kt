@@ -21,6 +21,20 @@ internal object AppForegroundTracker {
 }
 
 /**
+ * Widget 后台同步的登录态门禁。
+ *
+ * 新版安装以明文镜像为准；旧版升级后镜像键可能暂时不存在，此时必须回退到
+ * 已有的自动登录策略和主会话 Cookie。仅凭“镜像不是 false”放行，会让已明确
+ * 退出（凭据按设计仍保留）的旧安装在后台重新发起教务 CAS 登录。
+ */
+internal fun scheduleWidgetSyncSessionAllowed(
+    loggedInMirror: Boolean?,
+    autoLoginPolicy: AutoLoginPolicy,
+    mainCookieHeader: String,
+): Boolean = loggedInMirror
+    ?: (autoLoginPolicy == AutoLoginPolicy.ENABLED && mainCookieHeader.isNotBlank())
+
+/**
  * 桌面小卡片每日自动同步 Worker。
  *
  * 每天定时（默认早上 7:00）在后台拉一次课表，写入缓存并同步桌面小卡片，
@@ -43,8 +57,12 @@ class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
         // 登录态复核（三态镜像，见 readWidgetLoggedInMirror）：登出后凭据按设计
         // 残留，缺此复核会以残留凭据发起教务 CAS 登录——登录请求已打出（登出后
         // 幽灵登录 = 风控暴露；同款守卫见 ScoreSectionState.refresh）
-        val loggedInMirror = AssistantSettings.readWidgetLoggedInMirror(context)
-        if (loggedInMirror == false) return Result.success()
+        fun sessionAllowsSync(): Boolean = scheduleWidgetSyncSessionAllowed(
+            loggedInMirror = AssistantSettings.readWidgetLoggedInMirror(context),
+            autoLoginPolicy = settings.autoLoginPolicy,
+            mainCookieHeader = settings.cookieHeader,
+        )
+        if (!sessionAllowsSync()) return Result.success()
 
         return try {
             // 取数账号快照：供成功落盘前复核账号是否已切换（与下方镜像复核配套）
@@ -53,15 +71,14 @@ class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
                 username = settings.username,
                 password = settings.password,
                 scoreCookieHeader = settings.scoreCookieHeader,
-                // 闭包内活读镜像：刷新中途登出时，在途 CAS 也被拦下
-                //（快照值仅用于上方早退短路）
-                mayRelogin = { AssistantSettings.readWidgetLoggedInMirror(context) != false },
+                // 闭包内活读完整门禁：刷新中途登出时，在途 CAS 也被拦下
+                mayRelogin = { sessionAllowsSync() },
             )
             // 持久化前复核（同 ScoreSectionState.refresh 的账号复核范式）：
             // 刷新期间登出（镜像 false）或换号（当前用户名≠取数快照）则丢弃本次
             // 结果——登出/换号清理链已删快照文件、清 widget 数据与教务 cookie，
             // 此处照常落盘会让旧账号课表复活覆盖新会话（串号）
-            if (AssistantSettings.readWidgetLoggedInMirror(context) == false) return Result.success()
+            if (!sessionAllowsSync()) return Result.success()
             if (settings.username != fetchedUsername) return Result.success()
             val updatedAt = System.currentTimeMillis()
             val termCode = result.termCode

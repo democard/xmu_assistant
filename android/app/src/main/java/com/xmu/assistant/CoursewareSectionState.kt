@@ -43,7 +43,7 @@ internal class CoursewareSectionState(
     private val selectedCourseId: () -> String?,
     private val setSelectedCourseId: (String?) -> Unit,
     private val academicCache: () -> AcademicCacheSnapshot,
-    private val setAcademicCache: (AcademicCacheSnapshot) -> Unit,
+    private val setAcademicCache: (AcademicCacheSnapshot) -> Long,
     private val setAcademicCacheJson: (String) -> Unit,
     private val isSelectedCourse: (String) -> Boolean,
     private val setPendingSessionRetry: (ModuleReadRetry) -> Unit,
@@ -100,14 +100,19 @@ internal class CoursewareSectionState(
                     refreshErrors = refreshErrors - course.id
                     val updatedAt = System.currentTimeMillis()
                     val updatedCache = academicCache().withCourseware(course.id, list, updatedAt)
-                    setAcademicCache(updatedCache)
+                    val cacheRevision = setAcademicCache(updatedCache)
                     // 大 JSON 序列化+加密 prefs 写入挪后台线程（镜像
                     // ScheduleSectionState.persistSnapshot 范式）；写前校验会话世代，
                     // 防陈旧请求把登出后已清空的缓存写回。
                     val persistCache = updatedCache
                     scope.launch(Dispatchers.IO) {
+                        val persistJson = academicCacheToJson(persistCache)
                         if (sessionEpoch.isCurrent(session)) {
-                            setAcademicCacheJson(academicCacheToJson(persistCache))
+                            AcademicCacheSnapshot.persistIfLatest(cacheRevision) {
+                                if (sessionEpoch.isCurrent(session)) {
+                                    setAcademicCacheJson(persistJson)
+                                }
+                            }
                         }
                     }
                     if (isSelectedCourse(course.id)) {

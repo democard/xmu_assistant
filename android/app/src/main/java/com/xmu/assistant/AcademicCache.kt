@@ -1,7 +1,26 @@
 package com.xmu.assistant
 
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
 import org.json.JSONObject
+
+/**
+ * 整快照异步落盘的顺序门：课程列表与不同课程的课件允许并行刷新，完成后都会写同一个
+ * academic_cache_json。revision 在主线程接纳新快照时递增；后台写任务串行进入，只有仍是
+ * 最新 revision 的任务可以写，避免旧快照晚到覆盖新快照。
+ */
+internal class LatestSnapshotWriteGate {
+    private val latestRevision = AtomicLong(0L)
+    private val writeLock = Any()
+
+    fun nextRevision(): Long = latestRevision.incrementAndGet()
+
+    fun persistIfLatest(revision: Long, persist: () -> Unit): Boolean = synchronized(writeLock) {
+        if (revision != latestRevision.get()) return@synchronized false
+        persist()
+        true
+    }
+}
 
 data class AcademicCacheSnapshot(
     val courses: List<CourseSummary> = emptyList(),
@@ -16,11 +35,18 @@ data class AcademicCacheSnapshot(
         @Volatile
         private var processCache: AcademicCacheSnapshot? = null
 
+        /** MainActivity 与 CoursewareSectionState 的同一持久化通道必须共用一把门。 */
+        private val persistenceGate = LatestSnapshotWriteGate()
+
         fun currentProcessCache(): AcademicCacheSnapshot? = processCache
 
-        fun updateProcessCache(snapshot: AcademicCacheSnapshot?) {
+        fun updateProcessCache(snapshot: AcademicCacheSnapshot?): Long {
             processCache = snapshot
+            return persistenceGate.nextRevision()
         }
+
+        fun persistIfLatest(revision: Long, persist: () -> Unit): Boolean =
+            persistenceGate.persistIfLatest(revision, persist)
     }
 }
 

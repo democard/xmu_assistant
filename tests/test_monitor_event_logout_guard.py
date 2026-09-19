@@ -72,6 +72,50 @@ class MonitorEventLogoutGuardTest(unittest.TestCase):
         self.assertEqual(host.metric_texts["rollcall_count"].texts, ["5"])
         self.assertEqual(len(host.metric_texts["last_check"].texts), 1)
 
+    def test_old_worker_token_is_rejected_after_restart(self):
+        host = self._host()
+        host.session = object()
+        host.account = {"id": 2}
+        old_token = threading.Event()
+        host.monitor_stop_event = threading.Event()
+
+        DashboardWindow._ev_poll(host, ("poll", 1, 1750000000.0, 5, old_token))
+        DashboardWindow._ev_rollcall(host, ("rollcall", {"id": "old"}, old_token))
+        DashboardWindow._ev_monitor_status(host, ("monitor_status", "已停止", old_token))
+
+        self.assertEqual(host.metric_texts["last_check"].texts, [])
+        self.assertFalse(any(str(m).startswith("added:") for m in host.logs))
+        self.assertEqual(host.metric_texts["monitor"].texts, [])
+
+    def test_current_worker_token_still_lands(self):
+        host = self._host()
+        host.session = object()
+        host.account = {"id": 2}
+        token = threading.Event()
+        host.monitor_stop_event = token
+
+        DashboardWindow._ev_poll(host, ("poll", 1, 1750000000.0, 5, token))
+        DashboardWindow._ev_rollcall(host, ("rollcall", {"id": "new"}, token))
+        DashboardWindow._ev_monitor_status(host, ("monitor_status", "运行中", token))
+
+        self.assertEqual(host.metric_texts["rollcall_count"].texts, ["5"])
+        self.assertTrue(any(str(m).startswith("added:") for m in host.logs))
+        self.assertEqual(host.metric_texts["monitor"].texts, ["运行中"])
+
+    def test_cancelled_current_token_drops_data_events(self):
+        host = self._host()
+        host.session = object()
+        host.account = {"id": 1}
+        token = threading.Event()
+        token.set()
+        host.monitor_stop_event = token
+
+        DashboardWindow._ev_poll(host, ("poll", 1, 1750000000.0, 5, token))
+        DashboardWindow._ev_rollcall(host, ("rollcall", {"id": "late"}, token))
+
+        self.assertEqual(host.metric_texts["last_check"].texts, [])
+        self.assertFalse(any(str(m).startswith("added:") for m in host.logs))
+
 
 class MonitorStatusPauseMappingTest(unittest.TestCase):
     """主动暂停后 worker 收尾的「已停止」不得覆盖「已暂停」（指标行与按
@@ -95,6 +139,19 @@ class MonitorStatusPauseMappingTest(unittest.TestCase):
         host = self._host(stop_event)
         DashboardWindow._ev_monitor_status(host, ("monitor_status", "已停止"))
         self.assertEqual(host.metric_monitor.texts, ["已暂停"])
+
+    def test_late_running_status_after_manual_pause_is_discarded(self):
+        stop_event = threading.Event()
+        stop_event.set()
+        host = self._host(stop_event)
+
+        DashboardWindow._ev_monitor_status(
+            host,
+            ("monitor_status", "运行中", stop_event),
+        )
+
+        self.assertEqual(host.metric_monitor.texts, [])
+        self.assertTrue(any("已取消监控任务迟到" in message for message in host.logs))
 
     def test_abnormal_exit_keeps_stopped_text(self):
         host = self._host(threading.Event())  # stop_event 未设 = 非用户主动停止

@@ -1,6 +1,7 @@
 package com.xmu.assistant
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,8 +23,8 @@ class ScheduleWidgetSyncWorkerGhostLoginContractTest {
             "readWidgetLoggedInMirror(context)" in worker,
         )
         assertTrue(
-            "an explicitly logged-out worker must not refresh at all",
-            "if (loggedInMirror == false) return Result.success()" in worker,
+            "worker must use the shared session predicate before refreshing",
+            "if (!sessionAllowsSync()) return Result.success()" in worker,
         )
         assertTrue(
             "mayRelogin must not be unconditional",
@@ -31,7 +32,7 @@ class ScheduleWidgetSyncWorkerGhostLoginContractTest {
         )
         assertTrue(
             "mayRelogin must re-read the mirror in-flight (mid-refresh logout is also blocked)",
-            "mayRelogin = { AssistantSettings.readWidgetLoggedInMirror(context) != false }" in worker,
+            "mayRelogin = { sessionAllowsSync() }" in worker,
         )
         assertTrue(
             "markLoginSucceeded must raise the mirror",
@@ -55,11 +56,61 @@ class ScheduleWidgetSyncWorkerGhostLoginContractTest {
         // 登出/换号清理链已删快照清数据，此处照常落盘会让旧账号数据复活串号
         assertTrue(
             "persisted artifacts must be dropped when logged out mid-refresh",
-            "if (AssistantSettings.readWidgetLoggedInMirror(context) == false) return Result.success()" in worker,
+            "if (!sessionAllowsSync()) return Result.success()" in worker,
         )
         assertTrue(
             "persisted artifacts must be dropped when the account switched mid-refresh",
             "if (settings.username != fetchedUsername) return Result.success()" in worker,
+        )
+    }
+
+    @Test
+    fun `missing upgrade mirror only allows an enabled session with a main cookie`() {
+        assertFalse(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = null,
+                autoLoginPolicy = AutoLoginPolicy.USER_LOGGED_OUT,
+                mainCookieHeader = "",
+            ),
+        )
+        assertFalse(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = null,
+                autoLoginPolicy = AutoLoginPolicy.BLOCKED,
+                mainCookieHeader = "still-present",
+            ),
+        )
+        assertFalse(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = null,
+                autoLoginPolicy = AutoLoginPolicy.ENABLED,
+                mainCookieHeader = "",
+            ),
+        )
+        assertTrue(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = null,
+                autoLoginPolicy = AutoLoginPolicy.ENABLED,
+                mainCookieHeader = "session-cookie",
+            ),
+        )
+    }
+
+    @Test
+    fun `present mirror remains authoritative`() {
+        assertTrue(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = true,
+                autoLoginPolicy = AutoLoginPolicy.USER_LOGGED_OUT,
+                mainCookieHeader = "",
+            ),
+        )
+        assertFalse(
+            scheduleWidgetSyncSessionAllowed(
+                loggedInMirror = false,
+                autoLoginPolicy = AutoLoginPolicy.ENABLED,
+                mainCookieHeader = "session-cookie",
+            ),
         )
     }
 

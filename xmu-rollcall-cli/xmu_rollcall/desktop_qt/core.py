@@ -106,7 +106,9 @@ class MonitorWorker(threading.Thread):
         self.last_payload = {"rollcalls": []}
 
     def run(self):
-        self.emit(("monitor_status", "运行中"))
+        # stop_event 同时作为本轮 worker 的身份令牌。GUI 可据它丢弃
+        # 旧 worker 在换号/停止后才送达的事件，又不破坏旧的元组前缀。
+        self.emit(("monitor_status", "运行中", self.stop_event))
         while not self.stop_event.is_set():
             active_rollcall = False
             try:
@@ -119,8 +121,20 @@ class MonitorWorker(threading.Thread):
                     # （否则暂停后立刻启动会被 is_alive() 挡下，监控静默停摆）
                     stop_event=self.stop_event,
                 )
+                # 在途请求无法中断：返回时若已停止/换号，不得再把
+                # 旧账号 poll/rollcall 事件送进新会话。
+                if self.stop_event.is_set():
+                    break
                 self.query_count += 1
-                self.emit(("poll", self.query_count, time.time(), len(payload.get("rollcalls", []))))
+                self.emit(
+                    (
+                        "poll",
+                        self.query_count,
+                        time.time(),
+                        len(payload.get("rollcalls", [])),
+                        self.stop_event,
+                    )
+                )
 
                 events = self.engine.build_events(payload)
                 # 自适应轮询节奏：存在进行中的签到（remaining_seconds > 0）时切密集
@@ -141,7 +155,7 @@ class MonitorWorker(threading.Thread):
                         self.seen_rollcall_ids[event.rollcall_id] = True
                         if len(self.seen_rollcall_ids) > self.MAX_SEEN_ROLLCALL_IDS:
                             self.seen_rollcall_ids.popitem(last=False)
-                        self.emit(("rollcall", event))
+                        self.emit(("rollcall", event, self.stop_event))
             except RetryCancelled:
                 break
             except SessionExpiredError as exc:
@@ -151,12 +165,12 @@ class MonitorWorker(threading.Thread):
                 # 「紧急通知+第三方推送」（_ev_error 的 immediate 分支），与通用异常
                 # 分支的 stop_event 检查对齐。
                 if not self.stop_event.is_set():
-                    self.emit(("error", f"轮询失败：{exc}"))
+                    self.emit(("error", f"轮询失败：{exc}", self.stop_event))
                 break
             except Exception as exc:
                 if self.stop_event.is_set():
                     break
-                self.emit(("error", f"轮询失败：{exc}"))
+                self.emit(("error", f"轮询失败：{exc}", self.stop_event))
 
             wait_seconds = (
                 min(self.interval, ACTIVE_POLL_INTERVAL_SECONDS)
@@ -164,7 +178,7 @@ class MonitorWorker(threading.Thread):
                 else self.interval
             )
             self.stop_event.wait(wait_seconds)
-        self.emit(("monitor_status", "已停止"))
+        self.emit(("monitor_status", "已停止", self.stop_event))
 
 
 def current_academic_year_label() -> str:

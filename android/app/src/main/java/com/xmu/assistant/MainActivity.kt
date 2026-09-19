@@ -205,9 +205,10 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
     }
     var courses by remember { mutableStateOf(academicCache.courses) }
     // 课件缓存唯一写入口：组合状态与进程级快照同进同出。next=null 表示登出/换号清空。
-    fun updateAcademicCache(next: AcademicCacheSnapshot?) {
-        AcademicCacheSnapshot.updateProcessCache(next)
+    fun updateAcademicCache(next: AcademicCacheSnapshot?): Long {
+        val revision = AcademicCacheSnapshot.updateProcessCache(next)
         academicCache = next ?: AcademicCacheSnapshot()
+        return revision
     }
     LaunchedEffect(Unit) {
         if (academicCache.courses.isEmpty() && academicCache.coursewareByCourse.isEmpty()) {
@@ -551,14 +552,19 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
                     coursesRefreshError = ""
                     val updatedAt = System.currentTimeMillis()
                     val updatedCache = academicCache.withCourses(list, updatedAt)
-                    updateAcademicCache(updatedCache)
+                    val cacheRevision = updateAcademicCache(updatedCache)
                     // 大 JSON 序列化+加密 prefs 写入挪后台线程（镜像
                     // ScheduleSectionState.persistSnapshot 范式，IO 协程 + 会话世代
                     // 校验）；此前 onResult 在主线程同步序列化全量缓存（可达数百 KB）。
                     val persistCache = updatedCache
                     workScope.launch(Dispatchers.IO) {
+                        val persistJson = academicCacheToJson(persistCache)
                         if (sessionEpoch.isCurrent(session)) {
-                            settings.academicCacheJson = academicCacheToJson(persistCache)
+                            AcademicCacheSnapshot.persistIfLatest(cacheRevision) {
+                                if (sessionEpoch.isCurrent(session)) {
+                                    settings.academicCacheJson = persistJson
+                                }
+                            }
                         }
                     }
                     courses = list
