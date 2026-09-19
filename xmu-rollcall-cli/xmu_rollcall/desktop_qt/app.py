@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 from xmulogin import xmulogin
 
 from .icons import app_asset_path, app_icon
-from .maintenance import _background_disk_cleanup
+from .maintenance import _background_disk_cleanup, mark_own_extraction_dir
 from .notifications_page import NotificationsPageMixin
 from .settings_page import SettingsPageMixin
 from .tutorial_page import TutorialPageMixin
@@ -1718,6 +1718,9 @@ def main():
         if not is_startup:
             activate_existing_instance()
         return 0
+    # 标记自己的解包目录：后台清理只删带本应用标记的超龄残留（防误删其他 PyInstaller
+    # 应用的 _MEI 目录）。必须先于清理线程——单实例互斥保证标记只属于存活的本进程
+    mark_own_extraction_dir()
     # 首个实例：磁盘冗余清理放后台线程（_MEI 残留可能堆积多份、rmtree 较慢，
     # 同步执行会延迟主窗口显示；后台 daemon 线程不阻塞，也不影响后续登录/监控）
     threading.Thread(target=_background_disk_cleanup, daemon=True).start()

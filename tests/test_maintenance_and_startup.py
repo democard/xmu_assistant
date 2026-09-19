@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -57,6 +59,74 @@ class CleanupOrphanedCookieFilesTests(unittest.TestCase):
     def test_missing_config_dir_is_tolerated(self):
         # 目录不存在：listdir 失败属正常路径，不抛异常
         maintenance.cleanup_orphaned_cookie_files({"accounts": []})
+
+
+class CleanupPyinstallerTempTests(unittest.TestCase):
+    """_MEI 残留清理的所有权标记语义：只删带本应用标记的超龄残留。
+
+    _MEI* 是 PyInstaller 全局命名约定，同机其他 PyInstaller 应用的解包目录同形——
+    无标记目录（外来应用或极旧版本残留）必须一律跳过。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(
+            os.environ, {"TEMP": self.tmp.name, "TMP": self.tmp.name}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make_mei(self, name, *, marked, age_hours):
+        path = Path(self.tmp.name) / name
+        path.mkdir()
+        if marked:
+            (path / maintenance._OWNER_MARKER_NAME).write_text(
+                "xmu-assistant", encoding="utf-8"
+            )
+        if age_hours is not None:
+            old = time.time() - age_hours * 3600
+            os.utime(path, (old, old))
+        return path
+
+    def test_marked_overage_dir_is_removed(self):
+        self._make_mei("_MEIaaaaaa", marked=True, age_hours=2)
+        maintenance.cleanup_orphaned_pyinstaller_temp()
+        self.assertFalse((Path(self.tmp.name) / "_MEIaaaaaa").exists())
+
+    def test_marked_recent_dir_is_kept(self):
+        self._make_mei("_MEIbbbbbb", marked=True, age_hours=None)
+        maintenance.cleanup_orphaned_pyinstaller_temp()
+        self.assertTrue((Path(self.tmp.name) / "_MEIbbbbbb").exists())
+
+    def test_unmarked_overage_foreign_dir_is_never_removed(self):
+        # 其他 PyInstaller 应用的解包目录（无本应用标记）：宁可少清也不误删
+        self._make_mei("_MEIcccccc", marked=False, age_hours=2)
+        maintenance.cleanup_orphaned_pyinstaller_temp()
+        self.assertTrue((Path(self.tmp.name) / "_MEIcccccc").exists())
+
+    def test_current_process_own_dir_is_skipped(self):
+        own = self._make_mei("_MEIcccccc", marked=True, age_hours=2)
+        with mock.patch.object(sys, "_MEIPASS", str(own), create=True):
+            maintenance.cleanup_orphaned_pyinstaller_temp()
+        self.assertTrue(own.exists())
+
+    def test_mark_own_extraction_dir_writes_marker(self):
+        own = Path(self.tmp.name) / "_MEIdddddd"
+        own.mkdir()
+        with mock.patch.object(sys, "_MEIPASS", str(own), create=True):
+            maintenance.mark_own_extraction_dir()
+        marker = own / maintenance._OWNER_MARKER_NAME
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "xmu-assistant")
+
+    def test_mark_own_extraction_dir_noop_without_meipass(self):
+        # chdir 进受控目录：no-op 必须连 CWD 也不落文件（normpath("") 变 "." 的回归锚）
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp.name)
+        with mock.patch.object(sys, "_MEIPASS", "", create=True):
+            maintenance.mark_own_extraction_dir()  # 不抛异常、不写文件
+        self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
 
 
 class StartupRegistryMixinTests(unittest.TestCase):

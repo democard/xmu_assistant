@@ -18,6 +18,23 @@ from ..diag_log import log as _diag_log
 # _MEI 解包残留的安全清理年龄：仅删 1 小时前的目录，避免误删正在被并发启动实例使用的解包目录
 _MEI_CLEANUP_MIN_AGE_SECONDS = 3600
 
+# 所有权标记文件名：写在本应用自己的解包目录里。%TEMP% 的 _MEI* 命名是 PyInstaller
+# 全局约定，同机其他 PyInstaller 应用的残留也以 _MEI 开头——无标记的一律不碰
+_OWNER_MARKER_NAME = "xmu_assistant_owner.marker"
+
+
+def mark_own_extraction_dir() -> None:
+    """在自己的解包目录写所有权标记（后台清理只删带标记的超龄残留）。失败静默。"""
+    mei = getattr(sys, "_MEIPASS", "") or ""
+    if not mei:  # 源码态无解包目录：no-op（normpath("") 会变成 "."，必须先判空）
+        return
+    mei = os.path.normpath(mei)
+    try:
+        with open(os.path.join(mei, _OWNER_MARKER_NAME), "w", encoding="utf-8") as file:
+            file.write("xmu-assistant")
+    except OSError:
+        pass
+
 
 def cleanup_orphaned_pyinstaller_temp() -> None:
     """清理 %TEMP% 下残留的 _MEI* 解包目录。
@@ -26,6 +43,11 @@ def cleanup_orphaned_pyinstaller_temp() -> None:
     长期运行会成片堆积（单份约 80MB）。本函数扫描 %TEMP%，删除非当前进程、且超过
     _MEI_CLEANUP_MIN_AGE_SECONDS 年龄的 _MEI 目录（年龄保护：避免删到正在被并发启动
     实例使用的解包目录）。
+
+    仅删带本应用所有权标记的目录：_MEI* 是 PyInstaller 全局约定，同机其他 PyInstaller
+    应用正在使用/遗留的解包目录同名同形，rmtree 会让对方懒加载全失效——无标记的一律
+    跳过（宁可少清也不误删）。标记由 mark_own_extraction_dir 在启动期写入，随单实例
+    互斥保证只属于存活实例。
     """
     current_mei = os.path.normcase(getattr(sys, "_MEIPASS", "") or "")
     temp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
@@ -41,6 +63,9 @@ def cleanup_orphaned_pyinstaller_temp() -> None:
         if not os.path.isdir(path):
             continue
         if current_mei and os.path.normcase(path) == current_mei:  # 跳过当前进程的解包目录
+            continue
+        if not os.path.isfile(os.path.join(path, _OWNER_MARKER_NAME)):
+            # 无本应用标记：外来应用或极旧版本残留。宁可少清也不误删
             continue
         try:
             # 年龄保护：跳过近期创建/修改的目录（可能正被并发启动实例使用）
