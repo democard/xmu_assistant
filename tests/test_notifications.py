@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 import sys
 import unittest
 from pathlib import Path
@@ -44,10 +45,11 @@ class FakeSession:
 class FakeSMTP:
     instances = []
 
-    def __init__(self, host, port, timeout=None):
+    def __init__(self, host, port, timeout=None, context=None):
         self.host = host
         self.port = port
         self.timeout = timeout
+        self.tls_context = context
         self.started_tls = False
         self.login_args = None
         self.messages = []
@@ -59,7 +61,8 @@ class FakeSMTP:
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def starttls(self):
+    def starttls(self, context=None):
+        self.tls_context = context
         self.started_tls = True
 
     def login(self, username, password):
@@ -72,12 +75,12 @@ class FakeSMTP:
 class FakeSMTPSSL(FakeSMTP):
     fail_init = False
 
-    def __init__(self, host, port, timeout=None):
+    def __init__(self, host, port, timeout=None, context=None):
         if self.fail_init:
             raise TimeoutError("465 timed out")
-        super().__init__(host, port, timeout)
+        super().__init__(host, port, timeout, context)
 
-    def starttls(self):
+    def starttls(self, context=None):
         raise AssertionError("SSL port must not call starttls")
 
 
@@ -205,12 +208,35 @@ class NotificationTests(unittest.TestCase):
 
         smtp = FakeSMTP.instances[-1]
         self.assertTrue(smtp.started_tls)
+        # STARTTLS 必须带校验上下文（smtplib 默认上下文 verify_mode=CERT_NONE，不验证证书）
+        self.assertIsNotNone(smtp.tls_context)
+        self.assertEqual(smtp.tls_context.verify_mode, ssl.CERT_REQUIRED)
         self.assertEqual(smtp.login_args, ("sender@example.invalid", "fixture-mail-password"))
         self.assertEqual(smtp.messages[0]["To"], "recipient@example.invalid")
 
+    def test_qq_mail_ssl_port_passes_a_verifying_tls_context(self):
+        FakeSMTPSSL.fail_init = False  # 上一个用例的 fail_init 不得影响本用例
+        with patch.object(smtplib, "SMTP_SSL", FakeSMTPSSL):
+            notifier = QQMailNotifier(
+                sender="sender@example.invalid",
+                password="fixture-mail-password",
+                recipient="recipient@example.invalid",
+                smtp_host="smtp.qq.com",
+                smtp_port=465,
+            )
+            notifier.send("签到提醒", "课程：数学")
+
+        smtp_ssl = FakeSMTPSSL.instances[-1]
+        self.assertFalse(smtp_ssl.started_tls)  # 465 不得再走 starttls
+        self.assertIsNotNone(smtp_ssl.tls_context)
+        self.assertEqual(smtp_ssl.tls_context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertEqual(smtp_ssl.login_args, ("sender@example.invalid", "fixture-mail-password"))
+
     def test_qq_mail_notifier_tries_multiple_ports_until_success(self):
         FakeSMTP.instances.clear()
+        was_failing = FakeSMTPSSL.fail_init
         FakeSMTPSSL.fail_init = True
+        self.addCleanup(setattr, FakeSMTPSSL, "fail_init", was_failing)  # 不向后续用例泄漏
 
         with patch.object(smtplib, "SMTP_SSL", FakeSMTPSSL), patch.object(smtplib, "SMTP", FakeSMTP):
             notifier = QQMailNotifier(

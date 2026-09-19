@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
 
@@ -141,15 +142,20 @@ class QQMailNotifier:
         message.set_content(body)
 
         errors: list[str] = []
+        # smtplib 不传 context 时用 ssl._create_stdlib_context()：verify_mode=CERT_NONE、
+        # 不校验主机名——同一局域网的主动中间人在握手/STARTTLS 时出示任意证书即可拿到
+        # QQ 授权码（等同完整邮箱）与提醒正文。PushPlus 走 requests（默认校验）、Android
+        # JavaMail 默认校验，唯独这两条路径裸奔；显式传校验上下文与其余通道对齐。
+        tls_context = ssl.create_default_context()
         for port in self._ports():
             try:
                 if port == 465:
-                    with smtplib.SMTP_SSL(self.smtp_host, port, timeout=15) as smtp:
+                    with smtplib.SMTP_SSL(self.smtp_host, port, timeout=15, context=tls_context) as smtp:
                         smtp.login(self.sender, self.password)
                         smtp.send_message(message)
                 else:
                     with smtplib.SMTP(self.smtp_host, port, timeout=15) as smtp:
-                        smtp.starttls()
+                        smtp.starttls(context=tls_context)
                         smtp.login(self.sender, self.password)
                         smtp.send_message(message)
                 return
