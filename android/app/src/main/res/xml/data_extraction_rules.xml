@@ -19,6 +19,22 @@
         <exclude
             domain="sharedpref"
             path="schedule_widget.xml" />
+        <!-- 考试安排（课程/日期/教室）与签到去重集同为明文学业记录，不参与云备份 -->
+        <exclude
+            domain="sharedpref"
+            path="exam_cache.xml" />
+        <exclude
+            domain="sharedpref"
+            path="rollcall_seen.xml" />
+        <!-- 加密凭据 prefs：MasterKey 在系统 Keystore 不随备份迁移，密文恢复到新设备
+             既解不开又会触发冷启动崩溃（恢复后应用自锁死），必须排除 -->
+        <exclude
+            domain="sharedpref"
+            path="xmu_assistant.xml" />
+        <!-- 外部课件下载目录：体积可达数百 MB，进云备份既超配额也无意义 -->
+        <exclude
+            domain="external"
+            path="Download/xmu助手课件" />
     </cloud-backup>
     <device-transfer>
         <exclude
@@ -36,5 +52,17 @@
         <exclude
             domain="sharedpref"
             path="schedule_widget.xml" />
+        <exclude
+            domain="sharedpref"
+            path="exam_cache.xml" />
+        <exclude
+            domain="sharedpref"
+            path="rollcall_seen.xml" />
+        <exclude
+            domain="sharedpref"
+            path="xmu_assistant.xml" />
+        <exclude
+            domain="external"
+            path="Download/xmu助手课件" />
     </device-transfer>
 </data-extraction-rules>
