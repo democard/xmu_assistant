@@ -164,8 +164,14 @@ internal fun processRollcallMonitorPoll(
             "雷达签到" -> settings.autoAnswerRadar
             else -> false
         }
-        val definitelyFinished = event.isExpired || event.remainingSeconds == 0L ||
-            event.ownStatus == STATUS_SIGNED || event.status == STATUS_SIGNED
+        val previousAttempt = answerAttempts[event.id] ?: 0
+        val expired = event.isExpired || event.remainingSeconds == 0L
+        if (!expired && event.ownStatus == STATUS_UNKNOWN) {
+            if (previousAttempt != 0) hasUnresolvedAnswerFailure = true
+            continue
+        }
+        val resolvedStatus = event.ownStatus ?: event.status
+        val definitelyFinished = expired || isTerminalRollcallStatus(resolvedStatus)
         if (definitelyFinished || event.type !in setOf("数字签到", "雷达签到")) {
             if (!runIfActive {
                     completedIds += event.id
@@ -174,7 +180,6 @@ internal fun processRollcallMonitorPoll(
             ) return
             continue
         }
-        val previousAttempt = answerAttempts[event.id] ?: 0
         if (!autoEnabled) continue
         if (answerAttemptCount(previousAttempt) >= maxAnswerAttempts) {
             // 有界停止写入，但保留失败态；不能写入 completed 后让下一轮 onSuccess
@@ -201,7 +206,7 @@ internal fun processRollcallMonitorPoll(
 
         try {
             val accepted = onAnswer(event)
-            if (!accepted && event.type == "数字签到") {
+            if (!accepted) {
                 if (!runIfActive {
                         recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.REJECTED)
                     }

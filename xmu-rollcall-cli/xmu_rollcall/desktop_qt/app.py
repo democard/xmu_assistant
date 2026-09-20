@@ -102,6 +102,7 @@ from .core import (
     current_academic_year_label,
     fetch_number_code,
     fetch_student_rollcall_detail,
+    classify_rollcall_status,
     format_duration,
     format_log_export,
 )
@@ -1161,6 +1162,13 @@ class DashboardWindow(
                 return False, reason, "", terminal
         if progress.own_present is True:
             return False, "无需提交（本人已签到）", "", True
+        if progress.own_leave:
+            return False, "无需提交（本人已请假）", "", True
+        if progress.own_status_ambiguous:
+            return False, "继续等待（本人状态未知或冲突）", "", False
+        event_verdict = classify_rollcall_status(current_event.status)
+        if progress.own_present is None and event_verdict in ("已签到", "请假"):
+            return False, f"无需提交（活动列表显示本人{event_verdict}）", "", True
         mode = str(context.get("mode") or "none")
         if mode != "none" and not wait_before_answer_satisfied(
             progress,
@@ -1455,9 +1463,24 @@ class DashboardWindow(
             if rollcall.result not in ("已签到", "已签"):
                 self._update_event_result(event_id, "已签到", "本人已签到，无需重复提交")
             return
+        if progress.own_leave:
+            self._auto_answer_attempted_rollcalls.add(rollcall_id)
+            self._update_event_result(event_id, "已跳过", "本人已请假，无需自动提交")
+            return
         if current_event is not None and rollcall_is_expired(current_event):
             self._auto_answer_attempted_rollcalls.add(rollcall_id)
             self._update_event_result(event_id, "已跳过", "签到已结束")
+            return
+        if progress.own_status_ambiguous:
+            self._update_event_result(event_id, "待处理", "本人状态未知或冲突，等待下轮核实")
+            return
+        event_verdict = classify_rollcall_status((current_event or rollcall).status)
+        if progress.own_present is None and event_verdict in ("已签到", "请假"):
+            self._auto_answer_attempted_rollcalls.add(rollcall_id)
+            if event_verdict == "已签到":
+                self._update_event_result(event_id, "已签到", "活动列表显示本人已签到，无需重复提交")
+            else:
+                self._update_event_result(event_id, "已跳过", "活动列表显示本人请假，无需自动提交")
             return
         if not self.auto_answer_check.isChecked() or not self._auto_answer_enabled:
             return

@@ -12,7 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
-from xmu_rollcall.desktop_qt.core import classify_rollcall_status, infer_signed_status  # noqa: E402
+from xmu_rollcall.desktop_qt.core import (  # noqa: E402
+    classify_rollcall_status,
+    infer_signed_status,
+    verify_own_status,
+)
 
 
 class ClassifyRollcallStatusTests(unittest.TestCase):
@@ -30,6 +34,12 @@ class ClassifyRollcallStatusTests(unittest.TestCase):
     def test_signed_word_list(self):
         for raw in ("signed", "present", "attended", "on_call", "on_call_fine", "fine", "done"):
             self.assertEqual(classify_rollcall_status(raw), "已签到", raw)
+
+    def test_late_is_checked_in_and_leave_is_distinct(self):
+        for raw in ("late", "on_call_arrive_late"):
+            self.assertEqual(classify_rollcall_status(raw), "已签到", raw)
+        for raw in ("on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave"):
+            self.assertEqual(classify_rollcall_status(raw), "请假", raw)
 
     def test_substring_lookalikes_are_unknown(self):
         # 子串误判防护：dismiss 不命中 miss、define/refine 不命中 fine
@@ -89,6 +99,40 @@ class InferSignedStatusTests(unittest.TestCase):
 
     def test_unparseable_status_is_unknown(self):
         signed, _ = infer_signed_status({"status": "weird_state"}, None, "u1")
+        self.assertEqual(signed, "未知")
+
+    def test_own_leave_does_not_fall_back_to_global_signed(self):
+        detail = {"student_rollcalls": [{
+            "user_no": "u1",
+            "status": "on_leave",
+            "rollcall_status": "on_personal_leave",
+        }]}
+        signed, _ = infer_signed_status({"status": "signed"}, detail, "u1")
+        self.assertEqual(signed, "请假")
+        self.assertEqual(verify_own_status(detail, "u1"), "请假")
+
+    def test_own_conflicting_status_fields_are_not_overridden_by_first_field(self):
+        detail = {"student_rollcalls": [{
+            "user_no": "u1",
+            "status": "on_call",
+            "rollcall_status": "absent",
+        }]}
+        signed, _ = infer_signed_status({"status": "signed"}, detail, "u1")
+        self.assertEqual(signed, "未知")
+        self.assertIsNone(verify_own_status(detail, "u1"))
+
+    def test_conflicting_multiple_own_rows_never_confirm_first_row(self):
+        detail = {"student_rollcalls": [
+            {"user_no": "u1", "status": "on_call"},
+            {"user_no": "u1", "status": "on_leave"},
+        ]}
+        signed, _ = infer_signed_status({"status": "signed"}, detail, "u1")
+        self.assertEqual(signed, "未知")
+        self.assertIsNone(verify_own_status(detail, "u1"))
+
+    def test_matched_unknown_personal_status_does_not_use_global_fallback(self):
+        detail = {"student_rollcalls": [{"user_no": "u1", "status": "new_state"}]}
+        signed, _ = infer_signed_status({"status": "signed"}, detail, "u1")
         self.assertEqual(signed, "未知")
 
 

@@ -92,20 +92,39 @@ data class CoursewareUiItem(
     val failureReason: String = "",
 )
 
+internal enum class KnownRollcallStatus {
+    PRESENT,
+    ABSENT,
+    LEAVE,
+    LATE,
+    UNKNOWN,
+}
+
+/** 只收录已有接口或公开实现证据的精确枚举；未知值交给各调用方保守处理。 */
+internal fun knownRollcallStatus(raw: String): KnownRollcallStatus = when (raw.trim().lowercase()) {
+    "on_call", "on_call_fine" -> KnownRollcallStatus.PRESENT
+    "absent" -> KnownRollcallStatus.ABSENT
+    "on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave" -> KnownRollcallStatus.LEAVE
+    "late", "on_call_arrive_late" -> KnownRollcallStatus.LATE
+    else -> KnownRollcallStatus.UNKNOWN
+}
+
 fun normalizedRollcallStatus(raw: String): String {
     val lowered = raw.lowercase()
+    val known = knownRollcallStatus(raw)
     // 单词边界分词再精确比对：避免 "dismiss" 命中 "miss"、"define/refine" 命中 "fine" 等子串误判
     val tokens = lowered.split(Regex("[^a-z0-9]+")).filter { it.isNotBlank() }.toSet()
     return when {
+        known == KnownRollcallStatus.LEAVE -> STATUS_LEAVE
+        known == KnownRollcallStatus.LATE -> STATUS_LATE
         // 先判「未签」：unsigned 含 signed 子串，顺序颠倒会把 unsigned 误判为已签；
         // "not_signed" 分词成 [not, signed] 会命中下方 signed 分支误判已签，必须在此先行拦截；
         // missed/unanswered 与桌面端 infer_signed_status 词表对齐
-        raw.trim() in listOf("未签", "未签到", "缺勤", "未到") ||
+        known == KnownRollcallStatus.ABSENT || raw.trim() in listOf("未签", "未签到", "缺勤", "未到") ||
             "unsigned" in tokens || "absent" in tokens || "miss" in tokens ||
             "missed" in tokens || "unanswered" in tokens ||
             ("not" in tokens && "signed" in tokens) -> "未签"
-        raw.trim() in listOf("已签", "已签到", "已到") ||
-            lowered.trim() in setOf("on_call", "on_call_fine") ||
+        known == KnownRollcallStatus.PRESENT || raw.trim() in listOf("已签", "已签到", "已到") ||
             "signed" in tokens || "fine" in tokens || "success" in tokens ||
             "present" in tokens || "attended" in tokens || "done" in tokens -> "已签"
         else -> "未知"

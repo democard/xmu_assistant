@@ -351,10 +351,14 @@ def parse_rollcall_time(text) -> datetime | None:
 # 避免 dismiss 命中 miss、define/refine 命中 fine 的子串误判。
 ROLLCALL_SIGNED_STATUS_TOKENS = frozenset({"signed", "present", "attended", "fine", "done"})
 ROLLCALL_ABSENT_STATUS_TOKENS = frozenset({"absent", "missed", "miss", "unanswered"})
+ROLLCALL_LATE_STATUSES = frozenset({"late", "on_call_arrive_late"})
+ROLLCALL_LEAVE_STATUSES = frozenset({
+    "on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave",
+})
 
 
 def classify_rollcall_status(value) -> str | None:
-    """把平台状态原文归类为 '已签到' / '未签到' / None(未知)。纯函数便于单测。
+    """把平台状态原文归类为已签到、未签到、请假或 None(未知)。
 
     分词后整词比对；中文状态按包含判定（平台偶有 "已签到"/"未签到" 中文原值）。
     """
@@ -378,11 +382,40 @@ def classify_rollcall_status(value) -> str | None:
     # TronClass 本人明细的正常已签状态包含 on_call / on_call_fine。下划线会被
     # 上面的分词规则拆开，必须按完整原串精确匹配；放在负面状态之后，避免将来
     # 出现带否定前缀的近似值被误判为已签。
-    if lowered in {"on_call", "on_call_fine"}:
+    if lowered in {"on_call", "on_call_fine"} | ROLLCALL_LATE_STATUSES:
         return "已签到"
+    if lowered in ROLLCALL_LEAVE_STATUSES:
+        return "请假"
     if tokens & ROLLCALL_SIGNED_STATUS_TOKENS:
         return "已签到"
     return None
+
+
+def _classify_rollcall_record_status(record: dict) -> tuple[bool, str | None]:
+    """合并本人行的状态字段；任一未知或语义冲突均不下确定结论。"""
+    values = [
+        str(record.get(key) or "").strip()
+        for key in ("status", "rollcall_status", "student_rollcall_status", "state")
+        if str(record.get(key) or "").strip()
+    ]
+    if not values:
+        return False, None
+    classified = [classify_rollcall_status(value) for value in values]
+    if any(value is None for value in classified):
+        return True, None
+    distinct = set(classified)
+    return True, distinct.pop() if len(distinct) == 1 else None
+
+
+def _classify_rollcall_records_status(records: list[dict]) -> tuple[bool, str | None]:
+    """合并多个本人候选行；缺失、未知或相互冲突时均保持未知。"""
+    results = [_classify_rollcall_record_status(record) for record in records]
+    if not results or not any(has_status for has_status, _ in results):
+        return False, None
+    if any(not has_status or status is None for has_status, status in results):
+        return True, None
+    distinct = {status for _, status in results}
+    return True, distinct.pop() if len(distinct) == 1 else None
 
 
 def infer_signed_status(rollcall: dict, student_detail: dict | None, username: str) -> tuple[str, str]:
@@ -398,12 +431,14 @@ def infer_signed_status(rollcall: dict, student_detail: dict | None, username: s
     )
 
     if student_detail:
-        own_record = find_student_rollcall(student_detail, username)
-        if own_record:
-            own_status = str(first_value(own_record, ("status", "rollcall_status", "state"), "")).lower()
-            classified = classify_rollcall_status(own_status)
+        own_records = find_student_rollcalls(student_detail, username)
+        if own_records:
+            has_own_status, classified = _classify_rollcall_records_status(own_records)
             if classified is not None:
                 return classified, platform_status
+            if has_own_status:
+                # 已定位到本人行且带有未知状态时，不得拿活动聚合状态冒充个人结论。
+                return "未知", platform_status
 
     classified = classify_rollcall_status(status_text)
     if classified is not None:
@@ -426,17 +461,23 @@ def get_profile_user_id(session) -> str:
     return str(user_id)
 
 
-def find_student_rollcall(payload, username: str) -> dict | None:
+def find_student_rollcalls(payload, username: str) -> list[dict]:
     students = unwrap_list(payload, ("student_rollcalls", "students", "data", "items", "list"))
+    matches = []
     for student in students:
         if not isinstance(student, dict):
             continue
         user_no = str(first_value(student, ("user_no", "username", "student_no", "number", "account"), ""))
         if username and user_no == username:
-            return student
-        if student.get("is_current_user") or student.get("is_self"):
-            return student
-    return None
+            matches.append(student)
+        elif student.get("is_current_user") is True or student.get("is_self") is True:
+            matches.append(student)
+    return matches
+
+
+def find_student_rollcall(payload, username: str) -> dict | None:
+    matches = find_student_rollcalls(payload, username)
+    return matches[0] if matches else None
 
 
 def fetch_student_rollcall_detail(session, rollcall_id: str):
@@ -473,11 +514,10 @@ def verify_own_status(student_detail, username: str, fallback_platform_status: s
     "无本人记录 / 明细为空 / 本人状态词无法分类"三种情形都不改写展示值，
     宁可保守也不拿聚合值冒充本人结论。纯函数便于单测。
     """
-    own_record = find_student_rollcall(student_detail or {}, username)
-    if not own_record:
+    own_records = find_student_rollcalls(student_detail or {}, username)
+    if not own_records:
         return None
-    own_status = str(first_value(own_record, ("status", "rollcall_status", "state"), "")).lower()
-    return classify_rollcall_status(own_status)
+    return _classify_rollcall_records_status(own_records)[1]
 
 
 def fetch_number_code(session, rollcall_id: str) -> str:

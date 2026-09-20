@@ -54,6 +54,112 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         self.assertIsNone(classify_attendance_entry({"status": "absent", "rollcall_status": "on_call_fine"}))
         self.assertTrue(classify_attendance_entry({"status": "on_call", "rollcall_status": "on_call_fine"}))
 
+    def test_confirmed_leave_fields_are_equivalent_and_count_in_denominator(self):
+        self.assertIsNone(classify_attendance_entry({
+            "status": "on_leave",
+            "rollcall_status": "on_personal_leave",
+        }))
+        payload = {"student_rollcalls": [
+            *({"status": "on_call", "rollcall_status": "on_call_fine"} for _ in range(72)),
+            {"status": "on_leave", "rollcall_status": "on_personal_leave"},
+        ]}
+        result = summarize(payload)
+        self.assertEqual(
+            (result.present, result.absent, result.leave, result.unknown, result.observed),
+            (72, 0, 1, 0, 73),
+        )
+        self.assertAlmostEqual(result.rate_percent, 72 * 100 / 73)
+
+    def test_confirmed_late_fields_count_as_present_and_confirm_self(self):
+        result = summarize(
+            {"student_rollcalls": [{
+                "user_no": "me",
+                "status": "on_call",
+                "rollcall_status": "on_call_arrive_late",
+            }]},
+            my_user_no="me",
+        )
+        self.assertEqual((result.present, result.leave, result.unknown), (1, 0, 0))
+        self.assertTrue(result.own_present)
+        self.assertEqual(result.rate_percent, 100.0)
+
+    def test_supported_leave_variants_share_leave_semantics(self):
+        for raw in ("on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave"):
+            with self.subTest(raw=raw):
+                result = summarize({"student_rollcalls": [{"status": raw}]})
+                self.assertEqual((result.leave, result.unknown, result.rate_percent), (1, 0, 0.0))
+
+    def test_leave_conflicting_with_attendance_is_unknown(self):
+        result = summarize({"student_rollcalls": [
+            {"status": "on_leave", "rollcall_status": "on_call_fine"},
+        ]})
+        self.assertEqual((result.leave, result.unknown), (0, 1))
+        self.assertFalse(result.own_status_ambiguous)
+        self.assertIsNone(result.rate_percent)
+
+    def test_leave_only_roster_is_reliable_zero_percent(self):
+        result = summarize({"student_rollcalls": [
+            {"status": "on_leave", "rollcall_status": "on_personal_leave"},
+        ]})
+        self.assertEqual((result.present, result.leave, result.observed), (0, 1, 1))
+        self.assertTrue(result.reliable)
+        self.assertEqual(result.rate_percent, 0.0)
+
+    def test_own_leave_is_neither_present_nor_explicitly_absent(self):
+        result = summarize(
+            {"student_rollcalls": [{
+                "user_no": "me",
+                "status": "on_leave",
+                "rollcall_status": "on_personal_leave",
+            }]},
+            my_user_no="me",
+        )
+        self.assertIsNone(result.own_present)
+        self.assertTrue(result.own_leave)
+        self.assertEqual((result.leave, result.unknown), (1, 0))
+
+    def test_self_marker_resolves_phone_login_to_canonical_roster_row(self):
+        result = summarize(
+            {"student_rollcalls": [{
+                "user_no": "canonical-student-number",
+                "is_current_user": True,
+                "status": "on_call",
+            }]},
+            my_user_no="phone-login",
+        )
+        self.assertTrue(result.own_present)
+
+    def test_conflicting_multiple_self_markers_never_confirm_present_or_leave(self):
+        result = summarize(
+            {"student_rollcalls": [
+                {"user_no": "one", "is_self": True, "status": "on_call"},
+                {"user_no": "two", "is_current_user": True, "status": "on_leave"},
+            ]},
+            my_user_no="phone-login",
+        )
+        self.assertIsNone(result.own_present)
+        self.assertFalse(result.own_leave)
+        self.assertTrue(result.own_status_ambiguous)
+
+    def test_matched_conflicting_status_fields_are_personally_ambiguous(self):
+        result = summarize(
+            {"student_rollcalls": [{
+                "user_no": "me",
+                "status": "on_call",
+                "rollcall_status": "absent",
+            }]},
+            my_user_no="me",
+        )
+        self.assertIsNone(result.own_present)
+        self.assertFalse(result.own_leave)
+        self.assertTrue(result.own_status_ambiguous)
+
+        unmatched = summarize(
+            {"student_rollcalls": [{"user_no": "other", "status": "on_call"}]},
+            my_user_no="me",
+        )
+        self.assertFalse(unmatched.own_status_ambiguous)
+
     def test_empty_primary_field_can_use_explicit_secondary_field(self):
         self.assertTrue(classify_attendance_entry({"status": None, "student_rollcall_status": "on_call_fine"}))
 
@@ -82,10 +188,14 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
                 expected = case["expected"]
                 self.assertEqual((result.present, result.absent, result.observed),
                                  (expected["present"], expected["absent"], expected["total"]))
+                self.assertEqual(result.leave, expected.get("leave", 0))
+                self.assertEqual(result.unknown, expected.get("unknown", 0))
                 if expected["percent"] is None:
                     self.assertIsNone(result.rate_percent)
+                    self.assertFalse(result.reliable)
                 else:
                     self.assertAlmostEqual(result.rate_percent, expected["percent"])
+                    self.assertTrue(result.reliable)
 
     def test_duplicate_students_are_not_double_counted(self):
         payload = make_roster(1, 1)
@@ -131,7 +241,7 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         for total in range(1, 25):
             for present in range(total + 1):
                 result = summarize(make_roster(present, total), roster_complete=True)
-                self.assertEqual(result.present + result.absent + result.unknown, result.observed)
+                self.assertEqual(result.present + result.absent + result.leave + result.unknown, result.observed)
                 self.assertAlmostEqual(result.rate_percent, present * 100 / total)
 
 

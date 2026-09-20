@@ -430,6 +430,24 @@ class MonitorRunGateTest {
     }
 
     @Test
+    fun `leave is terminal before first submission and clears an uncertain retry`() {
+        val attempts = mutableMapOf("n1" to 1)
+        val completed = mutableSetOf<String>()
+        var writes = 0
+
+        processRollcallMonitorPoll(
+            listOf(numberEvent("2222", ownStatus = STATUS_LEAVE)),
+            RollcallSettings(autoAnswerNumber = true),
+            mutableSetOf(), completed, attempts,
+            { action -> action(); true }, {}, { writes++; true }, {},
+        )
+
+        assertEquals(0, writes)
+        assertEquals(setOf("n1"), completed)
+        assertTrue(attempts.isEmpty())
+    }
+
+    @Test
     fun `pending failed number answer does not clear health while detail or threshold is unavailable`() {
         val attempts = mutableMapOf("n1" to 1) // positive = prior write result unknown
         var healthSuccesses = 0
@@ -457,9 +475,17 @@ class MonitorRunGateTest {
     @Test
     fun `expired signed stopped and account invalidated events never submit`() {
         val settings = RollcallSettings(autoAnswerRadar = true)
+        val compatibleLateStatus = parsedOwnRollcallStatus(
+            org.json.JSONObject("""{"status":"on_call","rollcall_status":"on_call_arrive_late"}"""),
+        )
+        assertEquals(STATUS_LATE, compatibleLateStatus)
         val candidates = listOf(
             RollcallEvent("expired", "课", "师", "雷达签到", "未签", isExpired = true),
             RollcallEvent("signed", "课", "师", "雷达签到", "未签", ownStatus = STATUS_SIGNED),
+            RollcallEvent("late", "课", "师", "雷达签到", "未签", ownStatus = compatibleLateStatus),
+            RollcallEvent("leave", "课", "师", "雷达签到", "未签", ownStatus = STATUS_LEAVE),
+            RollcallEvent("summary-late", "课", "师", "雷达签到", STATUS_LATE),
+            RollcallEvent("summary-leave", "课", "师", "雷达签到", STATUS_LEAVE),
         )
         var answers = 0
         processRollcallMonitorPoll(
@@ -472,6 +498,86 @@ class MonitorRunGateTest {
             { false }, {}, { answers++; true }, {},
         )
         assertEquals(0, answers)
+    }
+
+    @Test
+    fun `conflicting own detail overrides signed summary until a later explicit absence`() {
+        val settings = RollcallSettings(autoAnswerRadar = true)
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf("conflict" to 1)
+        var writes = 0
+        var healthSuccesses = 0
+
+        processRollcallMonitorPoll(
+            listOf(
+                RollcallEvent(
+                    "conflict", "课", "师", "雷达签到", STATUS_SIGNED,
+                    ownStatus = STATUS_UNKNOWN,
+                ),
+            ),
+            settings, notified, completed, attempts,
+            { action -> action(); true }, {}, { writes++; true }, { healthSuccesses++ },
+        )
+
+        assertEquals(0, writes)
+        assertTrue(completed.isEmpty())
+        assertEquals(0, healthSuccesses)
+        assertEquals(1, attempts["conflict"])
+
+        processRollcallMonitorPoll(
+            listOf(
+                RollcallEvent(
+                    "conflict", "课", "师", "雷达签到", STATUS_SIGNED,
+                    ownStatus = "未签",
+                ),
+            ),
+            settings, notified, completed, attempts,
+            { action -> action(); true }, {}, { writes++; true }, { healthSuccesses++ },
+        )
+
+        assertEquals(1, writes)
+        assertEquals(setOf("conflict"), completed)
+        assertTrue(attempts.isEmpty())
+    }
+
+    @Test
+    fun `signed summary remains terminal when own detail is unavailable`() {
+        val completed = mutableSetOf<String>()
+        var writes = 0
+
+        processRollcallMonitorPoll(
+            listOf(RollcallEvent("summary", "课", "师", "雷达签到", STATUS_SIGNED, ownStatus = null)),
+            RollcallSettings(autoAnswerRadar = true), mutableSetOf(), completed, mutableMapOf(),
+            { action -> action(); true }, {}, { writes++; true }, {},
+        )
+
+        assertEquals(0, writes)
+        assertEquals(setOf("summary"), completed)
+    }
+
+    @Test
+    fun `radar rejection retries at most three times and never reports healthy completion`() {
+        val settings = RollcallSettings(autoAnswerRadar = true)
+        val event = RollcallEvent("radar", "课", "师", "雷达签到", "未签", ownStatus = "未签")
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var writes = 0
+        var healthSuccesses = 0
+
+        repeat(4) {
+            processRollcallMonitorPoll(
+                listOf(event), settings, notified, completed, attempts,
+                { action -> action(); true }, {}, { writes++; false }, { healthSuccesses++ },
+                maxAnswerAttempts = 3,
+            )
+        }
+
+        assertEquals(3, writes)
+        assertEquals(-3, attempts["radar"])
+        assertTrue(completed.isEmpty())
+        assertEquals(0, healthSuccesses)
     }
 
     @Test

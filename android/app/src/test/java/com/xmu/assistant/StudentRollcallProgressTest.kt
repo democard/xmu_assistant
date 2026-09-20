@@ -1,6 +1,7 @@
 package com.xmu.assistant
 
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,9 +22,109 @@ class StudentRollcallProgressTest {
         assertEquals(3, result.observed)
         assertEquals(2, result.present)
         assertEquals(1, result.absent)
+        assertEquals(0, result.leave)
         assertEquals(0, result.unknown)
         assertEquals(66.66666666666667, result.percentage!!, 0.000001)
         assertTrue(result.reliablePercentage)
+    }
+
+    @Test
+    fun `observed leave statuses are equivalent and old construction defaults leave to zero`() {
+        val result = parseStudentRollcallProgress(
+            """{"student_rollcalls":[
+                {"student_id":"1","status":"on_leave"},
+                {"student_id":"2","rollcall_status":"on_personal_leave"},
+                {"student_id":"3","status":"on_sick_leave"},
+                {"student_id":"4","rollcall_status":"on_public_leave"},
+                {"student_id":"5","status":"on_leave","rollcall_status":"on_personal_leave"}
+            ]}""",
+        )
+
+        assertEquals(5, result.total)
+        assertEquals(0, result.present)
+        assertEquals(0, result.absent)
+        assertEquals(5, result.leave)
+        assertEquals(0, result.unknown)
+        assertTrue(result.reliablePercentage)
+        assertEquals(0.0, result.percentage!!, 0.0)
+
+        val legacyConstruction = StudentRollcallProgress(1, 1, 0, 0, 100.0, true)
+        assertEquals(0, legacyConstruction.leave)
+    }
+
+    @Test
+    fun `late statuses count as present while retaining a reliable roster`() {
+        val result = parseStudentRollcallProgress(
+            """{"student_rollcalls":[
+                {"student_id":"1","status":"late"},
+                {"student_id":"2","rollcall_status":"on_call_arrive_late"},
+                {"student_id":"3","status":"late","rollcall_status":"on_call_arrive_late"}
+            ]}""",
+        )
+
+        assertEquals(3, result.total)
+        assertEquals(3, result.present)
+        assertEquals(0, result.leave)
+        assertEquals(0, result.unknown)
+        assertEquals(100.0, result.percentage!!, 0.0)
+        assertTrue(result.reliablePercentage)
+    }
+
+    @Test
+    fun `leave or late conflicts with a different class status remain unknown`() {
+        val result = parseStudentRollcallProgress(
+            """{"student_rollcalls":[
+                {"student_id":"1","status":"on_leave","rollcall_status":"on_call"},
+                {"student_id":"2","status":"on_personal_leave","rollcall_status":"absent"},
+                {"student_id":"3","status":"late","rollcall_status":"absent"}
+            ]}""",
+        )
+
+        assertEquals(3, result.total)
+        assertEquals(0, result.present)
+        assertEquals(0, result.absent)
+        assertEquals(0, result.leave)
+        assertEquals(3, result.unknown)
+        assertUnreliable(result)
+    }
+
+    @Test
+    fun `seventy two present and one leave uses the full roster denominator`() {
+        val records = JSONArray()
+        repeat(72) { index ->
+            records.put(
+                JSONObject()
+                    .put("user_no", "present-$index")
+                    .put("status", "on_call")
+                    .put("rollcall_status", "on_call_fine"),
+            )
+        }
+        records.put(
+            JSONObject()
+                .put("user_no", "leave")
+                .put("status", "on_leave")
+                .put("rollcall_status", "on_personal_leave"),
+        )
+
+        val result = parseStudentRollcallProgress(records)
+
+        assertEquals(73, result.total)
+        assertEquals(72, result.present)
+        assertEquals(1, result.leave)
+        assertEquals(98.63013698630137, result.percentage!!, 0.0000000001)
+        assertTrue(result.reliablePercentage)
+        assertTrue(
+            RollcallSettings(
+                waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_PERCENT,
+                waitBeforeAnswerPercent = 98,
+            ).thresholdReached(result),
+        )
+        assertFalse(
+            RollcallSettings(
+                waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_PERCENT,
+                waitBeforeAnswerPercent = 99,
+            ).thresholdReached(result),
+        )
     }
 
     @Test
@@ -106,6 +207,8 @@ class StudentRollcallProgressTest {
             val name = case.getString("name")
             assertEquals(name, expected.getInt("present"), result.present)
             assertEquals(name, expected.getInt("absent"), result.absent)
+            assertEquals(name, expected.optInt("leave", 0), result.leave)
+            assertEquals(name, expected.optInt("unknown", 0), result.unknown)
             assertEquals(name, expected.getInt("total"), result.total)
             if (expected.isNull("percent")) {
                 assertUnreliable(result)

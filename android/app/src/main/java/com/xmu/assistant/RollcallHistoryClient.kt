@@ -168,12 +168,8 @@ internal class RollcallHistoryClient internal constructor(
         val obj = detail as? JSONObject
         val parsed = obj?.let { parseStudentRollcallDetails(it, username) }
         val ownStatus = parsed?.ownStatus ?: run {
-            val own = findOwnStudentRollcall(detail, username)
-            val word = own?.let { student ->
-                arrayOf("status", "rollcall_status", "state")
-                    .firstNotNullOfOrNull { key -> student.optRealString(key).takeIf { it.isNotBlank() } }
-            }
-            word?.let(::historyRollcallStatus) ?: STATUS_UNKNOWN
+            val own = findOwnStudentRollcalls(detail, username)
+            parsedOwnRollcallStatus(own) ?: STATUS_UNKNOWN
         }
         val progress = when (detail) {
             is JSONObject -> parsed?.progress
@@ -187,15 +183,19 @@ internal class RollcallHistoryClient internal constructor(
         )
     }
 
-    private fun findOwnStudentRollcall(payload: Any, username: String): JSONObject? {
+    private fun findOwnStudentRollcalls(payload: Any, username: String): List<JSONObject> {
         val students = unwrapList(payload, "student_rollcalls", "students", "data", "items", "list")
+        val matches = mutableListOf<JSONObject>()
         for (raw in students) {
             val student = raw as? JSONObject ?: continue
             val userNo = firstString(student, "user_no", "username", "student_no", "number", "account")
-            if (username.isNotBlank() && userNo == username) return student
-            if (student.optBoolean("is_current_user") || student.optBoolean("is_self")) return student
+            if ((username.isNotBlank() && userNo == username) ||
+                student.optBoolean("is_current_user") || student.optBoolean("is_self")
+            ) {
+                matches += student
+            }
         }
-        return null
+        return matches
     }
 
     /**
@@ -330,6 +330,12 @@ data class RollcallHistoryItem(
 
 internal const val STATUS_SIGNED = "已签"
 internal const val STATUS_UNKNOWN = "未知"
+internal const val STATUS_LEAVE = "请假"
+internal const val STATUS_LATE = "迟到"
+
+/** 已有明确终态的本人记录不得再次提交；展示兜底状态不参与此判断。 */
+internal fun isTerminalRollcallStatus(status: String?): Boolean =
+    status in setOf(STATUS_SIGNED, STATUS_LATE, STATUS_LEAVE)
 
 /** User-selected presentation fallback only; never use this to confirm attendance or persist a verdict. */
 internal fun historyRollcallDisplayStatus(status: String): String = when {
@@ -341,12 +347,16 @@ internal fun historyRollcallDisplayStatus(status: String): String = when {
 /** Align with desktop classify_rollcall_status tokens, preserving explicit absence for display. */
 internal fun historyRollcallStatus(raw: String): String {
     val text = raw.trim().lowercase()
+    val known = knownRollcallStatus(raw)
     val tokens = text.split(Regex("[^a-z0-9]+")).filter { it.isNotBlank() }.toSet()
     return when {
-        text in setOf("缺勤", "缺席", "未到") || tokens.any { it in setOf("absent", "missed", "miss") } -> "缺勤"
+        known == KnownRollcallStatus.LEAVE -> STATUS_LEAVE
+        known == KnownRollcallStatus.LATE -> STATUS_LATE
+        known == KnownRollcallStatus.ABSENT || text in setOf("缺勤", "缺席", "未到") ||
+            tokens.any { it in setOf("absent", "missed", "miss") } -> "缺勤"
         "未签" in text || "unsigned" in tokens || "unanswered" in tokens ||
             ("not" in tokens && "signed" in tokens) -> "未签"
-        text in setOf("on_call", "on_call_fine") || "已签" in text || text == "已到" ||
+        known == KnownRollcallStatus.PRESENT || "已签" in text || text == "已到" ||
             tokens.any { it in setOf("signed", "present", "attended", "fine", "done") } -> STATUS_SIGNED
         else -> STATUS_UNKNOWN
     }
@@ -433,6 +443,7 @@ fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
                             .put("observed", progress.observed)
                             .put("present", progress.present)
                             .put("absent", progress.absent)
+                            .put("leave", progress.leave)
                             .put("unknown", progress.unknown)
                             .put("reliablePercentage", progress.reliablePercentage),
                     )
@@ -470,14 +481,16 @@ private fun progressFromCache(obj: JSONObject): StudentRollcallProgress? {
     val observed = obj.strictInt("observed") ?: return null
     val present = obj.strictInt("present") ?: return null
     val absent = obj.strictInt("absent") ?: return null
+    val leave = if (obj.has("leave")) obj.strictInt("leave") ?: return null else 0
     val unknown = obj.strictInt("unknown") ?: return null
-    if (minOf(observed, present, absent, unknown) < 0) return null
-    if (present.toLong() + absent.toLong() + unknown.toLong() != observed.toLong() || observed == 0) return null
+    if (minOf(observed, present, absent, leave, unknown) < 0) return null
+    if (present.toLong() + absent.toLong() + leave.toLong() + unknown.toLong() != observed.toLong() || observed == 0) return null
     val reliable = (obj.opt("reliablePercentage") as? Boolean == true) && unknown == 0
     return StudentRollcallProgress(
         observed, present, absent, unknown,
         if (reliable) present * 100.0 / observed else null,
         reliable,
+        leave,
     )
 }
 

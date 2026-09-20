@@ -39,6 +39,18 @@ class RollcallHistoryClientTest {
             "\"status\":\"signed\"" to STATUS_SIGNED,
             "\"status\":\"on_call\"" to STATUS_SIGNED,
             "\"status\":\"on_call_fine\"" to STATUS_SIGNED,
+            "\"status\":\"on_leave\"" to STATUS_LEAVE,
+            "\"status\":\"on_personal_leave\"" to STATUS_LEAVE,
+            "\"status\":\"on_sick_leave\"" to STATUS_LEAVE,
+            "\"status\":\"on_public_leave\"" to STATUS_LEAVE,
+            "\"status\":\"on_leave\",\"rollcall_status\":\"on_personal_leave\"" to STATUS_LEAVE,
+            "\"status\":\"late\"" to STATUS_LATE,
+            "\"status\":\"on_call_arrive_late\"" to STATUS_LATE,
+            "\"status\":\"late\",\"rollcall_status\":\"on_call_arrive_late\"" to STATUS_LATE,
+            "\"status\":\"on_call\",\"rollcall_status\":\"on_call_arrive_late\"" to STATUS_LATE,
+            "\"status\":\"not_signed\",\"rollcall_status\":\"absent\"" to "缺勤",
+            "\"student_rollcall_status\":\"on_sick_leave\"" to STATUS_LEAVE,
+            "\"status\":\"on_call\",\"rollcall_status\":\"on_leave\"" to STATUS_UNKNOWN,
             "\"status\":\"present\"" to STATUS_SIGNED,
             "\"status\":\"missed\"" to "缺勤",
             "\"status\":\"unsigned\"" to "未签",
@@ -60,6 +72,38 @@ class RollcallHistoryClientTest {
     }
 
     @Test
+    fun `all matching own rows are merged without losing late or hiding conflicts`() {
+        val details = mapOf(
+            "late" to """{"student_rollcalls":[
+                {"user_no":"u1","status":"on_call"},
+                {"user_no":"u1","rollcall_status":"on_call_arrive_late"}
+            ]}""",
+            "conflict" to """{"student_rollcalls":[
+                {"user_no":"u1","status":"on_public_leave"},
+                {"user_no":"u1","status":"on_call"}
+            ]}""",
+            "missing" to """{"student_rollcalls":[
+                {"user_no":"u1","status":"on_call"},
+                {"user_no":"u1"}
+            ]}""",
+        )
+        val expectedById = mapOf(
+            "late" to STATUS_LATE,
+            "conflict" to STATUS_UNKNOWN,
+            "missing" to STATUS_UNKNOWN,
+        )
+        for ((rollcallId, expected) in expectedById) {
+            val transport = FakeHistoryTransport(
+                courses = listOf(course("c1", "数据结构", "2026-1")),
+                rollcallsByCourse = mapOf("c1" to listOf(rollcallJson(rollcallId, "2026-09-09T07:57:00"))),
+                detailsByRollcallId = details,
+            )
+
+            assertEquals(expected, client(transport).fetchRecentRollcalls("u1", fakeCourses()).single().ownStatus)
+        }
+    }
+
+    @Test
     fun `display fallback keeps unknown visible without changing the raw status`() {
         // v1.6.3 语义：本人状态只作展示兜底，绝不参与出勤判定或持久化。
         assertEquals("核实中…", historyRollcallDisplayStatus(""))
@@ -67,6 +111,8 @@ class RollcallHistoryClientTest {
         assertEquals(STATUS_SIGNED, historyRollcallDisplayStatus(STATUS_UNKNOWN))
         assertEquals("未签", historyRollcallDisplayStatus("未签"))
         assertEquals("缺勤", historyRollcallDisplayStatus("缺勤"))
+        assertEquals(STATUS_LEAVE, historyRollcallDisplayStatus(STATUS_LEAVE))
+        assertEquals(STATUS_LATE, historyRollcallDisplayStatus(STATUS_LATE))
         assertEquals(STATUS_SIGNED, historyRollcallDisplayStatus(STATUS_SIGNED))
     }
 
@@ -260,7 +306,7 @@ class RollcallHistoryClientTest {
             items = listOf(
                 RollcallHistoryItem(
                     "r1", "c1", "课程一", "数字签到", "07-01 08:00", 1_720_000_000L * 1000,
-                    STATUS_SIGNED, StudentRollcallProgress(2, 1, 1, 0, 50.0, true), "0042",
+                    STATUS_SIGNED, StudentRollcallProgress(3, 1, 1, 0, 100.0 / 3.0, true, leave = 1), "0042",
                 ),
                 RollcallHistoryItem("r2", "c1", "课程一", "数字签到", "-", null, STATUS_UNKNOWN),
             ),
@@ -274,6 +320,22 @@ class RollcallHistoryClientTest {
 
         // 换账号读同一份缓存：一律判空（防串号）
         assertNull(loadRollcallHistoryCache(file, accountId = "u2"))
+    }
+
+    @Test
+    fun `cache without leave field remains readable as zero leave`() {
+        val file = temporaryFolder.newFile("legacy_progress_cache.json")
+        file.writeText(
+            """{"version":$ROLLCALL_HISTORY_CACHE_VERSION,"account_id":"u1","items":[{
+                "rollcallId":"r","ownStatus":"已签","progress":{
+                    "observed":2,"present":1,"absent":1,"unknown":0,"reliablePercentage":true
+                }
+            }]}""",
+        )
+
+        val progress = loadRollcallHistoryCache(file, "u1")?.items?.single()?.progress
+        assertEquals(0, progress?.leave)
+        assertEquals(50.0, progress?.percentage ?: -1.0, 0.0)
     }
 
     @Test

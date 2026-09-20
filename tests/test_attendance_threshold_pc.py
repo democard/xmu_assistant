@@ -50,13 +50,13 @@ def _progress(present: int, total: int, *, reliable: bool = True, own=None):
     )
 
 
-def _event(kind="雷达签到", *, code="", expired=False):
+def _event(kind="雷达签到", *, code="", expired=False, status="rolling"):
     return RollcallEvent(
         rollcall_id="r1",
         course_title="测试课程",
         teacher="教师",
         rollcall_type=kind,
-        status="rolling",
+        status=status,
         raw={"is_expired": expired},
         number_code=code,
     )
@@ -102,6 +102,20 @@ class ThresholdReferenceTests(unittest.TestCase):
         high = normalize_rollcall_settings({"wait_before_answer_percent": 101})
         self.assertEqual((low["wait_before_answer_count"], low["wait_before_answer_percent"]), (1, 1))
         self.assertEqual(high["wait_before_answer_percent"], 100)
+
+    def test_leave_counts_in_denominator_for_percent_and_not_present_for_count(self):
+        progress = RollcallProgress(
+            observed=73,
+            present=72,
+            absent=0,
+            unknown=0,
+            roster_complete=True,
+            leave=1,
+        )
+        self.assertTrue(wait_before_answer_satisfied(progress, "percent", percent=98))
+        self.assertFalse(wait_before_answer_satisfied(progress, "percent", percent=99))
+        self.assertTrue(wait_before_answer_satisfied(progress, "count", count=72))
+        self.assertFalse(wait_before_answer_satisfied(progress, "count", count=73))
 
     def test_config_save_and_reload_keeps_new_fields(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -192,9 +206,9 @@ class ThresholdDispatchTests(unittest.TestCase):
         DashboardWindow._add_rollcall_event(host, event)
         return host, token
 
-    def _emit_progress(self, host, token, progress, code=""):
+    def _emit_progress(self, host, token, progress, code="", status="rolling"):
         DashboardWindow._ev_rollcall_progress(
-            host, ("rollcall_progress", "r1", progress, code, token, _event(code=code))
+            host, ("rollcall_progress", "r1", progress, code, token, _event(code=code, status=status))
         )
 
     def test_below_then_reached_submits_once_and_detection_notifies_once(self):
@@ -216,6 +230,51 @@ class ThresholdDispatchTests(unittest.TestCase):
         self._emit_progress(signed, signed_token, _progress(8, 40, own=True))
         self.assertEqual(signed.answers, [])
         self.assertEqual(signed.events_by_id["event-1"].result, "已签到")
+
+    def test_own_leave_is_terminal_and_never_dispatches(self):
+        host, token = self._host(mode="none")
+        progress = RollcallProgress(
+            observed=1,
+            leave=1,
+            roster_complete=True,
+            own_leave=True,
+        )
+        self._emit_progress(host, token, progress)
+        self.assertEqual(host.answers, [])
+        self.assertIn("r1", host._auto_answer_attempted_rollcalls)
+        self.assertEqual(host.events_by_id["event-1"].result, "已跳过")
+
+    def test_personal_event_status_blocks_when_detail_cannot_identify_self(self):
+        for status, expected in (("on_call", "已签到"), ("late", "已签到"),
+                                 ("on_personal_leave", "已跳过")):
+            with self.subTest(status=status):
+                host, token = self._host(mode="none")
+                self._emit_progress(host, token, RollcallProgress(), status=status)
+                self.assertEqual(host.answers, [])
+                self.assertEqual(host.events_by_id["event-1"].result, expected)
+
+    def test_ambiguous_own_status_is_not_overridden_by_event_and_can_recover(self):
+        host, token = self._host(mode="none")
+        ambiguous = RollcallProgress(
+            observed=1,
+            unknown=1,
+            roster_complete=True,
+            own_status_ambiguous=True,
+        )
+        self._emit_progress(host, token, ambiguous, status="on_call")
+        self.assertEqual(host.answers, [])
+        self.assertNotIn("r1", host._auto_answer_attempted_rollcalls)
+        self.assertNotIn("r1", host._auto_answer_inflight_rollcalls)
+        self.assertNotEqual(host.events_by_id["event-1"].result, "已签到")
+
+        confirmed_absent = RollcallProgress(
+            observed=1,
+            absent=1,
+            roster_complete=True,
+            own_present=False,
+        )
+        self._emit_progress(host, token, confirmed_absent, status="on_call")
+        self.assertEqual(len(host.answers), 1)
 
     def test_number_rollcall_waits_for_code_then_dispatches_once(self):
         host, token = self._host(mode="count", kind="数字签到")
@@ -427,6 +486,62 @@ class SubmissionGuardTests(unittest.TestCase):
             self._context(token, mode="none", recheck=False),
         )
         self.assertTrue(allowed)
+
+    def test_final_recheck_blocks_confirmed_own_leave_even_without_threshold(self):
+        host, token = self._host(mode="none")
+        context = self._context(token, mode="none", recheck=False)
+        context["progress"] = RollcallProgress(
+            observed=1,
+            leave=1,
+            roster_complete=True,
+            own_leave=True,
+        )
+        allowed, reason, _, terminal = DashboardWindow._validate_auto_submission(
+            host, object(), _event(), context,
+        )
+        self.assertFalse(allowed)
+        self.assertTrue(terminal)
+        self.assertIn("本人已请假", reason)
+
+    def test_final_recheck_uses_personal_event_status_when_detail_is_unavailable(self):
+        for status in ("on_call", "on_call_arrive_late", "on_personal_leave"):
+            with self.subTest(status=status):
+                host, token = self._host(mode="none")
+                current = _event(status=status)
+
+                class Engine:
+                    def __init__(self, _session): pass
+                    def poll_payload(self): return {"rollcalls": []}
+                    def build_events(self, _payload): return [current]
+
+                context = self._context(token, mode="none", recheck=True)
+                context["progress"] = RollcallProgress()
+                with patch("xmu_rollcall.desktop_qt.app.RollcallEngine", Engine), patch(
+                    "xmu_rollcall.desktop_qt.app.fetch_student_rollcall_detail", return_value=None,
+                ):
+                    allowed, reason, _, terminal = DashboardWindow._validate_auto_submission(
+                        host, object(), _event(), context,
+                    )
+                self.assertFalse(allowed)
+                self.assertTrue(terminal)
+                self.assertIn("活动列表显示本人", reason)
+
+    def test_final_recheck_keeps_ambiguous_personal_status_retryable(self):
+        host, token = self._host(mode="none")
+        context = self._context(token, mode="none", recheck=False)
+        context["progress"] = RollcallProgress(
+            observed=1,
+            unknown=1,
+            roster_complete=True,
+            own_status_ambiguous=True,
+        )
+        context["current_event"] = _event(status="on_call")
+        allowed, reason, _, terminal = DashboardWindow._validate_auto_submission(
+            host, object(), _event(), context,
+        )
+        self.assertFalse(allowed)
+        self.assertFalse(terminal)
+        self.assertIn("未知或冲突", reason)
 
     def test_master_switch_is_rechecked_after_network_returns(self):
         host, token = self._host()

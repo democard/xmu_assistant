@@ -18,6 +18,9 @@ class RollcallProgress:
     duplicate_rows: int = 0
     roster_complete: bool = False
     own_present: bool | None = None
+    leave: int = 0
+    own_leave: bool = False
+    own_status_ambiguous: bool = False
 
     @property
     def rate_percent(self) -> float | None:
@@ -58,21 +61,35 @@ def wait_before_answer_satisfied(
 
 def classify_attendance_entry(entry: dict) -> bool | None:
     """返回 True(已签)、False(缺勤) 或 None(未知/字段冲突)。"""
-    values: list[bool] = []
+    status = _classify_attendance_entry(entry)
+    if status == "present":
+        return True
+    if status == "absent":
+        return False
+    return None
+
+
+def _classify_attendance_entry(entry: dict) -> str:
+    """区分统计用状态；请假对旧的布尔接口仍表现为 None。"""
+    values: list[str] = []
     for key in ("status", "rollcall_status", "student_rollcall_status"):
         raw = entry.get(key)
         if raw is None or raw == "":
             continue
         if not isinstance(raw, str):
-            return None
+            return "unknown"
         status = raw.strip().lower()
-        if status in {"on_call", "on_call_fine"}:
-            values.append(True)
+        if status in {"on_call", "on_call_fine", "late", "on_call_arrive_late"}:
+            values.append("present")
         elif status == "absent":
-            values.append(False)
+            values.append("absent")
+        elif status in {
+            "on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave",
+        }:
+            values.append("leave")
         else:
-            return None
-    return values[0] if values and all(value == values[0] for value in values) else None
+            return "unknown"
+    return values[0] if values and all(value == values[0] for value in values) else "unknown"
 
 
 def summarize_rollcall_progress(
@@ -85,9 +102,9 @@ def summarize_rollcall_progress(
     if not isinstance(payload, dict) or not isinstance(payload.get("student_rollcalls"), list):
         return RollcallProgress()
 
-    statuses: list[bool | None] = []
+    statuses: list[str] = []
     identities: dict[str, int] = {}
-    own_statuses: list[bool | None] = []
+    own_statuses: list[str] = []
     invalid_rows = duplicate_rows = 0
     target = my_user_no.strip().lower()
 
@@ -95,30 +112,45 @@ def summarize_rollcall_progress(
         if not isinstance(entry, dict):
             invalid_rows += 1
             continue
-        status = classify_attendance_entry(entry)
+        status = _classify_attendance_entry(entry)
         raw_identity = entry.get("user_no")
         identity = raw_identity.strip().lower() if isinstance(raw_identity, str) else ""
-        if target and identity == target:
+        if (
+            (target and identity == target)
+            or entry.get("is_current_user") is True
+            or entry.get("is_self") is True
+        ):
             own_statuses.append(status)
         if identity and identity in identities:
             duplicate_rows += 1
             position = identities[identity]
             if statuses[position] != status:
-                statuses[position] = None
+                statuses[position] = "unknown"
             continue
         if identity:
             identities[identity] = len(statuses)
         statuses.append(status)
 
     own_present = None
+    own_leave = False
+    own_status_ambiguous = False
     if own_statuses and all(value == own_statuses[0] for value in own_statuses):
-        own_present = own_statuses[0]
+        if own_statuses[0] == "present":
+            own_present = True
+        elif own_statuses[0] == "absent":
+            own_present = False
+        elif own_statuses[0] == "leave":
+            own_leave = True
+        else:
+            own_status_ambiguous = True
+    elif own_statuses:
+        own_status_ambiguous = True
 
     return RollcallProgress(
         observed=len(statuses),
-        present=sum(value is True for value in statuses),
-        absent=sum(value is False for value in statuses),
-        unknown=sum(value is None for value in statuses),
+        present=statuses.count("present"),
+        absent=statuses.count("absent"),
+        unknown=statuses.count("unknown"),
         invalid_rows=invalid_rows,
         duplicate_rows=duplicate_rows,
         roster_complete=(
@@ -127,4 +159,7 @@ def summarize_rollcall_progress(
             and not duplicate_rows
         ),
         own_present=own_present,
+        leave=statuses.count("leave"),
+        own_leave=own_leave,
+        own_status_ambiguous=own_status_ambiguous,
     )

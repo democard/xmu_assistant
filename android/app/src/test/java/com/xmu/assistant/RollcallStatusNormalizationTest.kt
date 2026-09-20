@@ -1,6 +1,8 @@
 package com.xmu.assistant
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 签到状态归一化回归测试（此前 normalizedRollcallStatus 零覆盖）。 */
@@ -26,6 +28,20 @@ class RollcallStatusNormalizationTest {
         assertEquals("已签", normalizedRollcallStatus("success"))
         assertEquals("已签", normalizedRollcallStatus("已签"))
         assertEquals("已签", normalizedRollcallStatus("已签到"))
+    }
+
+    @Test
+    fun `verified late and leave variants retain terminal meaning`() {
+        assertEquals(STATUS_LATE, normalizedRollcallStatus("late"))
+        assertEquals(STATUS_LATE, normalizedRollcallStatus("on_call_arrive_late"))
+        assertEquals(STATUS_LEAVE, normalizedRollcallStatus("on_leave"))
+        assertEquals(STATUS_LEAVE, normalizedRollcallStatus("on_personal_leave"))
+        assertEquals(STATUS_LEAVE, normalizedRollcallStatus("on_sick_leave"))
+        assertEquals(STATUS_LEAVE, normalizedRollcallStatus("on_public_leave"))
+        assertTrue(isTerminalRollcallStatus(STATUS_SIGNED))
+        assertTrue(isTerminalRollcallStatus(STATUS_LATE))
+        assertTrue(isTerminalRollcallStatus(STATUS_LEAVE))
+        assertFalse(isTerminalRollcallStatus(STATUS_UNKNOWN))
     }
 
     @Test

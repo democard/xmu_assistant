@@ -17,6 +17,7 @@ data class StudentRollcallProgress(
     val unknown: Int,
     val percentage: Double?,
     val reliablePercentage: Boolean,
+    val leave: Int = 0,
 ) {
     val total: Int
         get() = observed
@@ -35,7 +36,7 @@ fun parseStudentRollcallDetails(
 ): StudentRollcallDetails {
     val parsedProgress = parseStudentRollcallProgress(response).takeIf { it.observed > 0 }
     val students = response.optJSONArray("student_rollcalls")
-    var ownStatus: String? = null
+    val ownRecords = mutableListOf<JSONObject>()
     if (students != null) {
         for (index in 0 until students.length()) {
             val student = students.optJSONObject(index) ?: continue
@@ -44,10 +45,7 @@ fun parseStudentRollcallDetails(
             if ((username.isNotBlank() && userNo == username) ||
                 student.optBoolean("is_current_user") || student.optBoolean("is_self")
             ) {
-                val raw = listOf("status", "rollcall_status", "state")
-                    .firstNotNullOfOrNull { key -> student.optRealString(key).takeIf { it.isNotBlank() } }
-                ownStatus = raw?.let(::historyRollcallStatus)
-                break
+                ownRecords += student
             }
         }
     }
@@ -55,13 +53,14 @@ fun parseStudentRollcallDetails(
         progress = parsedProgress,
         // 响应来自 /api/rollcall/{id}/student_rollcalls，递归范围已限定为该活动。
         numberCode = findNumberCode(response).orEmpty(),
-        ownStatus = ownStatus,
+        ownStatus = parsedOwnRollcallStatus(ownRecords),
     )
 }
 
 private enum class StudentRollcallStatus {
     PRESENT,
     ABSENT,
+    LEAVE,
     UNKNOWN,
 }
 
@@ -125,6 +124,7 @@ fun parseStudentRollcallProgress(
     val observed = statuses.size
     val present = statuses.count { it == StudentRollcallStatus.PRESENT }
     val absent = statuses.count { it == StudentRollcallStatus.ABSENT }
+    val leave = statuses.count { it == StudentRollcallStatus.LEAVE }
     val unknown = statuses.count { it == StudentRollcallStatus.UNKNOWN }
     val reliable = complete && observed > 0
     return StudentRollcallProgress(
@@ -134,6 +134,7 @@ fun parseStudentRollcallProgress(
         unknown = unknown,
         percentage = if (reliable) present * 100.0 / observed else null,
         reliablePercentage = reliable,
+        leave = leave,
     )
 }
 
@@ -167,10 +168,43 @@ private fun parseStudentRollcall(record: JSONObject): ParsedStudentRollcall {
     return ParsedStudentRollcall(status, studentIdentity(record))
 }
 
-private fun classifyStatus(raw: String): StudentRollcallStatus = when (raw) {
-    "on_call", "on_call_fine" -> StudentRollcallStatus.PRESENT
-    "absent" -> StudentRollcallStatus.ABSENT
-    else -> StudentRollcallStatus.UNKNOWN
+private fun classifyStatus(raw: String): StudentRollcallStatus = when (knownRollcallStatus(raw)) {
+    KnownRollcallStatus.PRESENT, KnownRollcallStatus.LATE -> StudentRollcallStatus.PRESENT
+    KnownRollcallStatus.ABSENT -> StudentRollcallStatus.ABSENT
+    KnownRollcallStatus.LEAVE -> StudentRollcallStatus.LEAVE
+    KnownRollcallStatus.UNKNOWN -> StudentRollcallStatus.UNKNOWN
+}
+
+/** 合并本人所有匹配行；迟到细化已到场，缺勤细化未到场，跨语义组冲突保持未知。 */
+internal fun parsedOwnRollcallStatus(record: JSONObject): String? =
+    parsedOwnRollcallStatus(listOf(record))
+
+private enum class OwnRollcallStatusGroup { PRESENT, ABSENT, LEAVE, UNKNOWN }
+
+internal fun parsedOwnRollcallStatus(records: Iterable<JSONObject>): String? {
+    val statusesByRecord = records.map { record ->
+        OWN_STATUS_FIELDS.mapNotNull { field ->
+            record.optRealString(field).takeIf { it.isNotBlank() }?.let(::historyRollcallStatus)
+        }.toSet()
+    }
+    if (statusesByRecord.all { it.isEmpty() }) return null
+    if (statusesByRecord.any { it.isEmpty() }) return STATUS_UNKNOWN
+    val statuses = statusesByRecord.flatten().toSet()
+    val groups = statuses.map { status ->
+        when (status) {
+            STATUS_SIGNED, STATUS_LATE -> OwnRollcallStatusGroup.PRESENT
+            "未签", "缺勤" -> OwnRollcallStatusGroup.ABSENT
+            STATUS_LEAVE -> OwnRollcallStatusGroup.LEAVE
+            else -> OwnRollcallStatusGroup.UNKNOWN
+        }
+    }.toSet()
+    if (groups.size != 1 || OwnRollcallStatusGroup.UNKNOWN in groups) return STATUS_UNKNOWN
+    return when (groups.single()) {
+        OwnRollcallStatusGroup.PRESENT -> if (STATUS_LATE in statuses) STATUS_LATE else STATUS_SIGNED
+        OwnRollcallStatusGroup.ABSENT -> if ("缺勤" in statuses) "缺勤" else "未签"
+        OwnRollcallStatusGroup.LEAVE -> STATUS_LEAVE
+        OwnRollcallStatusGroup.UNKNOWN -> STATUS_UNKNOWN
+    }
 }
 
 private fun studentIdentity(record: JSONObject): String? {
@@ -191,9 +225,11 @@ private fun emptyUnreliableProgress() = StudentRollcallProgress(
     unknown = 0,
     percentage = null,
     reliablePercentage = false,
+    leave = 0,
 )
 
 private val STATUS_FIELDS = listOf("status", "rollcall_status", "student_rollcall_status")
+private val OWN_STATUS_FIELDS = listOf("status", "rollcall_status", "student_rollcall_status", "state")
 private val IDENTITY_FIELDS = listOf(
     "user_no", "student_id", "studentId", "student_no", "studentNo",
     "user_id", "userId", "username", "id",

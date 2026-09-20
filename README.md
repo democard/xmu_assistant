@@ -345,6 +345,8 @@ xmu_assistant/
 2. `GET /api/rollcall/{rollcall_id}/student_rollcalls` 递归查找 `number_code`；
 3. `PUT /api/rollcall/{rollcall_id}/answer_number_rollcall` 提交（带随机 deviceId）。
 
+签到状态词表、请假 / 迟到的统计口径，以及本次“进度未获取”的实测原因和回归记录，见[签到状态排查交接](scripts/attendance-status-debug-handoff.md)。该修复在开发分支，当前 v1.7.0 安装包尚未包含。
+
 ### 雷达签到
 
 - 提交接口 `PUT /api/rollcall/{rollcall_id}/answer`，请求体含经纬度、精度、设备 ID 等；
