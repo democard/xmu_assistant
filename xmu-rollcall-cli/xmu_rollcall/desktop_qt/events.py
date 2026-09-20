@@ -30,7 +30,7 @@ EVENT_CONTRACTS: dict[str, tuple[int, str]] = {
     # ---- 登录/恢复/应答 worker 发射 ----
     "login_success": (4, "登录或恢复成功(session, account, login_epoch)"),
     "login_failed": (2, "登录失败原因"),
-    "restore_failed": (3, "自动恢复失败(原因, silent)"),
+    "restore_failed": (3, "自动恢复失败(原因, silent[, login_epoch])"),
     "answer_result": (4, "签到应答结果(event_id, ok, detail)"),
     "number_code": (3, "数字签到码(event_id, code[, detail])；detail 可省略"),
     "merge_session_cookies": (3, "worker 克隆会话回写(session[, worker_account_id])"),

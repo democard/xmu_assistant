@@ -41,10 +41,16 @@ class PushPlusSender(
             if (conn.responseCode !in 200..299) error("PushPlus failed: ${conn.responseCode}")
             // 流读取后关闭、连接断开：避免 keep-alive 连接无法归还池（句柄累积）
             val response = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            // 用 JSON 解析判断业务码：子串匹配对 "code": 200（带空格）等格式变体会误判失败
-            val code = runCatching { org.json.JSONObject(response).optInt("code", Int.MIN_VALUE) }
-                .getOrDefault(Int.MIN_VALUE)
-            if (code != Int.MIN_VALUE && code != 200) error("PushPlus 发送失败（code=$code）")
+            // 业务码 200 只代表请求已受理。HTML/缺失业务码不能当成功；此处不重发。
+            val acknowledgement = runCatching { org.json.JSONObject(response) }.getOrElse {
+                error("PushPlus 返回异常，无法确认通知请求是否已受理")
+            }
+            val code = acknowledgement.opt("code")
+            if (code == null || code == org.json.JSONObject.NULL) {
+                error("PushPlus 返回异常，无法确认通知请求是否已受理")
+            }
+            // 避免 optInt 把 200.5 截成 200，兼容数字 200 和字符串 "200"。
+            if (code.toString() != "200") error("PushPlus 发送失败（code=$code）")
         } finally {
             conn.disconnect()
         }

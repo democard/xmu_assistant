@@ -742,24 +742,24 @@ class DashboardWindow(
         try:
             account = get_current_account(load_config())
             if not account:
-                self._emit(("restore_failed", "没有可恢复的当前账号，请先登录。", silent))
+                self._emit(("restore_failed", "没有可恢复的当前账号，请先登录。", silent, login_epoch))
                 return
             session = requests.Session()
             if not load_session(session, get_cookies_path(account.get("id", 1))):
-                self._emit(("restore_failed", "Cookie 读取失败，请重新登录。", silent))
+                self._emit(("restore_failed", "Cookie 读取失败，请重新登录。", silent, login_epoch))
                 return
             profile = verify_session(session)
             if profile is None:
                 # 网络故障无法判定（如开机自启时网络尚未就绪）：
                 # 不能误报「登录态已失效」——本地 Cookie 保留，网络恢复后仍可自动登录
-                self._emit(("restore_failed", "网络连接失败，无法校验登录态，请检查网络后重试。", silent))
+                self._emit(("restore_failed", "网络连接失败，无法校验登录态，请检查网络后重试。", silent, login_epoch))
                 return
             if not profile:
-                self._emit(("restore_failed", "登录态已失效，请重新登录。", silent))
+                self._emit(("restore_failed", "登录态已失效，请重新登录。", silent, login_epoch))
                 return
             self._emit(("login_success", session, account, login_epoch))
         except Exception as exc:
-            self._emit(("restore_failed", str(exc), silent))
+            self._emit(("restore_failed", str(exc), silent, login_epoch))
 
     def logout(self):
         if not self.account and not self.session:
@@ -1130,6 +1130,12 @@ class DashboardWindow(
         QMessageBox.critical(self, "登录失败", friendly_error_message(event[1], "login"))
 
     def _ev_restore_failed(self, event):
+        worker_epoch = event[3] if len(event) > 3 else None
+        if worker_epoch is not None and worker_epoch != self._login_epoch:
+            # 用户取消恢复后可能已经开始了新的手动登录。旧恢复任务的失败不得
+            # 释放新登录占用的门，也不得把“正在登录”界面翻回未登录。
+            self.log("忽略迟到的会话恢复失败（已开始新的登录转换）。")
+            return
         # 恢复占用登录在途门后，失败必须放行同一把门（_restore_failed 仅由
         # _restore_worker 发射，与 auto_restore_current_session 的占用严格配对）；
         # 否则恢复失败后手动登录会被门挡住（「登录已在进行中」）。

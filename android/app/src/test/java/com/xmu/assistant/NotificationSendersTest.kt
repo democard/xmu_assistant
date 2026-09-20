@@ -111,6 +111,38 @@ class NotificationSendersTest {
     }
 
     @Test
+    fun `pushplus malformed acknowledgement is rejected without resending`() {
+        val server = MockWebServer()
+        val bodies = listOf("<html>gateway error</html>", "", "{}", "[]",
+            """{"code":null}""", """{"code":true}""", """{"code":200.5}""")
+        bodies.forEach { server.enqueue(MockResponse().setBody(it)) }
+        server.start()
+        try {
+            val sender = PushPlusSender("fixture-token", endpoint = server.url("/send").toString())
+            bodies.forEach { body ->
+                val error = runCatching { sender.send("test", "test") }.exceptionOrNull()
+                assertTrue("unexpected acceptance of $body", error is IllegalStateException)
+            }
+            assertEquals(bodies.size, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `pushplus string business code confirms request acceptance`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"code":"200"}"""))
+        server.start()
+        try {
+            PushPlusSender("fixture-token", endpoint = server.url("/send").toString()).send("test", "test")
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun `pushplus send rejects http level failure`() {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(502))

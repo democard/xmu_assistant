@@ -5,7 +5,7 @@ import ssl
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -178,7 +178,7 @@ class NotificationTests(unittest.TestCase):
             notifier.send("签到提醒", "课程：数学")
         self.assertIn("token非法", str(ctx.exception))
 
-    def test_pushplus_non_json_body_still_succeeds(self):
+    def test_pushplus_non_json_body_does_not_confirm_acceptance(self):
         class HtmlResponse:
             status_code = 200
 
@@ -192,8 +192,30 @@ class NotificationTests(unittest.TestCase):
             def post(self, url, json=None, timeout=None):
                 return HtmlResponse()
 
-        # 网关异常页等非 JSON body 无法判读，维持不拦截（零行为变化锁定）
-        PushPlusNotifier("token", session=HtmlSession()).send("签到提醒", "课程：数学")
+        with self.assertRaisesRegex(RuntimeError, "无法确认通知请求是否已受理"):
+            PushPlusNotifier("token", session=HtmlSession()).send("签到提醒", "课程：数学")
+
+    def test_pushplus_malformed_ack_is_rejected_without_resending(self):
+        for payload in ({}, {"code": None}, [], {"code": True}, {"code": 200.5}):
+            with self.subTest(payload=payload):
+                session = Mock()
+                session.post.return_value.json.return_value = payload
+                with self.assertRaises(RuntimeError):
+                    PushPlusNotifier("fixture-token", session=session).send("test", "test")
+                self.assertEqual(session.post.call_count, 1)
+
+    def test_pushplus_string_business_code_is_accepted(self):
+        session = Mock()
+        session.post.return_value.json.return_value = {"code": "200"}
+        PushPlusNotifier("fixture-token", session=session).send("test", "test")
+        self.assertEqual(session.post.call_count, 1)
+
+    def test_unknown_pushplus_ack_does_not_blame_user_token(self):
+        message = friendly_error_message(
+            RuntimeError("PushPlus 返回异常，无法确认通知请求是否已受理"), "pushplus",
+        )
+        self.assertIn("无法确认", message)
+        self.assertNotIn("Token", message)
 
     def test_qq_mail_notifier_sends_mail_with_tls(self):
         with patch.object(smtplib, "SMTP", FakeSMTP):

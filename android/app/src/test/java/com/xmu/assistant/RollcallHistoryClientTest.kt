@@ -37,6 +37,7 @@ class RollcallHistoryClientTest {
             "\"status\":\"缺勤\"" to "缺勤",
             "\"status\":\"not_signed\"" to "未签",
             "\"status\":\"signed\"" to STATUS_SIGNED,
+            "\"status\":\"on_call\"" to STATUS_SIGNED,
             "\"status\":\"on_call_fine\"" to STATUS_SIGNED,
             "\"status\":\"present\"" to STATUS_SIGNED,
             "\"status\":\"missed\"" to "缺勤",
@@ -190,6 +191,49 @@ class RollcallHistoryClientTest {
     }
 
     @Test
+    fun `profile forbidden is a typed session expiration`() {
+        val transport = FakeHistoryTransport(
+            courses = listOf(course("c1", "课程一", "2026-1")),
+            rollcallsByCourse = emptyMap(),
+            detailsByRollcallId = emptyMap(),
+            profileCodeOverride = 403,
+        )
+
+        assertThrows(MainSessionExpiredException::class.java) {
+            client(transport).fetchRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
+        }
+    }
+
+    @Test
+    fun `course and detail forbidden remain local failures`() {
+        val forbiddenCourse = FakeHistoryTransport(
+            courses = listOf(course("c1", "课程一", "2026-1")),
+            rollcallsByCourse = emptyMap(),
+            detailsByRollcallId = emptyMap(),
+            courseCodeOverride = 403,
+        )
+        assertTrue(
+            client(forbiddenCourse)
+                .fetchRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
+                .isEmpty(),
+        )
+
+        val forbiddenDetail = FakeHistoryTransport(
+            courses = listOf(course("c1", "课程一", "2026-1")),
+            rollcallsByCourse = mapOf("c1" to listOf(rollcallJson("r1", "2026-07-01T08:00:00"))),
+            detailsByRollcallId = mapOf("r1" to "{}"),
+            detailCodeOverride = 403,
+        )
+        assertEquals(
+            STATUS_UNKNOWN,
+            client(forbiddenDetail)
+                .fetchRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
+                .single()
+                .ownStatus,
+        )
+    }
+
+    @Test
     fun `cache roundtrip preserves items and rejects foreign accounts`() {
         val file = temporaryFolder.newFile("rollcall_history_cache.json")
         val snapshot = RollcallHistorySnapshot(
@@ -291,13 +335,15 @@ class RollcallHistoryClientTest {
         """{"id":"$id","rollcall_time":"$time","type":"radar"}"""
 
     /**
-     * 按 URL 子串路由的假传输；detailCodeOverride 用于注入 401 会话过期。
+     * 按 URL 子串路由的假传输；状态码 override 用于覆盖端点级会话/资源失败语义。
      */
     private class FakeHistoryTransport(
         private val courses: List<CourseSummary>,
         private val rollcallsByCourse: Map<String, List<String>>,
         private val detailsByRollcallId: Map<String, String>,
         private val detailCodeOverride: Int = 200,
+        private val profileCodeOverride: Int = 200,
+        private val courseCodeOverride: Int = 200,
     ) : QueryHttpTransport {
         val requests = mutableListOf<QueryHttpRequest>()
 
@@ -305,7 +351,7 @@ class RollcallHistoryClientTest {
             synchronized(requests) { requests += request }
             val url = request.url
             return when {
-                "/api/profile" in url -> json(200, """{"id":"s1"}""")
+                "/api/profile" in url -> json(profileCodeOverride, """{"id":"s1"}""")
                 "/api/my-courses" in url -> json(
                     200,
                     courses.joinToString(",", prefix = "{\"courses\":[", postfix = "]}") { c ->
@@ -319,7 +365,12 @@ class RollcallHistoryClientTest {
                 }
                 else -> {
                     val cid = url.substringAfter("/api/course/").substringBefore("/student/")
-                    json(200, rollcallsByCourse[cid]?.joinToString(",", prefix = "{\"rollcalls\":[", postfix = "]}") ?: "{\"rollcalls\":[]}")
+                    json(
+                        courseCodeOverride,
+                        rollcallsByCourse[cid]
+                            ?.joinToString(",", prefix = "{\"rollcalls\":[", postfix = "]}")
+                            ?: "{\"rollcalls\":[]}",
+                    )
                 }
             }
         }

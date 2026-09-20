@@ -64,14 +64,22 @@ class TestParseRollcallTime(unittest.TestCase):
 class TestVerifyOwnStatus(unittest.TestCase):
     USERNAME = "u_test"
 
-    def test_own_record_with_timestamp_is_signed_in(self):
+    def test_own_record_timestamp_without_status_is_unverifiable(self):
         detail = {"student_rollcalls": [{"user_no": self.USERNAME, "updated_at": "2026-08-22T08:01:00"}]}
-        self.assertEqual(verify_own_status(detail, self.USERNAME, "signed"), "已签到")
+        self.assertIsNone(verify_own_status(detail, self.USERNAME, "signed"))
 
-    def test_own_record_answered_or_submitted_counts_as_timestamp(self):
+    def test_own_record_answered_or_submitted_without_status_is_unverifiable(self):
         for key in ("answered_at", "submitted_at"):
             detail = {"student_rollcalls": [{"user_no": self.USERNAME, key: "2026-08-22T08:01:00"}]}
-            self.assertEqual(verify_own_status(detail, self.USERNAME, ""), "已签到", key)
+            self.assertIsNone(verify_own_status(detail, self.USERNAME, ""), key)
+
+    def test_explicit_absent_wins_even_when_timestamp_present(self):
+        detail = {"student_rollcalls": [{
+            "user_no": self.USERNAME,
+            "status": "absent",
+            "updated_at": "2026-08-22T08:01:00",
+        }]}
+        self.assertEqual(verify_own_status(detail, self.USERNAME, "signed"), "未签到")
 
     def test_own_explicit_not_signed_wins_over_aggregate(self):
         detail = {"student_rollcalls": [{"user_no": self.USERNAME, "status": "not_signed"}]}

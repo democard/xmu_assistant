@@ -56,6 +56,8 @@ def friendly_error_message(error, area: str = "general") -> str:
         return "登录已过期，请重新登录。"
     text = str(error or "").strip()
     lowered = text.lower()
+    if "无法确认通知请求是否已受理" in text:
+        return "通知服务返回异常，无法确认请求是否已受理，请检查通知接收情况。"
     if any(keyword in lowered for keyword in ("timeout", "timed out", "connection", "network", "dns", "proxy")):
         return "网络连接失败，请稍后重试。"
     if any(keyword in lowered for keyword in ("401", "403", "unauthorized", "forbidden", "permission", "登录已过期", "登录态已失效", "sessionexpired")):
@@ -94,15 +96,17 @@ class PushPlusNotifier:
         response.raise_for_status()
         # PushPlus 的失败约定是 HTTP 200 + body {"code":500,"msg":...}（token
         # 非法/限流均如此）：只看状态码会把失败当成功，签到提醒静默丢失。
-        # 非 JSON body（网关异常页等）无法判读，维持不拦截。
+        # code=200 仅确认服务已受理请求，不代表通知最终送达。
+        # 网关异常页或缺少业务码不能被当作成功，也不在这里重发以免重复通知。
         try:
             payload = response.json()
-        except ValueError:
-            return
-        if isinstance(payload, dict):
-            code = payload.get("code")
-            if code is not None and str(code) != "200":
-                raise RuntimeError(f"PushPlus 发送失败：{payload.get('msg') or code}")
+        except ValueError as exc:
+            raise RuntimeError("PushPlus 返回异常，无法确认通知请求是否已受理") from exc
+        if not isinstance(payload, dict) or payload.get("code") is None:
+            raise RuntimeError("PushPlus 返回异常，无法确认通知请求是否已受理")
+        code = payload["code"]
+        if str(code) != "200":
+            raise RuntimeError(f"PushPlus 发送失败：{payload.get('msg') or code}")
 
 
 class QQMailNotifier:

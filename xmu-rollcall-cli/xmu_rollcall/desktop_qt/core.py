@@ -327,7 +327,7 @@ def parse_rollcall_time(text) -> datetime | None:
 # 必须先判「未签」再判「已签」——unsigned/not_signed 都含 signed 子串，顺序颠倒会把
 # 未签误判为已签（用户看着"已签"不去处理，错过签到）。分词用非字母数字边界精确比对，
 # 避免 dismiss 命中 miss、define/refine 命中 fine 的子串误判。
-ROLLCALL_SIGNED_STATUS_TOKENS = frozenset({"signed", "present", "attended", "on_call_fine", "fine", "done"})
+ROLLCALL_SIGNED_STATUS_TOKENS = frozenset({"signed", "present", "attended", "fine", "done"})
 ROLLCALL_ABSENT_STATUS_TOKENS = frozenset({"absent", "missed", "miss", "unanswered"})
 
 
@@ -353,6 +353,11 @@ def classify_rollcall_status(value) -> str | None:
         or ("not" in tokens and "signed" in tokens)
     ):
         return "未签到"
+    # TronClass 本人明细的正常已签状态包含 on_call / on_call_fine。下划线会被
+    # 上面的分词规则拆开，必须按完整原串精确匹配；放在负面状态之后，避免将来
+    # 出现带否定前缀的近似值被误判为已签。
+    if lowered in {"on_call", "on_call_fine"}:
+        return "已签到"
     if tokens & ROLLCALL_SIGNED_STATUS_TOKENS:
         return "已签到"
     return None
@@ -373,8 +378,6 @@ def infer_signed_status(rollcall: dict, student_detail: dict | None, username: s
     if student_detail:
         own_record = find_student_rollcall(student_detail, username)
         if own_record:
-            if own_record.get("updated_at") or own_record.get("answered_at") or own_record.get("submitted_at"):
-                return "已签到", platform_status
             own_status = str(first_value(own_record, ("status", "rollcall_status", "state"), "")).lower()
             classified = classify_rollcall_status(own_status)
             if classified is not None:
@@ -451,8 +454,6 @@ def verify_own_status(student_detail, username: str, fallback_platform_status: s
     own_record = find_student_rollcall(student_detail or {}, username)
     if not own_record:
         return None
-    if own_record.get("updated_at") or own_record.get("answered_at") or own_record.get("submitted_at"):
-        return "已签到"
     own_status = str(first_value(own_record, ("status", "rollcall_status", "state"), "")).lower()
     return classify_rollcall_status(own_status)
 

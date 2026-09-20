@@ -81,6 +81,7 @@ fun normalizedRollcallStatus(raw: String): String {
             "missed" in tokens || "unanswered" in tokens ||
             ("not" in tokens && "signed" in tokens) -> "未签"
         raw.trim() in listOf("已签", "已签到", "已到") ||
+            lowered.trim() in setOf("on_call", "on_call_fine") ||
             "signed" in tokens || "fine" in tokens || "success" in tokens ||
             "present" in tokens || "attended" in tokens || "done" in tokens -> "已签"
         else -> "未知"

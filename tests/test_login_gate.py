@@ -94,10 +94,18 @@ class AutoRestoreLoginGateTest(unittest.TestCase):
         host = self._host(in_progress=True)
         with mock.patch("xmu_rollcall.desktop_qt.app.QMessageBox.critical") as box:
             DashboardWindow._ev_restore_failed(
-                host, ("restore_failed", "登录态已失效，请重新登录。", True)
+                host, ("restore_failed", "登录态已失效，请重新登录。", True, 7)
             )
         self.assertFalse(host._login_in_progress, "恢复失败必须放行登录在途门")
         box.assert_not_called()  # silent=True 抑制弹窗（既有语义不受影响）
+
+    def test_late_restore_failure_does_not_release_new_login_gate(self):
+        host = self._host(in_progress=True)
+        DashboardWindow._ev_restore_failed(
+            host, ("restore_failed", "旧恢复失败", True, 6)
+        )
+        self.assertTrue(host._login_in_progress, "旧恢复任务不得释放新登录占用的门")
+        self.assertTrue(any("忽略迟到" in message for message in host.logs))
 
 
 class LoginFailedSessionGuardTest(unittest.TestCase):

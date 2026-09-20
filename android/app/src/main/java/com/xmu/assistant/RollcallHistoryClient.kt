@@ -20,7 +20,8 @@ import java.util.concurrent.ExecutorService
  *    按本人记录判定准确状态——绝不先显示聚合状态（用户拍板：必须准确）。
  *
  * 会话语义照抄 CoursewareClient.getJson：401/身份域 302 → MainSessionExpiredException；
- * 403 → 资源级失败按普通探测处理（不触发续登，风控红线）。全部只读 GET。
+ * 账号级 profile 的 403 也表示会话失效，课程/明细的 403 则按资源级失败处理
+ * （不触发续登，风控红线）。全部只读 GET。
  */
 internal class RollcallHistoryClient internal constructor(
     private val cookieHeader: String,
@@ -114,7 +115,7 @@ internal class RollcallHistoryClient internal constructor(
         )
         for (endpoint in endpoints) {
             try {
-                val payload = getJson(endpoint)
+                val payload = getJson(endpoint, forbiddenMeansSessionExpired = false)
                 return parseRollcallList(payload, course)
             } catch (error: MainSessionExpiredException) {
                 throw error
@@ -149,7 +150,10 @@ internal class RollcallHistoryClient internal constructor(
     /** 本人明确状态才是签到结果；更新时间及提交时间均不能证明到勤。 */
     private fun resolveOwnStatus(rollcallId: String, username: String): String {
         val detail = try {
-            getJson("$baseUrl/api/rollcall/$rollcallId/student_rollcalls")
+            getJson(
+                "$baseUrl/api/rollcall/$rollcallId/student_rollcalls",
+                forbiddenMeansSessionExpired = false,
+            )
         } catch (error: MainSessionExpiredException) {
             throw error
         } catch (_: Throwable) {
@@ -173,8 +177,14 @@ internal class RollcallHistoryClient internal constructor(
         return null
     }
 
-    /** 与 CoursewareClient.getJson 同语义的 GET（401/身份域 302 → 类型化异常）。 */
-    private fun getJson(url: String): Any {
+    /**
+     * 与 CoursewareClient.getJson 同语义的 GET：401/身份域 302 始终类型化；
+     * 403 是否表示会话失效由端点调用方决定。
+     */
+    private fun getJson(
+        url: String,
+        forbiddenMeansSessionExpired: Boolean = true,
+    ): Any {
         val headers = linkedMapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36",
             "Accept-Language" to "zh-CN,zh;q=0.9",
@@ -184,7 +194,9 @@ internal class RollcallHistoryClient internal constructor(
         val response = queryTransport.execute(
             QueryHttpRequest(url = url, method = "GET", headers = headers, operation = NetworkOperation.ROLLCALL_STATUS),
         )
-        if (response.code == 401) throw MainSessionExpiredException()
+        if (response.code == 401 || (response.code == 403 && forbiddenMeansSessionExpired)) {
+            throw MainSessionExpiredException()
+        }
         if (response.code in 300..399 && isIdentityRedirect(response.url, response.location)) {
             throw MainSessionExpiredException()
         }
@@ -305,7 +317,8 @@ internal fun historyRollcallStatus(raw: String): String {
         text in setOf("缺勤", "缺席", "未到") || tokens.any { it in setOf("absent", "missed", "miss") } -> "缺勤"
         "未签" in text || "unsigned" in tokens || "unanswered" in tokens ||
             ("not" in tokens && "signed" in tokens) -> "未签"
-        "已签" in text || text == "已到" || tokens.any { it in setOf("signed", "present", "attended", "fine", "done") } -> STATUS_SIGNED
+        text in setOf("on_call", "on_call_fine") || "已签" in text || text == "已到" ||
+            tokens.any { it in setOf("signed", "present", "attended", "fine", "done") } -> STATUS_SIGNED
         else -> STATUS_UNKNOWN
     }
 }

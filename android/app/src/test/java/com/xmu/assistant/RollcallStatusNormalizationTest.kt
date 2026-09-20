@@ -20,6 +20,8 @@ class RollcallStatusNormalizationTest {
     @Test
     fun `signed variants normalize to signed`() {
         assertEquals("已签", normalizedRollcallStatus("signed"))
+        assertEquals("已签", normalizedRollcallStatus("on_call"))
+        assertEquals("已签", normalizedRollcallStatus("on_call_fine"))
         assertEquals("已签", normalizedRollcallStatus("Fine"))
         assertEquals("已签", normalizedRollcallStatus("success"))
         assertEquals("已签", normalizedRollcallStatus("已签"))

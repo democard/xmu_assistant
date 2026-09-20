@@ -28,7 +28,7 @@ class ClassifyRollcallStatusTests(unittest.TestCase):
             self.assertEqual(classify_rollcall_status(raw), "未签到", raw)
 
     def test_signed_word_list(self):
-        for raw in ("signed", "present", "attended", "on_call_fine", "fine", "done"):
+        for raw in ("signed", "present", "attended", "on_call", "on_call_fine", "fine", "done"):
             self.assertEqual(classify_rollcall_status(raw), "已签到", raw)
 
     def test_substring_lookalikes_are_unknown(self):
@@ -69,10 +69,17 @@ class InferSignedStatusTests(unittest.TestCase):
         signed, _ = infer_signed_status({"status": "present"}, None, "u1")
         self.assertEqual(signed, "已签到")
 
-    def test_own_record_timestamp_wins(self):
+    def test_own_record_timestamp_does_not_override_explicit_absent(self):
+        detail = {"student_rollcalls": [{
+            "user_no": "u1", "status": "absent", "updated_at": "2026-08-22T08:00:00",
+        }]}
+        signed, _ = infer_signed_status({"status": "not_signed"}, detail, "u1")
+        self.assertEqual(signed, "未签到")
+
+    def test_own_record_timestamp_without_status_keeps_platform_fallback(self):
         detail = {"student_rollcalls": [{"user_no": "u1", "updated_at": "2026-08-22T08:00:00"}]}
         signed, _ = infer_signed_status({"status": "not_signed"}, detail, "u1")
-        self.assertEqual(signed, "已签到")
+        self.assertEqual(signed, "未签到")
 
     def test_own_record_not_signed_not_overridden_by_global_signed(self):
         # 全局 status=signed 但本人记录明确 not_signed：以本人记录为准报未签
