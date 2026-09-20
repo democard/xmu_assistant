@@ -12,9 +12,16 @@ import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sqrt
 
+private val defaultRollcallAnswerTransport: QueryHttpTransport by lazy {
+    // 数字签到 PUT 的响应可能丢失；关闭 OkHttp 的连接失败自动重放，确保引擎每次
+    // 调用只发送一次写请求。后续是否重试由监控读取本人明细后显式决定。
+    OkHttpQueryTransport(XmuHttpClients.query.newBuilder().retryOnConnectionFailure(false).build())
+}
+
 class RollcallEngine internal constructor(
     private val cookieHeader: String,
     private val statusTransport: QueryHttpTransport = OkHttpQueryTransport(),
+    private val answerTransport: QueryHttpTransport = defaultRollcallAnswerTransport,
 ) {
     private val baseUrl = "https://lnt.xmu.edu.cn"
 
@@ -121,12 +128,12 @@ class RollcallEngine internal constructor(
     }
 
     fun answerNumber(rollcallId: String): Boolean {
-        val detail = getJson("$baseUrl/api/rollcall/$rollcallId/student_rollcalls")
+        val detail = getStudentRollcallDetail(rollcallId) ?: return false
         val code = findNumberCode(detail) ?: return false
         val body = JSONObject()
             .put("deviceId", UUID.randomUUID().toString())
             .put("numberCode", code)
-        return putJson("$baseUrl/api/rollcall/$rollcallId/answer_number_rollcall", body)
+        return putNumberAnswer("$baseUrl/api/rollcall/$rollcallId/answer_number_rollcall", body)
     }
 
     private fun answerNumber(event: RollcallEvent): Boolean {
@@ -134,7 +141,7 @@ class RollcallEngine internal constructor(
         val body = JSONObject()
             .put("deviceId", UUID.randomUUID().toString())
             .put("numberCode", event.numberCode)
-        return putJson("$baseUrl/api/rollcall/${event.id}/answer_number_rollcall", body)
+        return putNumberAnswer("$baseUrl/api/rollcall/${event.id}/answer_number_rollcall", body)
     }
 
     fun answerRadar(rollcallId: String): Boolean {
@@ -168,29 +175,10 @@ class RollcallEngine internal constructor(
         else -> false
     }
 
-    private fun getJson(url: String): JSONObject {
-        val conn = open(url)
-        try {
-            conn.requestMethod = "GET"
-            val code = conn.responseCode
-            if (code == 401 || code == 403) throw MainSessionExpiredException()
-            // 302 跳身份域 = 会话过期（open() 已关闭自动跟随，重定向在此显式判定）
-            if (code in 300..399 && isIdentityRedirect(url, conn.getHeaderField("Location"))) {
-                throw MainSessionExpiredException()
-            }
-            if (code !in 200..299) error("网络失败：$code")
-            // 流必须关闭（use），连接必须 disconnect：否则 keep-alive 连接无法归还池，
-            // 常驻轮询下 socket/句柄持续累积
-            val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            return JSONObject(text)
-        } finally {
-            conn.disconnect()
-        }
-    }
-
     private fun putJson(url: String, body: JSONObject): Boolean = putJsonWithResponse(url, body).first
 
     private fun putJsonWithResponse(url: String, body: JSONObject): Pair<Boolean, JSONObject?> {
+        // 雷达链路保持原实现和原错误语义；本轮只修数字签到。
         val conn = open(url)
         try {
             conn.requestMethod = "PUT"
@@ -199,7 +187,6 @@ class RollcallEngine internal constructor(
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
             val code = conn.responseCode
             if (code == 401 || code == 403) throw MainSessionExpiredException()
-            // 302 跳身份域 = 会话过期：与 GET 路径同判定，避免误当「应答失败」重试后续坐标
             if (code in 300..399 && isIdentityRedirect(url, conn.getHeaderField("Location"))) {
                 throw MainSessionExpiredException()
             }
@@ -207,19 +194,53 @@ class RollcallEngine internal constructor(
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             }.getOrDefault("")
-            return Pair(code in 200..299, text.takeIf { it.isNotBlank() }?.let { JSONObject(it) })
+            val parsed = text.takeIf { it.isNotBlank() }
+                ?.let { value -> runCatching { JSONObject(value) }.getOrNull() }
+            return Pair(code in 200..299, parsed)
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** 数字签到需要把明确的 HTTP 拒绝与回执不明（transport 抛异常）分开。 */
+    private fun putNumberAnswer(url: String, body: JSONObject): Boolean {
+        val response = executePut(url, body)
+        if (response.code == 401) throw MainSessionExpiredException()
+        if (response.code in 300..399 && isIdentityRedirect(response.url, response.location)) {
+            throw MainSessionExpiredException()
+        }
+        return when {
+            response.code in 200..299 -> true
+            response.code in setOf(400, 403, 404, 409, 422, 429) ->
+                throw RollcallAnswerRejectedException(response.code)
+            else -> throw RollcallAnswerUncertainException(response.code)
+        }
+    }
+
+    private fun executePut(url: String, body: JSONObject): QueryHttpResponse {
+        val headers = linkedMapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36",
+            "Accept-Language" to "zh-CN,zh;q=0.9",
+            "Accept" to "application/json, text/plain, */*",
+        )
+        if (cookieHeader.isNotBlank()) headers["Cookie"] = cookieHeader
+        return answerTransport.execute(
+            QueryHttpRequest(
+                url = url,
+                method = "PUT",
+                headers = headers,
+                contentType = "application/json; charset=utf-8",
+                body = body.toString(),
+                oneShot = true,
+                operation = NetworkOperation.ROLLCALL_STATUS,
+            ),
+        )
     }
 
     private fun open(url: String): HttpURLConnection {
         return (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8000
             readTimeout = 15000
-            // 关闭自动跟随重定向：GET 跳转会把 Cookie 头原样转发给目标主机（含跨域），
-            // 且 302→登录页 200 HTML 会被误判为普通解析失败而非会话过期；
-            // 重定向由调用方显式判定（身份域 = 会话过期）。
             instanceFollowRedirects = false
             setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36")
             setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
@@ -227,6 +248,12 @@ class RollcallEngine internal constructor(
         }
     }
 }
+
+internal class RollcallAnswerRejectedException(val responseCode: Int) :
+    IllegalStateException("数字签到提交失败：平台返回 $responseCode")
+
+internal class RollcallAnswerUncertainException(val responseCode: Int) :
+    IllegalStateException("数字签到提交结果未知：平台返回 $responseCode")
 
 fun radarPayload(lat: Double, lon: Double): JSONObject = JSONObject()
     .put("accuracy", 35)

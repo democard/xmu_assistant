@@ -8,6 +8,7 @@ wheel 不含全部 UI 文件，入口点 xmu-dashboard 直接 ModuleNotFoundErro
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import sys
 import tomllib
@@ -68,6 +69,29 @@ class PyInstallerSpecFilterTests(unittest.TestCase):
             re.search(pattern, "PySide6/plugins/iconengines/qsvgicon.dll"),
             "iconengines 过滤规则必须命中真实落盘路径 PySide6/plugins/iconengines/",
         )
+
+    def test_root_icu_shadow_dlls_are_filtered(self):
+        """Do not bundle an unrelated ICU ahead of Windows' Qt-compatible shim."""
+        import re
+
+        spec_path = ROOT / "xmu-assistant.spec"
+        tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
+        patterns = None
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "_EXCLUDE_BIN_PATTERNS"
+                        for target in node.targets)
+            ):
+                patterns = ast.literal_eval(node.value)
+                break
+
+        self.assertIsNotNone(patterns, "spec 里应声明二进制过滤规则")
+        for name in ("icuuc.dll", "icudt78.dll"):
+            self.assertTrue(
+                any(re.search(pattern, name, re.I) for pattern in patterns),
+                f"spec 必须过滤包根目录中会遮蔽系统 ICU 的 {name}",
+            )
 
 
 if __name__ == "__main__":

@@ -58,4 +58,45 @@
 - Compose UI：390dp 整页、约 302dp 历史卡内容、大字体 1.5 倍 / 320dp 长课程名的位置断言通过；历史码位于统计下方且不额外增加复制按钮，进行中码与复制按钮位于底部同一行；复制保留前导零。
 - 本机 Robolectric 截图导出超时后停止尝试，未生成 PNG；本轮没有真机视觉或真实课堂联调，不能把尺寸断言等同于真机截图验收。
 
-本轮不更改发布版本或 GitHub Release。正式代码接入与安装包发布分开记录。
+源码接入提交为 `8fd47f8`，正式代码接入与安装包发布分开记录。
+
+## v1.7.0 发布交接
+
+用户随后要求提交 GitHub 并提供安装包，并在先行 APK 上反馈首页与策略页开关联动说明不清。本次按项目的功能版本约定从 v1.6.9 升级至 v1.7.0，最终 Android `versionCode` 为 27（高于旧版 25 和本轮先行包 26），PC 同步版本；作者保持 democard。
+
+- Windows 使用 `D:/python/python.exe -m PyInstaller --noconfirm --clean xmu-assistant.spec`，保留精简配置及 DPAPI / Crypto 依赖，没有升级依赖。打包检查发现 PyInstaller 误收集 Poppler 的 ICU 78 到包根目录，遮蔽 Qt 使用的系统 ICU 并导致 QtCore 启动失败；已按导出符号差异确认根因，在 spec 中仅过滤根目录的 `icuuc.dll` / `icudt*.dll`，补守护测试。修复后 431 项 Python 测试通过，最终 EXE 35,950,508 字节；空配置隐藏启动实际存活 8 秒、stderr 为空，再结束自有测试进程。归档含 1.7.0 版本、新签到模块及 Qt / Shiboken 必需文件。
+- Android 保持包名 `com.xmu.assistant`，使用 JDK 17 和既有 R8 / 资源压缩；最终版本 1.7.0 / 27，APK 3,967,190 字节。追加数字签到修复与开关联动说明后，全量 89 个测试类、580 项测试通过，0 失败、0 错误、0 跳过；Lint 0 错误、6 项既有警告，release 构建通过。签名、版本、非 debuggable 与 zipalign 检查通过，发布 DEX 已确认含本次快捷开关与数字提交错误处理文案。
+- APK 签名证书 SHA-256：`f10efd770965d6ba76aefe6ab5c7b3caf6d6ba474cf3fdc453040cdce1abb8e8`，与 v1.6.9 相同。已核对发布 DEX 含人数 / 比例配置键、分离的通知 / 完成状态键与新界面文案。
+- 本地产物位于 `release/xmu-assistant.exe`、`release/xmu-assistant-release.apk`；二进制沿用 `.gitignore`，只提交 `release/SHA256SUMS.txt`，安装包由 GitHub Releases 托管。
+- 首页保留原有“一键同时开关数字 / 雷达”的行为，明确标注为与策略页同步的快捷开关，展示已保存的类型和人数条件；未运行监控时提示尚未生效，提供策略入口。策略页分别设置类型，保存按钮拦截无效的活动条件输入，关闭人数条件时不校验隐藏字段。
+- 发布入口：[v1.7.0](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)。本次构建不替代真实课堂联调与真机视觉验收。
+
+### 数字签到失败的参考对照
+
+用户明确反馈的是数字签到实际未成功。本轮重新检查参考源码，未使用修改历史显示状态来处理提交失败。
+
+- [KrsMt 的 send_code](https://github.com/KrsMt-0113/XMU-Rollcall-Bot/blob/c7de02b11da3433a047bab29dbbbbbb4c855a484/xmu-rollcall-cli/xmu_rollcall/verify.py#L42-L86)：读取 `student_rollcalls` 中的 `number_code`，向 `answer_number_rollcall` 提交 `deviceId` 与字符串 `numberCode`，与本项目协议一致。该函数失败时返回 False，本身不提供后续轮次恢复，直接替换不能解决调度层吞掉失败事件的问题。
+- [vintcessun 的结果处理](https://github.com/vintcessun/xmu_assistant_sign_bot/blob/a9b0c2c1162f5a4fe503c6d76186a0b201e2d4c8/src/logic/rollcall/time_sign.rs)：`sign_one` 区分会话失效和普通提交异常，`absorb_sign` 对 Failed 直接返回，不记入已完成。这支持将失败和完成分开处理，但不意味着应立即反复发送写请求。
+- [hot-YUser 的提交结果核实](https://github.com/hot-YUser/auto-rollcall-thu-tronclass/blob/8eb463382a40526e3e491440e2d33a1123b8240d/troTHU/rollcall_progress.py#L219-L323)：通过只读状态核实提交是否落地。借鉴此原则处理响应丢失；不照搬其中“全员已签即可推断本人”的回退。
+
+以上为接口与控制流程对照，未复制第三方函数或引入其依赖。故障修复沿用本项目网络层、监控去重和账号隔离机制，并用离线响应验证。
+
+随后按用户要求补查另外三个相关项目；前两份原始交接未将它们列作 XMU 接口依据，其中 silvercow 是 hot-YUser 声明的上游，其余用于同平台对照：
+
+| 固定版本源码 | 数字签到差异 | 本项目取舍 |
+| --- | --- | --- |
+| [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script/blob/9a149d1c8470344ad3757893255bf11719782f3e/troNTOU/tron.py#L160-L233) | 使用字符串 `numberCode` 和 `deviceId`；重新登录并尝试数字组合，没有写后明细核实 | 仅佐证字段和前导零处理，继续复用本项目已有账号会话和只读取码，不引入枚举数字逻辑 |
+| [5dbwat4/ZJU-live-better](https://github.com/5dbwat4/ZJU-live-better/blob/d63adc8c9cd463437bb423d57d2ba396dc990bf1/courses.zju/autosign.js#L353-L468) | 同一会话 GET `student_rollcalls` 后用相同字段 PUT；失败 ID 留在去重数组，不会在下一轮重新取码；另有枚举回退 | 取码与提交契约一致；失败永久去重正是需要避免的行为，不复用其重试实现 |
+| [seven-317/Tronclass-API](https://github.com/seven-317/Tronclass-API/blob/4138ac9cfb7359f7ba04159e965a6bf5d66cc502/src/api/attendance.ts#L94-L152) | 使用不一致的 `number_code` 提交字段且缺少 `deviceId`，未提供真实点名验证依据 | 不将其作为 XMU 数字提交契约，不修改本项目已对齐的字段 |
+
+没有运行这些第三方应用。公开代码能解释处理差异，不能替代学校当前响应实测；本次确定修复仍以本地可复现的失败去重和网络重放问题为依据。
+
+### Android 数字签到修复约定
+
+- 原流程在数字提交返回 False 后仍写入完成集合，导致临时拒绝后该签到永久失去自动处理机会。现在失败单独计数，成功或只读确认已签才完成；过期活动停止处理。
+- 平台明确拒绝后，下一轮重新读取明细与数字码；每条签到累计最多自动尝试 3 次。响应超时、408、5xx 等结果不明时，下一次写入前必须读取到本人明确未签；本人已签则停止重发，无法核实则等待。
+- 数字提交的 401 或身份认证重定向走会话过期流程，单条资源 403 保留为提交失败；不自动退出整个账号。雷达提交路径保持原有实现。
+- 重试仍服从自动类型、人数条件、停止监控、账号和当前设置校验；不会用历史页面的显示兜底推断是否应重试。
+- 失败次数沿用现有账号绑定缓存，正整数兼容旧版回执不明记录，负整数记录明确拒绝；读取与写入通过具名辅助方法解释，进程重建不会重置尝试预算。
+- 数字写请求单独关闭连接失败自动重试，并使用一次性请求体。MockWebServer 实测 `503 + Retry-After: 0` 后队列中还有成功响应时，实际仍只收到 1 次 PUT；这覆盖了仅关闭连接重试无法阻止的 OkHttp 内部响应重放。
+- 本轮仅用模拟服务器和离线状态序列验证。没有用户失败当时的响应日志，不能据此断定所有偶发失败都由同一原因造成。

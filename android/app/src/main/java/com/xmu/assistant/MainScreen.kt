@@ -507,7 +507,7 @@ internal fun MainScreen(
                                             monitorLastCheck = formatMonitorTime(monitorLastCheckMillis),
                                             monitorFailureCount = monitorConsecutiveFailures,
                                             monitorLastError = monitorLastError,
-                                            autoEnabled = rollcallSettings.autoAnswerNumber || rollcallSettings.autoAnswerRadar,
+                                            rollcallSettings = rollcallSettings,
                                             recentEvent = rollcall.events.firstOrNull(),
                                             onUsername = setUsername,
                                             onPassword = setPassword,
@@ -526,13 +526,17 @@ internal fun MainScreen(
                                             },
                                             onStopMonitor = { homeActions.onStopMonitor(monitor.monitorTransitionInProgress, monitor.monitorTransitionId) },
                                             onAutoChanged = { enabled ->
-                                                val next = rollcallSettings.copy(
-                                                    autoAnswerNumber = enabled,
-                                                    autoAnswerRadar = enabled,
-                                                )
+                                                val next = toggleAllAutoAnswer(rollcallSettings, enabled)
                                                 setRollcallSettings(next)
                                                 settings.saveRollcall(next)
-                                                show(if (enabled) "已开启自动签到" else "已关闭自动签到")
+                                                show(
+                                                    when {
+                                                        enabled && !monitorRunning ->
+                                                            "已开启数字和雷达自动处理；尚未生效，请先启动监控"
+                                                        enabled -> "已开启数字和雷达自动处理"
+                                                        else -> "已关闭数字和雷达自动处理，仍会保留签到提醒"
+                                                    },
+                                                )
                                             },
                                             onOpenBackgroundSettings = onOpenBackgroundSettings,
                                             onNavigate = onModuleEntered,

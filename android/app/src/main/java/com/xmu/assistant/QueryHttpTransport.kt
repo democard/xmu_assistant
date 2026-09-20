@@ -2,8 +2,10 @@ package com.xmu.assistant
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 
 internal data class QueryHttpRequest(
     val url: String,
@@ -11,6 +13,8 @@ internal data class QueryHttpRequest(
     val headers: Map<String, String> = emptyMap(),
     val contentType: String = "",
     val body: String = "",
+    /** 禁止 OkHttp 对 408/503 等响应自动重放有副作用的请求。 */
+    val oneShot: Boolean = false,
     val operation: NetworkOperation = NetworkOperation.UNKNOWN,
 )
 
@@ -44,9 +48,12 @@ internal class OkHttpQueryTransport(
             )
             else -> null
         }
+        val effectiveBody = requestBody?.let { body ->
+            if (request.oneShot) OneShotRequestBody(body) else body
+        }
         val builder = Request.Builder()
             .url(request.url)
-            .method(request.method, requestBody)
+            .method(request.method, effectiveBody)
             .tag(NetworkOperation::class.java, request.operation)
         NetworkTimingContextScope.currentFor(request.operation)?.let {
             builder.tag(NetworkTimingContext::class.java, it)
@@ -63,4 +70,13 @@ internal class OkHttpQueryTransport(
             )
         }
     }
+}
+
+private class OneShotRequestBody(
+    private val delegate: RequestBody,
+) : RequestBody() {
+    override fun contentType() = delegate.contentType()
+    override fun contentLength(): Long = delegate.contentLength()
+    override fun writeTo(sink: BufferedSink) = delegate.writeTo(sink)
+    override fun isOneShot(): Boolean = true
 }

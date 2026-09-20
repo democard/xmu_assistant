@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.6.9 · Windows v1.6.9**
+**当前版本：Android v1.7.0 · Windows v1.7.0**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -44,8 +44,8 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 | 签到事件轮询监控（数字 / 雷达 / 二维码识别） | ✅ | ✅ |
 | 数字签到自动填码、雷达签到自动应答 | ✅ | ✅ |
 | 轮询间隔与自动处理开关 | ✅ | ✅ |
-| 本次全班已签人数、比例和数字签到码（开发版） | ✅ | ✅ |
-| 自定义人数 / 比例门槛后自动签到（开发版） | ✅ | ✅ |
+| 本次全班已签人数、比例和数字签到码 | ✅ | ✅ |
+| 自定义人数 / 比例门槛后自动签到 | ✅ | ✅ |
 | 通知：系统通知 / PushPlus 微信 / QQ 邮箱 | ✅ | ✅ |
 | 签到历史查询（按学年 / 学期 / 时间范围 / 未签筛选） | ✅ | ✅ 最近十次（本人明细核实） |
 | 课程课件浏览与批量下载 | ✅ | ✅ |
@@ -75,7 +75,7 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 - 轮询当前账号可见的签到事件，识别**数字签到 / 雷达签到 / 二维码签到**；
 - 数字签到自动读取并显示签到码，支持手动处理选中签到或标记跳过；
 - 「开启自动签到」总开关控制数字 / 雷达自动处理；数字签到作答前使用配置的延迟；
-- 开发版可在策略页选择人数或比例门槛，填写达到多少人 / 多少百分比后才自动处理；未达标继续检测，数据未获取时不视为达标。主动手动处理不受自动门槛限制。
+- 策略页可选择人数或比例门槛，填写达到多少人 / 多少百分比后才自动处理；未达标继续检测，数据未获取时不视为达标。主动手动处理不受自动门槛限制。
 - 二维码签到**只提醒、不自动处理**（需要扫码，无法代做）；
 - 三种通知渠道：系统通知、PushPlus 微信、QQ 邮箱（SMTP）。
 
@@ -107,13 +107,18 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
 
-### 开发中（尚未发布）
+### v1.7.0 双端更新
 
 - 双端接入本次签到已签人数、总人数与比例，策略页支持自定义“达到 N 人”或“达到 X%”再自动签到。默认不启用人数条件，原自动签到开关继续独立生效。
+- Android 首页标明自动签到是与策略页同步的快捷开关，显示实际类型与人数条件；尚未启动监控时提示未生效，并提供直达策略页的入口。
+- 修复 Android 数字签到提交失败后被提前记为完成、后续不再尝试的问题：下一轮读取最新数字码，有界恢复；响应丢失或服务端异常时先核实本人状态，已签不重复提交。单条签到被拒绝不会直接判定整个账号登录失效。
 - Android 进行中记录右侧显示人数和比例，数字码在卡片底部支持复制；已结束数字签到在右侧统计下方追加签到码。未获取时使用中性提示，不显示虚假的 0% 或“全班已签”。
 - PC 首页与历史表增加人数 / 比例和签到码列，移除没有可靠来源的剩余时间占位；历史沿用最近 20 条自动核实，更旧记录可通过“核实所选”补充明细。
 - 查看人数、获取签到码、刷新与复制本身不提交签到；后台处理需要满足用户已开启的自动策略。有效截止时间仍参与内部判断，无截止时间不凭开始时间推算倒计时。
-- [实现、边界与验收交接](scripts/attendance-threshold-integration.md)。以下 v1.6.9 下载仍为上次发布版本，不包含本节开发中功能。
+- 修复等待门槛被旧去重逻辑吞掉、缺码被误记为完成，以及修改策略时旧任务仍可能触发提交的问题。统计严格使用原始状态，不采用历史显示的状态兜底。
+- 包含此前的签到状态统一、会话过期识别和 PushPlus 回执判定修复。580 项 Android 测试、431 项 Windows 测试通过；未使用真实校园账号联调。
+- 修复 Windows 打包时误收集其他工具的 ICU 库而导致 Qt 启动失败的问题，避免同名 DLL 冲突并减少包体积。
+- 下载：[v1.7.0 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)；[实现、边界与验收交接](scripts/attendance-threshold-integration.md)。
 
 ### v1.6.9 更新
 
@@ -224,10 +229,10 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.6.9，约 3.97 MB | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant-release.apk) |
-| Windows | 1.6.9 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/xmu-assistant.exe) |
+| Android 8.0 及以上 | 1.7.0 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant-release.apk) |
+| Windows | 1.7.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.6.9/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
 GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.6.9，DPAPI 凭据加密）
@@ -412,7 +417,7 @@ Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到�
   签名，换取 `install -r` 覆盖升级不丢本地登录态（重签会丢加密数据）。**代价：任何能拿到该密钥的人
   可伪造同签名更新覆盖安装**，触及本地加密凭据——这是刻意权衡。建议评估：如发布到公开渠道，改为产线
   独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
-- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.6.9 重建（含 DPAPI 凭据加密）；复现构建请执行
+- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.7.0 重建（含 DPAPI 凭据加密）；复现构建请执行
   `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
 - 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
 

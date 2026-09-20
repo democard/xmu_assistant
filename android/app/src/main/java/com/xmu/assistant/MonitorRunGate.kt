@@ -148,6 +148,7 @@ internal fun processRollcallMonitorPoll(
     settingsStillCurrent: () -> Boolean = { true },
     maxAnswerAttempts: Int = 3,
 ) {
+    var hasUnresolvedAnswerFailure = false
     for (event in events) {
         if (event.id in completedIds) continue
         if (event.id !in notifiedIds) {
@@ -173,32 +174,81 @@ internal fun processRollcallMonitorPoll(
             ) return
             continue
         }
-        if (!autoEnabled || !settings.thresholdReached(event.progress)) continue
-        if (event.type == "数字签到" && event.numberCode.isBlank()) continue
-        // 上一笔写请求回执不明时，必须等下一轮明细明确仍未签才允许有限重试。
-        if ((answerAttempts[event.id] ?: 0) > 0 && event.ownStatus !in setOf("未签", "缺勤")) continue
+        val previousAttempt = answerAttempts[event.id] ?: 0
+        if (!autoEnabled) continue
+        if (answerAttemptCount(previousAttempt) >= maxAnswerAttempts) {
+            // 有界停止写入，但保留失败态；不能写入 completed 后让下一轮 onSuccess
+            // 把真实的签到失败从监控健康状态中清掉。
+            hasUnresolvedAnswerFailure = true
+            continue
+        }
+        if (!settings.thresholdReached(event.progress)) {
+            if (previousAttempt != 0) hasUnresolvedAnswerFailure = true
+            continue
+        }
+        if (event.type == "数字签到" && event.numberCode.isBlank()) {
+            if (previousAttempt != 0) hasUnresolvedAnswerFailure = true
+            continue
+        }
+        // 回执不明必须等下一轮明细明确仍未签才允许有限重试；平台明确拒绝表示
+        // 写入未生效，可在下一轮取到新码后安全重试。
+        if (wasAnswerResultUncertain(previousAttempt) && event.ownStatus !in setOf("未签", "缺勤")) {
+            hasUnresolvedAnswerFailure = true
+            continue
+        }
         if (!settingsStillCurrent()) continue
         if (!runIfActive { }) return
 
         try {
             val accepted = onAnswer(event)
+            if (!accepted && event.type == "数字签到") {
+                if (!runIfActive {
+                        recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.REJECTED)
+                    }
+                ) return
+                hasUnresolvedAnswerFailure = true
+                continue
+            }
             if (!runIfActive {
-                    // 已发出且平台明确拒绝也不自动重放，避免重复写请求。
                     completedIds += event.id
                     answerAttempts.remove(event.id)
                 }
             ) return
-            if (!accepted) continue
         } catch (error: MainSessionExpiredException) {
             throw error
+        } catch (error: RollcallAnswerRejectedException) {
+            if (!runIfActive {
+                    recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.REJECTED)
+                }
+            ) return
+            throw error
         } catch (error: Throwable) {
-            val attempts = (answerAttempts[event.id] ?: 0) + 1
-            answerAttempts[event.id] = attempts
-            if (attempts >= maxAnswerAttempts) {
-                runIfActive { completedIds += event.id }
-            }
+            if (!runIfActive {
+                    recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.UNCERTAIN)
+                }
+            ) return
             throw error
         }
     }
-    runIfActive(onSuccess)
+    if (!hasUnresolvedAnswerFailure) runIfActive(onSuccess)
 }
+
+private enum class AnswerAttemptOutcome { REJECTED, UNCERTAIN }
+
+/**
+ * 持久化兼容编码：旧版正整数本来就表示回执不明，继续保留；负整数表示平台明确拒绝。
+ * 绝对值始终是该签到累计写入次数。
+ */
+private fun recordAnswerAttempt(
+    attempts: MutableMap<String, Int>,
+    eventId: String,
+    outcome: AnswerAttemptOutcome,
+): Int {
+    val count = answerAttemptCount(attempts[eventId] ?: 0) + 1
+    attempts[eventId] = if (outcome == AnswerAttemptOutcome.UNCERTAIN) count else -count
+    return count
+}
+
+private fun answerAttemptCount(encoded: Int): Int = kotlin.math.abs(encoded)
+
+private fun wasAnswerResultUncertain(encoded: Int): Boolean = encoded > 0

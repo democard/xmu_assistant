@@ -26,17 +26,19 @@ class HomePageUiTest {
 
     @Composable
     private fun HomeFixture(loggedIn: Boolean = true, running: Boolean = false, busy: Boolean = false,
-                            start: () -> Unit = {}, stop: () -> Unit = {}, logout: () -> Unit = {}) {
+                            settings: RollcallSettings = RollcallSettings(), start: () -> Unit = {},
+                            stop: () -> Unit = {}, logout: () -> Unit = {}, autoChanged: (Boolean) -> Unit = {},
+                            navigate: (String) -> Unit = {}) {
         XmuMobileTheme {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 HomePage(
                     username = "123456789", password = "", loggedIn = loggedIn, monitorRunning = running,
                     accountTransitionInProgress = false, monitorTransitionInProgress = busy,
                     monitorStatus = if (running) "运行中" else "未启动", monitorLastCheck = "10:00:00",
-                    monitorFailureCount = 0, monitorLastError = "", autoEnabled = false, recentEvent = null,
+                    monitorFailureCount = 0, monitorLastError = "", rollcallSettings = settings, recentEvent = null,
                     onUsername = {}, onPassword = {}, onLogin = {}, onLogout = logout,
-                    onStartMonitor = start, onStopMonitor = stop, onAutoChanged = {},
-                    onOpenBackgroundSettings = {}, onNavigate = {},
+                    onStartMonitor = start, onStopMonitor = stop, onAutoChanged = autoChanged,
+                    onOpenBackgroundSettings = {}, onNavigate = navigate,
                 )
             }
         }
@@ -70,5 +72,38 @@ class HomePageUiTest {
         composeRule.onNodeWithText("登录").performScrollTo().assertIsNotEnabled()
         composeRule.onNodeWithText("启动监控").assertDoesNotExist()
         composeRule.onNodeWithText("暂停监控").assertDoesNotExist()
+    }
+
+    @Test fun `auto shortcut shows saved types threshold and inactive warning`() {
+        composeRule.setContent {
+            HomeFixture(
+                settings = RollcallSettings(
+                    autoAnswerNumber = true,
+                    autoAnswerRadar = false,
+                    waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_COUNT,
+                    waitBeforeAnswerCount = 8,
+                ),
+            )
+        }
+        composeRule.onNodeWithText("自动签到快捷开关").performScrollTo().assertExists()
+        composeRule.onNodeWithText("仅数字 · 达到 8 人").assertExists()
+        composeRule.onNodeWithText("尚未生效，请先启动监控").assertExists()
+        composeRule.onNodeWithText("与策略页同步；此开关同时开启或关闭数字、雷达签到。").assertExists()
+    }
+
+    @Test fun `strategy link and shortcut toggle dispatch expected values`() {
+        var destination = ""
+        var enabled: Boolean? = null
+        composeRule.setContent {
+            HomeFixture(
+                settings = RollcallSettings(autoAnswerNumber = true),
+                autoChanged = { enabled = it },
+                navigate = { destination = it },
+            )
+        }
+        composeRule.onNodeWithText("调整类型与人数条件").performScrollTo().performClick()
+        composeRule.runOnIdle { assertEquals("策略", destination) }
+        composeRule.onNodeWithText("自动签到快捷开关").performScrollTo().performClick()
+        composeRule.runOnIdle { assertEquals(false, enabled) }
     }
 }

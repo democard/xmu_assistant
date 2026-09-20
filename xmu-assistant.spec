@@ -12,6 +12,12 @@ block_cipher = None
 # 实测确认项目只用 QtCore/QtGui/QtWidgets；以下 Qt6 二进制与对应 .pyd 均未使用，可删。
 # （opengl32sw.dll 是 Qt 软件 OpenGL 兜底，现代 Windows 有显卡驱动，可删）
 _EXCLUDE_BIN_PATTERNS = [
+    # Qt6Core uses Windows' system ICU shim (C:\Windows\System32\icuuc.dll).
+    # PyInstaller may instead resolve it from an unrelated PATH entry (for example
+    # Poppler's ICU, whose exported symbols are version-suffixed) and place that DLL
+    # at the bundle root.  It then shadows the compatible system DLL and QtCore fails
+    # to import with WinError 127.  Exclude only root-level accidental ICU captures.
+    r'^icuuc\.dll$', r'^icudt\d+\.dll$',
     r'opengl32sw\.dll$',
     # 未用 Qt6 模块 DLL
     r'Qt6Quick\.dll$', r'Qt6Qml.*\.dll$', r'Qt6Pdf.*\.dll$',

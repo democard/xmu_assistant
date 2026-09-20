@@ -49,7 +49,7 @@ fun HomePage(
     monitorLastCheck: String,
     monitorFailureCount: Int,
     monitorLastError: String,
-    autoEnabled: Boolean,
+    rollcallSettings: RollcallSettings,
     recentEvent: RollcallEvent?,
     onUsername: (String) -> Unit,
     onPassword: (String) -> Unit,
@@ -65,6 +65,7 @@ fun HomePage(
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
     val canLogin = username.isNotBlank() && password.isNotBlank() && !accountTransitionInProgress
+    val autoEnabled = rollcallSettings.autoAnswerNumber || rollcallSettings.autoAnswerRadar
     fun submitLogin() {
         if (canLogin) {
             focus.clearFocus()
@@ -159,11 +160,28 @@ fun HomePage(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("自动签到", fontWeight = FontWeight.Bold)
-                        Text("数字与雷达签到", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("自动签到快捷开关", fontWeight = FontWeight.Bold)
+                        Text(
+                            homeAutoAnswerSummary(rollcallSettings),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Switch(checked = autoEnabled, onCheckedChange = null, enabled = !accountTransitionInProgress)
                 }
+                Text(
+                    "与策略页同步；此开关同时开启或关闭数字、雷达签到。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (autoEnabled && !monitorRunning) {
+                    Text(
+                        "尚未生效，请先启动监控",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                TextButton(onClick = { onNavigate("策略") }) { Text("调整类型与人数条件") }
                 if (monitorFailureCount > 0) {
                     RefreshStateBanner(false, monitorLastError.ifBlank { "最近检查失败，请检查网络与后台设置。" }, false)
                 }
@@ -190,6 +208,25 @@ fun HomePage(
         )
     }
 }
+
+internal fun autoAnswerTypeSummary(settings: RollcallSettings): String = when {
+    settings.autoAnswerNumber && settings.autoAnswerRadar -> "数字与雷达"
+    settings.autoAnswerNumber -> "仅数字"
+    settings.autoAnswerRadar -> "仅雷达"
+    else -> "仅提醒"
+}
+
+internal fun waitBeforeAnswerSummary(settings: RollcallSettings): String = when (settings.waitBeforeAnswerMode) {
+    WAIT_BEFORE_ANSWER_COUNT -> "达到 ${settings.waitBeforeAnswerCount} 人"
+    WAIT_BEFORE_ANSWER_PERCENT -> "达到 ${settings.waitBeforeAnswerPercent}%"
+    else -> "不等待人数条件"
+}
+
+internal fun homeAutoAnswerSummary(settings: RollcallSettings): String =
+    "${autoAnswerTypeSummary(settings)} · ${waitBeforeAnswerSummary(settings)}"
+
+internal fun toggleAllAutoAnswer(settings: RollcallSettings, enabled: Boolean): RollcallSettings =
+    settings.copy(autoAnswerNumber = enabled, autoAnswerRadar = enabled)
 
 @Composable
 private fun HomeShortcut(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {

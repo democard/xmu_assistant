@@ -37,6 +37,12 @@ class StrategyToggleSyncTest {
         Text("number=${state.value}", modifier = Modifier.testTag("number"))
     }
 
+    @Composable
+    private fun TextHarness(saved: String) {
+        val state = rememberSyncedText(saved)
+        Text("value=${state.value}", modifier = Modifier.testTag("text-value"))
+    }
+
     @Test
     fun `toggle follows an external change made while the page was off screen`() {
         var page by mutableStateOf("策略")
@@ -71,5 +77,14 @@ class StrategyToggleSyncTest {
         // 已保存值不变时，重组不得把本地副本重置（LaunchedEffect 同值写入为 no-op）
         composeRule.runOnIdle { saved = false }
         composeRule.onNodeWithTag("number").assertTextEquals("number=false")
+    }
+
+    @Test
+    fun `threshold fields follow newly saved values`() {
+        var saved by mutableStateOf("5")
+        composeRule.setContent { XmuMobileTheme { TextHarness(saved) } }
+        composeRule.onNodeWithTag("text-value").assertTextEquals("value=5")
+        composeRule.runOnIdle { saved = "12" }
+        composeRule.onNodeWithTag("text-value").assertTextEquals("value=12")
     }
 }

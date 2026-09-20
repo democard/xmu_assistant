@@ -5,6 +5,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
+import java.io.IOException
 
 class RollcallStatusQueryTest {
     @Test
@@ -110,6 +112,65 @@ class RollcallStatusQueryTest {
         assertNull(events[1].remainingSeconds)
     }
 
+    @Test
+    fun `number answer sends one PUT with the exact fresh code and cookie`() {
+        val transport = ScriptedAnswerTransport(mutableListOf(answerResponse(200)))
+        val engine = RollcallEngine("session=fixture", answerTransport = transport)
+
+        assertTrue(engine.answer(numberEvent("0042")))
+
+        val request = transport.requests.single()
+        assertEquals("PUT", request.method)
+        assertEquals("https://lnt.xmu.edu.cn/api/rollcall/n1/answer_number_rollcall", request.url)
+        assertEquals("session=fixture", request.headers["Cookie"])
+        assertEquals("application/json; charset=utf-8", request.contentType)
+        assertTrue(request.oneShot)
+        val payload = JSONObject(request.body)
+        assertEquals("0042", payload.getString("numberCode"))
+        assertTrue(payload.getString("deviceId").isNotBlank())
+    }
+
+    @Test
+    fun `number answer keeps resource forbidden separate from expired session`() {
+        val forbidden = RollcallEngine(
+            "session=x",
+            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(403))),
+        )
+        val rejected = assertThrows(RollcallAnswerRejectedException::class.java) {
+            forbidden.answer(numberEvent("1234"))
+        }
+        assertEquals(403, rejected.responseCode)
+
+        val unauthorized = RollcallEngine(
+            "session=x",
+            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(401))),
+        )
+        assertThrows(MainSessionExpiredException::class.java) { unauthorized.answer(numberEvent("1234")) }
+    }
+
+    @Test
+    fun `number answer treats server failure as an uncertain write result`() {
+        val engine = RollcallEngine(
+            "session=x",
+            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(503))),
+        )
+
+        val uncertain = assertThrows(RollcallAnswerUncertainException::class.java) {
+            engine.answer(numberEvent("1234"))
+        }
+
+        assertEquals(503, uncertain.responseCode)
+    }
+
+    @Test
+    fun `number answer timeout is not converted into an accepted or rejected response`() {
+        val transport = ScriptedAnswerTransport(mutableListOf(IOException("timeout")))
+        val engine = RollcallEngine("session=x", answerTransport = transport)
+
+        assertThrows(IOException::class.java) { engine.answer(numberEvent("1234")) }
+        assertEquals(1, transport.requests.size)
+    }
+
     private fun responseTransport(code: Int) = RecordingQueryTransport(
         QueryHttpResponse(
             url = "https://lnt.xmu.edu.cn/api/radar/rollcalls",
@@ -119,6 +180,38 @@ class RollcallStatusQueryTest {
             headers = emptyMap(),
         ),
     )
+
+    private fun numberEvent(code: String) = RollcallEvent(
+        id = "n1",
+        courseTitle = "课程",
+        teacher = "老师",
+        type = "数字签到",
+        status = "未签",
+        numberCode = code,
+    )
+
+    private fun answerResponse(code: Int) = QueryHttpResponse(
+        url = "https://lnt.xmu.edu.cn/api/rollcall/n1/answer_number_rollcall",
+        code = code,
+        location = null,
+        body = "",
+        headers = emptyMap(),
+    )
+
+    private class ScriptedAnswerTransport(
+        private val outcomes: MutableList<Any>,
+    ) : QueryHttpTransport {
+        val requests = mutableListOf<QueryHttpRequest>()
+
+        override fun execute(request: QueryHttpRequest): QueryHttpResponse {
+            requests += request
+            return when (val outcome = outcomes.removeAt(0)) {
+                is QueryHttpResponse -> outcome.copy(url = request.url)
+                is Throwable -> throw outcome
+                else -> error("unsupported scripted outcome")
+            }
+        }
+    }
 
     private class RecordingQueryTransport(
         private val response: QueryHttpResponse,

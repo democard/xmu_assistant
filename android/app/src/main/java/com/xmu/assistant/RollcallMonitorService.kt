@@ -397,7 +397,8 @@ class RollcallMonitorService : Service() {
         if (prefs.getString(SEEN_COOKIE_KEY, "") != cookieFingerprint(cookieHeader)) return emptyList()
         return prefs.getString(ANSWER_ATTEMPTS_KEY, "").orEmpty().lineSequence().mapNotNull { line ->
             val id = line.substringBefore('\t').takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val count = line.substringAfter('\t', "").toIntOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+            // 正数=回执不明（兼容旧版），负数=平台明确拒绝；绝对值为尝试次数。
+            val count = line.substringAfter('\t', "").toIntOrNull()?.takeIf { it != 0 } ?: return@mapNotNull null
             id to count
         }.take(MAX_ANSWER_ATTEMPTS_TRACKED).toList()
     }
@@ -405,7 +406,7 @@ class RollcallMonitorService : Service() {
     private fun persistAnswerAttempts(cookieHeader: String, attempts: Map<String, Int>) {
         if (cookieHeader.isBlank()) return
         val text = attempts.entries
-            .filter { (id, count) -> id.isNotBlank() && '\n' !in id && '\t' !in id && count > 0 }
+            .filter { (id, count) -> id.isNotBlank() && '\n' !in id && '\t' !in id && count != 0 }
             .take(MAX_ANSWER_ATTEMPTS_TRACKED)
             .joinToString("\n") { (id, count) -> "$id\t$count" }
         getSharedPreferences(SEEN_PREFS, MODE_PRIVATE).edit()

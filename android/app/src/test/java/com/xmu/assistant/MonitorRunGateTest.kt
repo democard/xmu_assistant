@@ -322,6 +322,139 @@ class MonitorRunGateTest {
     }
 
     @Test
+    fun `number rejection retries with a refreshed code then completes only on success`() {
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        val submittedCodes = mutableListOf<String>()
+        val settings = RollcallSettings(autoAnswerNumber = true)
+
+        runCatching {
+            processRollcallMonitorPoll(
+                listOf(numberEvent("1111")), settings, notified, completed, attempts,
+                { action -> action(); true }, {},
+                {
+                    submittedCodes += it.numberCode
+                    throw RollcallAnswerRejectedException(400)
+                }, {},
+            )
+        }
+        assertTrue("an explicit rejection must remain pending", completed.isEmpty())
+
+        processRollcallMonitorPoll(
+            listOf(numberEvent("2222")), settings, notified, completed, attempts,
+            { action -> action(); true }, {},
+            { submittedCodes += it.numberCode; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(numberEvent("2222")), settings, notified, completed, attempts,
+            { action -> action(); true }, {},
+            { submittedCodes += it.numberCode; true }, {},
+        )
+
+        assertEquals(listOf("1111", "2222"), submittedCodes)
+        assertEquals(setOf("n1"), completed)
+        assertTrue(attempts.isEmpty())
+    }
+
+    @Test
+    fun `number rejection is bounded when the platform keeps refusing it`() {
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var writes = 0
+        repeat(4) {
+            processRollcallMonitorPoll(
+                listOf(numberEvent("1111")), RollcallSettings(autoAnswerNumber = true),
+                mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+                { writes++; false }, {}, maxAnswerAttempts = 3,
+            )
+        }
+        assertEquals(3, writes)
+        assertTrue("exhausted rejection must stay a visible failure, not completed", completed.isEmpty())
+        assertEquals(-3, attempts["n1"])
+    }
+
+    @Test
+    fun `unknown number result waits for detail verification before retrying`() {
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var writes = 0
+        val settings = RollcallSettings(autoAnswerNumber = true)
+
+        runCatching {
+            processRollcallMonitorPoll(
+                listOf(numberEvent("1111")), settings, mutableSetOf(), completed, attempts,
+                { action -> action(); true }, {}, { writes++; error("timeout") }, {},
+            )
+        }
+        processRollcallMonitorPoll(
+            listOf(numberEvent("1111", ownStatus = null)), settings, mutableSetOf(), completed, attempts,
+            { action -> action(); true }, {}, { writes++; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(numberEvent("1111", ownStatus = STATUS_SIGNED)), settings,
+            mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+            { writes++; true }, {},
+        )
+
+        assertEquals("an unverified timeout must never be replayed", 1, writes)
+        assertEquals(setOf("n1"), completed)
+    }
+
+    @Test
+    fun `unknown number result retries once after detail explicitly remains unsigned`() {
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var writes = 0
+        val settings = RollcallSettings(autoAnswerNumber = true)
+
+        runCatching {
+            processRollcallMonitorPoll(
+                listOf(numberEvent("1111")), settings, mutableSetOf(), completed, attempts,
+                { action -> action(); true }, {}, { writes++; error("timeout") }, {},
+            )
+        }
+        processRollcallMonitorPoll(
+            listOf(numberEvent("1111", ownStatus = null)), settings, mutableSetOf(), completed, attempts,
+            { action -> action(); true }, {}, { writes++; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(numberEvent("2222", ownStatus = "未签")), settings,
+            mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+            { writes++; true }, {},
+        )
+
+        assertEquals(2, writes)
+        assertEquals(setOf("n1"), completed)
+        assertTrue(attempts.isEmpty())
+    }
+
+    @Test
+    fun `pending failed number answer does not clear health while detail or threshold is unavailable`() {
+        val attempts = mutableMapOf("n1" to 1) // positive = prior write result unknown
+        var healthSuccesses = 0
+
+        processRollcallMonitorPoll(
+            listOf(numberEvent("", ownStatus = null)), RollcallSettings(autoAnswerNumber = true),
+            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, {},
+            { true }, { healthSuccesses++ },
+        )
+        processRollcallMonitorPoll(
+            listOf(numberEvent("2222").copy(progress = progress(1, 10))),
+            RollcallSettings(
+                autoAnswerNumber = true,
+                waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_COUNT,
+                waitBeforeAnswerCount = 5,
+            ),
+            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, {},
+            { true }, { healthSuccesses++ },
+        )
+
+        assertEquals(0, healthSuccesses)
+        assertEquals(1, attempts["n1"])
+    }
+
+    @Test
     fun `expired signed stopped and account invalidated events never submit`() {
         val settings = RollcallSettings(autoAnswerRadar = true)
         val candidates = listOf(
@@ -357,7 +490,8 @@ class MonitorRunGateTest {
             }
         }
         assertEquals(3, writes)
-        assertEquals(setOf("r1"), completed)
+        assertTrue("unknown writes must not be presented as completed", completed.isEmpty())
+        assertEquals(3, attempts["r1"])
     }
 
     @Test
@@ -375,5 +509,9 @@ class MonitorRunGateTest {
 
     private fun progress(present: Int, total: Int) = StudentRollcallProgress(
         total, present, total - present, 0, present * 100.0 / total, true,
+    )
+
+    private fun numberEvent(code: String, ownStatus: String? = "未签") = RollcallEvent(
+        "n1", "课程", "老师", "数字签到", "未签", numberCode = code, ownStatus = ownStatus,
     )
 }

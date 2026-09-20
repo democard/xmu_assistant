@@ -579,6 +579,28 @@ internal fun rememberSyncedBoolean(saved: Boolean): MutableState<Boolean> {
 }
 
 @Composable
+internal fun rememberSyncedText(saved: String): MutableState<String> {
+    val state = rememberSaveable { mutableStateOf(saved) }
+    LaunchedEffect(saved) { state.value = saved }
+    return state
+}
+
+internal fun strategyWaitInputError(mode: String, countText: String, percentText: String): String? = when (mode) {
+    WAIT_BEFORE_ANSWER_COUNT ->
+        if (countText.toIntOrNull()?.let { it >= 1 } == true) null else "请输入至少 1 的整数"
+    WAIT_BEFORE_ANSWER_PERCENT ->
+        if (percentText.toIntOrNull()?.let { it in 1..100 } == true) null else "请输入 1-100 的整数比例"
+    else -> null
+}
+
+internal fun strategyRollcallSaveEnabled(
+    intervalText: String,
+    mode: String,
+    countText: String,
+    percentText: String,
+): Boolean = pollIntervalSecondsValid(intervalText) && strategyWaitInputError(mode, countText, percentText) == null
+
+@Composable
 fun StrategyPage(
     settings: AssistantSettings,
     termCode: String,
@@ -600,20 +622,20 @@ fun StrategyPage(
     // （修复机理见 rememberSyncedBoolean 的注释）。
     val number = rememberSyncedBoolean(current.autoAnswerNumber)
     val radar = rememberSyncedBoolean(current.autoAnswerRadar)
-    var waitMode by rememberSaveable { mutableStateOf(current.waitBeforeAnswerMode) }
-    var waitCount by rememberSaveable { mutableStateOf(current.waitBeforeAnswerCount.toString()) }
-    var waitPercent by rememberSaveable { mutableStateOf(current.waitBeforeAnswerPercent.toString()) }
-    LaunchedEffect(current.waitBeforeAnswerMode, current.waitBeforeAnswerCount, current.waitBeforeAnswerPercent) {
-        waitMode = current.waitBeforeAnswerMode
-        waitCount = current.waitBeforeAnswerCount.toString()
-        waitPercent = current.waitBeforeAnswerPercent.toString()
-    }
+    var waitMode by rememberSyncedText(current.waitBeforeAnswerMode)
+    var waitCount by rememberSyncedText(current.waitBeforeAnswerCount.toString())
+    var waitPercent by rememberSyncedText(current.waitBeforeAnswerPercent.toString())
     // 手动周次用本地 State 持有，确保切换开关/选周时 UI 立即重组（settings 非 State）。
     // 以 termCode 为键：学期变化（新学期/缓存重载）后重读该学期的校准值，
     // 否则本地副本停留在旧学期，与 SchedulePage 实际生效值不一致。
     var manualWeek by rememberSaveable(termCode) { mutableStateOf(settings.manualAcademicWeek(termCode)) }
     // 轮询间隔即时校验：只允许数字，非空时必须为 1-300；空串保存时回退默认 30
     val intervalInvalid = !pollIntervalSecondsValid(interval)
+    val waitInputError = strategyWaitInputError(waitMode, waitCount, waitPercent)
+    val hasUnsavedRollcallChanges = interval != current.pollIntervalSeconds.toString() ||
+        number.value != current.autoAnswerNumber || radar.value != current.autoAnswerRadar ||
+        waitMode != current.waitBeforeAnswerMode || waitCount != current.waitBeforeAnswerCount.toString() ||
+        waitPercent != current.waitBeforeAnswerPercent.toString()
     // 校准按钮范围：官方校历表内学期用真实周数（18/19），表外学期按 19 兜底，
     // 与反推默认总周数一致，保证 19 周长学期也能手动校准到第 19 周。
     val calibrationMaxWeek = xmuAcademicCalendarForTerm(termCode)?.totalWeeks ?: 19
@@ -644,7 +666,10 @@ fun StrategyPage(
                 if (intervalInvalid) Text("请输入 1-300 的整数；留空将使用默认 30 秒")
             },
         )
-        Text("二维码签到只提醒；数字签到和雷达签到可按开关自动处理。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "这里可分别选择自动处理类型；保存后会与首页快捷开关同步。首页快捷开关会同时开启或关闭数字、雷达签到。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         ToggleRow("数字签到自动处理", number.value) { number.value = it }
         ToggleRow("雷达签到自动处理", radar.value) { radar.value = it }
         Text("自动处理时机", fontWeight = FontWeight.Bold)
@@ -664,7 +689,8 @@ fun StrategyPage(
                 label = { Text("达到人数后自动处理（至少 1 人）") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = waitCount.toIntOrNull()?.let { it >= 1 } != true,
+                isError = waitInputError != null,
+                supportingText = { if (waitInputError != null) Text(waitInputError) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -675,7 +701,8 @@ fun StrategyPage(
                 label = { Text("达到比例后自动处理（1-100%）") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = waitPercent.toIntOrNull()?.let { it in 1..100 } != true,
+                isError = waitInputError != null,
+                supportingText = { if (waitInputError != null) Text(waitInputError) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -702,7 +729,17 @@ fun StrategyPage(
                 onSaved(saved)
             },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("确认更改") }
+            enabled = strategyRollcallSaveEnabled(interval, waitMode, waitCount, waitPercent),
+        ) { Text("保存策略更改") }
+        Text(
+            if (hasUnsavedRollcallChanges) {
+                "当前修改尚未保存；点击“保存策略更改”后生效。"
+            } else {
+                "当前显示已保存设置。"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     SectionCard("考试提醒") {
         Text(

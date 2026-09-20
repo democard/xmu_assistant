@@ -99,4 +99,29 @@ class QueryHttpTransportTest {
         assertEquals("POST", recorded.method)
         assertEquals(0L, recorded.bodySize)
     }
+
+    @Test
+    fun `one shot PUT is not replayed after 503 retry after zero`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .addHeader("Retry-After", "0"),
+        )
+        server.enqueue(MockResponse().setResponseCode(200))
+        val transport = OkHttpQueryTransport(OkHttpClient())
+
+        val response = transport.execute(
+            QueryHttpRequest(
+                url = server.url("/answer").toString(),
+                method = "PUT",
+                contentType = "application/json; charset=utf-8",
+                body = """{"numberCode":"0042"}""",
+                oneShot = true,
+            ),
+        )
+
+        assertEquals(503, response.code)
+        assertEquals(1, server.requestCount)
+        assertEquals("0042", org.json.JSONObject(server.takeRequest().body.readUtf8()).getString("numberCode"))
+    }
 }
