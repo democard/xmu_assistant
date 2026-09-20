@@ -1,5 +1,6 @@
 package com.xmu.assistant
 
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -71,7 +72,7 @@ class StudentRollcallProgressTest {
     }
 
     @Test
-    fun `missing identity keeps counts but does not claim reliable percentage`() {
+    fun `reference minimal status roster needs no identity or extra flag`() {
         val result = parseStudentRollcallProgress(
             """[{"status":"on_call"},{"status":"absent"}]""",
         )
@@ -79,8 +80,40 @@ class StudentRollcallProgressTest {
         assertEquals(1, result.present)
         assertEquals(1, result.absent)
         assertEquals(0, result.unknown)
-        assertFalse(result.reliablePercentage)
-        assertEquals(null, result.percentage)
+        assertTrue(result.reliablePercentage)
+        assertEquals(50.0, result.percentage!!, 0.0)
+    }
+
+    @Test
+    fun `explicitly partial roster does not produce class percentage`() {
+        val result = parseStudentRollcallProgress(
+            """{"student_rollcalls":[{"status":"on_call"},{"status":"absent"}]}""",
+            rosterComplete = false,
+        )
+        assertEquals(2, result.total)
+        assertUnreliable(result)
+    }
+
+    @Test
+    fun `shared reference fixtures match PC results`() {
+        val text = requireNotNull(javaClass.getResourceAsStream("/attendance_progress_reference_cases.json"))
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val cases = JSONArray(text)
+        for (index in 0 until cases.length()) {
+            val case = cases.getJSONObject(index)
+            val result = parseStudentRollcallProgress(case.getJSONObject("payload"))
+            val expected = case.getJSONObject("expected")
+            val name = case.getString("name")
+            assertEquals(name, expected.getInt("present"), result.present)
+            assertEquals(name, expected.getInt("absent"), result.absent)
+            assertEquals(name, expected.getInt("total"), result.total)
+            if (expected.isNull("percent")) {
+                assertUnreliable(result)
+            } else {
+                assertTrue(name, result.reliablePercentage)
+                assertEquals(name, expected.getDouble("percent"), result.percentage!!, 0.000001)
+            }
+        }
     }
 
     private fun assertUnreliable(result: StudentRollcallProgress) {

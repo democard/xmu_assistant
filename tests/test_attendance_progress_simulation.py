@@ -10,7 +10,7 @@ from simulate_attendance_progress import make_roster
 from xmu_rollcall.rollcall_progress import classify_attendance_entry, summarize_rollcall_progress
 
 
-def summarize(payload, *, roster_complete=False, my_user_no=""):
+def summarize(payload, *, roster_complete=True, my_user_no=""):
     return summarize_rollcall_progress(
         payload, roster_complete=roster_complete, my_user_no=my_user_no,
     )
@@ -38,7 +38,7 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
                 self.assertIsNone(summarize(payload, roster_complete=True).rate_percent)
 
     def test_partial_roster_never_claims_class_percentage(self):
-        result = summarize(make_roster(2, 2))
+        result = summarize(make_roster(2, 2), roster_complete=False)
         self.assertEqual(result.present, 2)
         self.assertFalse(result.roster_complete)
         self.assertIsNone(result.rate_percent)
@@ -64,14 +64,28 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         self.assertEqual((result.observed, result.invalid_rows), (2, 1))
         self.assertIsNone(result.rate_percent)
 
-    def test_missing_identity_keeps_counts_but_suppresses_percentage(self):
+    def test_reference_minimal_status_roster_needs_no_identity_or_extra_flag(self):
         result = summarize(
             {"student_rollcalls": [{"status": "on_call"}, {"status": "absent"}]},
-            roster_complete=True,
         )
         self.assertEqual((result.present, result.absent, result.observed), (1, 1, 2))
-        self.assertFalse(result.roster_complete)
-        self.assertIsNone(result.rate_percent)
+        self.assertTrue(result.roster_complete)
+        self.assertEqual(result.rate_percent, 50.0)
+
+    def test_shared_reference_fixtures_match_android_results(self):
+        import json
+        path = ROOT / "android/app/src/test/resources/attendance_progress_reference_cases.json"
+        cases = json.loads(path.read_text(encoding="utf-8"))
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                result = summarize_rollcall_progress(case["payload"])
+                expected = case["expected"]
+                self.assertEqual((result.present, result.absent, result.observed),
+                                 (expected["present"], expected["absent"], expected["total"]))
+                if expected["percent"] is None:
+                    self.assertIsNone(result.rate_percent)
+                else:
+                    self.assertAlmostEqual(result.rate_percent, expected["percent"])
 
     def test_duplicate_students_are_not_double_counted(self):
         payload = make_roster(1, 1)
@@ -140,7 +154,7 @@ class ExistingDetailReaderSimulationTest(unittest.TestCase):
             session.get.return_value = response
             with patch("requests.sessions.Session.request", side_effect=AssertionError("禁止真实网络")):
                 detail = self.core.fetch_student_rollcall_detail(session, "simulation")
-                result = summarize(detail, roster_complete=True)
+                result = summarize_rollcall_progress(detail)
                 self.assertEqual(result.rate_percent, 15.0)
             # mock_calls 也包含 response.json()，请求次数只统计 get。
             self.assertEqual(session.get.call_count, 1)

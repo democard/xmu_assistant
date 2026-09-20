@@ -1,6 +1,7 @@
 """TronClass 单次点名进度的纯解析逻辑。
 
-本模块不发网络请求，也不参与签到提交；调用方负责确认返回名单是否完整。
+本模块不发网络请求，也不参与签到提交。默认按明细接口返回的名单统计，
+与参考项目一致；调用方明确只传部分名单时，须设置 roster_complete=False。
 """
 from __future__ import annotations
 
@@ -48,7 +49,7 @@ def classify_attendance_entry(entry: dict) -> bool | None:
 def summarize_rollcall_progress(
     payload: object,
     *,
-    roster_complete: bool = False,
+    roster_complete: bool = True,
     my_user_no: str = "",
 ) -> RollcallProgress:
     """汇总 ``student_rollcalls``；不把顶层活动状态冒充个人签到结果。"""
@@ -58,7 +59,7 @@ def summarize_rollcall_progress(
     statuses: list[bool | None] = []
     identities: dict[str, int] = {}
     own_statuses: list[bool | None] = []
-    invalid_rows = duplicate_rows = unidentified_rows = 0
+    invalid_rows = duplicate_rows = 0
     target = my_user_no.strip().lower()
 
     for entry in payload["student_rollcalls"]:
@@ -70,8 +71,6 @@ def summarize_rollcall_progress(
         identity = raw_identity.strip().lower() if isinstance(raw_identity, str) else ""
         if target and identity == target:
             own_statuses.append(status)
-        if not identity:
-            unidentified_rows += 1
         if identity and identity in identities:
             duplicate_rows += 1
             position = identities[identity]
@@ -97,7 +96,6 @@ def summarize_rollcall_progress(
             roster_complete
             and not invalid_rows
             and not duplicate_rows
-            and not unidentified_rows
         ),
         own_present=own_present,
     )

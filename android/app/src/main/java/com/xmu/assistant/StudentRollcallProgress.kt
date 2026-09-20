@@ -7,8 +7,8 @@ import org.json.JSONObject
  * A read-only summary of the student_rollcalls payload.
  *
  * [percentage] is deliberately nullable: it is populated only when the input
- * is a non-empty, complete, duplicate-free list of object records with a
- * recognizable student identity and an unambiguous status for every record.
+ * is a non-empty, complete, duplicate-free list of object records with an
+ * unambiguous status for every record. Student identity is optional for counts.
  */
 data class StudentRollcallProgress(
     val observed: Int,
@@ -34,21 +34,27 @@ private data class ParsedStudentRollcall(
 )
 
 /** Parse a response object, treating a missing or non-array student_rollcalls as incomplete. */
-fun parseStudentRollcallProgress(response: JSONObject): StudentRollcallProgress {
+fun parseStudentRollcallProgress(
+    response: JSONObject,
+    rosterComplete: Boolean = true,
+): StudentRollcallProgress {
     if (!response.has("student_rollcalls") || response.isNull("student_rollcalls")) {
         return emptyUnreliableProgress()
     }
     val value = response.opt("student_rollcalls")
     return if (value is JSONArray) {
-        parseStudentRollcallProgress(value)
+        parseStudentRollcallProgress(value, rosterComplete)
     } else {
         emptyUnreliableProgress()
     }
 }
 
 /** Parse a JSON array containing student rollcall records. */
-fun parseStudentRollcallProgress(records: JSONArray): StudentRollcallProgress {
-    var complete = records.length() > 0
+fun parseStudentRollcallProgress(
+    records: JSONArray,
+    rosterComplete: Boolean = true,
+): StudentRollcallProgress {
+    var complete = rosterComplete && records.length() > 0
     val statuses = mutableListOf<StudentRollcallStatus>()
     val identities = mutableMapOf<String, Int>()
 
@@ -62,7 +68,7 @@ fun parseStudentRollcallProgress(records: JSONArray): StudentRollcallProgress {
         val parsed = parseStudentRollcall(value)
         val identity = parsed.identity
         if (identity == null) {
-            complete = false
+            // 原接口的状态名单即可计数，学号只用于去重，不能作为统计前提。
             statuses += parsed.status
         } else if (identity in identities) {
             val previousIndex = identities.getValue(identity)
@@ -95,13 +101,16 @@ fun parseStudentRollcallProgress(records: JSONArray): StudentRollcallProgress {
 }
 
 /** Parse a JSON string containing either the response object or the array itself. */
-fun parseStudentRollcallProgress(json: String): StudentRollcallProgress {
+fun parseStudentRollcallProgress(
+    json: String,
+    rosterComplete: Boolean = true,
+): StudentRollcallProgress {
     val text = json.trim()
     if (text.isBlank()) return emptyUnreliableProgress()
     return runCatching {
         when {
-            text.startsWith("{") -> parseStudentRollcallProgress(JSONObject(text))
-            text.startsWith("[") -> parseStudentRollcallProgress(JSONArray(text))
+            text.startsWith("{") -> parseStudentRollcallProgress(JSONObject(text), rosterComplete)
+            text.startsWith("[") -> parseStudentRollcallProgress(JSONArray(text), rosterComplete)
             else -> emptyUnreliableProgress()
         }
     }.getOrElse { emptyUnreliableProgress() }

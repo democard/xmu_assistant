@@ -1,0 +1,37 @@
+[
+  {
+    "name": "xmu_minimal_status_only",
+    "payload": {"student_rollcalls": [{"status": "on_call"}, {"status": "absent"}]},
+    "expected": {"present": 1, "absent": 1, "total": 2, "percent": 50.0}
+  },
+  {
+    "name": "tronclass_no_user_numbers",
+    "payload": {"student_rollcalls": [{"rollcall_status": "on_call_fine"}, {"rollcall_status": "absent"}]},
+    "expected": {"present": 1, "absent": 1, "total": 2, "percent": 50.0}
+  },
+  {
+    "name": "secondary_student_rollcall_status",
+    "payload": {"student_rollcalls": [{"student_rollcall_status": "on_call_fine"}, {"student_rollcall_status": "absent"}, {"student_rollcall_status": "absent"}]},
+    "expected": {"present": 1, "absent": 2, "total": 3, "percent": 33.333333333333336}
+  },
+  {
+    "name": "all_absent_is_zero",
+    "payload": {"student_rollcalls": [{"status": "absent"}, {"status": "absent"}]},
+    "expected": {"present": 0, "absent": 2, "total": 2, "percent": 0.0}
+  },
+  {
+    "name": "all_present_is_100",
+    "payload": {"student_rollcalls": [{"status": "on_call"}, {"status": "on_call"}]},
+    "expected": {"present": 2, "absent": 0, "total": 2, "percent": 100.0}
+  },
+  {
+    "name": "empty_roster_has_no_percentage",
+    "payload": {"student_rollcalls": []},
+    "expected": {"present": 0, "absent": 0, "total": 0, "percent": null}
+  },
+  {
+    "name": "same_meaning_in_both_fields",
+    "payload": {"student_rollcalls": [{"status": "on_call", "rollcall_status": "on_call_fine"}, {"status": "absent", "rollcall_status": "absent"}]},
+    "expected": {"present": 1, "absent": 1, "total": 2, "percent": 50.0}
+  }
+]
