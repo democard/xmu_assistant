@@ -94,7 +94,7 @@ def solve_two_points(lat1, lon1, lat2, lon2, d1, d2):
     return point_1, point_2
 
 
-def send_code(in_session, rollcall_id):
+def send_code(in_session, rollcall_id, number_code=""):
     """提交数字签到码。返回 True/False；网络层/SessionExpired 异常按契约处理。
 
     仅用于兼容层：PySide6 桌面端直接组装提交，这里保留统一 bool 契约。
@@ -102,23 +102,24 @@ def send_code(in_session, rollcall_id):
     code_url = f"{base_url}/api/rollcall/{rollcall_id}/student_rollcalls"
     answer_url = f"{base_url}/api/rollcall/{rollcall_id}/answer_number_rollcall"
     request_headers = in_session.headers
-    try:
-        code_response = retry_request(
-            lambda: in_session.get(code_url, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
-            delay=2,
-            label="get_number_code",
-        )
-        _raise_if_session_expired(code_response)
-        if code_response.status_code != 200:
+    number_code = str(number_code or "").strip()
+    if not number_code:
+        try:
+            code_response = retry_request(
+                lambda: in_session.get(code_url, headers=request_headers, timeout=API_TIMEOUT),
+                max_attempts=3,
+                delay=2,
+                label="get_number_code",
+            )
+            _raise_if_session_expired(code_response)
+            if code_response.status_code != 200:
+                return False
+            code_data = code_response.json()
+        except requests.RequestException:
             return False
-        code_data = code_response.json()
-    except requests.RequestException:
-        return False
-    except ValueError:
-        return False
-
-    number_code = find_number_code(code_data)
+        except ValueError:
+            return False
+        number_code = find_number_code(code_data)
     if not number_code:
         return False
 
@@ -126,7 +127,8 @@ def send_code(in_session, rollcall_id):
     try:
         response = retry_request(
             lambda: in_session.put(answer_url, json=payload, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
+            # 写请求不盲重试：超时可能只是回执丢失，重复 PUT 会造成重复签到。
+            max_attempts=1,
             delay=2,
             label="answer_number",
         )

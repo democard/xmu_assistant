@@ -130,3 +130,75 @@ fun <T> processActiveMonitorPoll(
     }
     runIfActive(onSuccess)
 }
+
+/**
+ * 带门槛的签到轮次。通知和提交分别去重；等待门槛、缺少数字码时保持待处理。
+ * 写请求异常最多重试 [maxAnswerAttempts] 次，避免回执不明时无限重复提交。
+ */
+internal fun processRollcallMonitorPoll(
+    events: Iterable<RollcallEvent>,
+    settings: RollcallSettings,
+    notifiedIds: MutableSet<String>,
+    completedIds: MutableSet<String>,
+    answerAttempts: MutableMap<String, Int>,
+    runIfActive: (action: () -> Unit) -> Boolean,
+    onNotify: (RollcallEvent) -> Unit,
+    onAnswer: (RollcallEvent) -> Boolean,
+    onSuccess: () -> Unit,
+    settingsStillCurrent: () -> Boolean = { true },
+    maxAnswerAttempts: Int = 3,
+) {
+    for (event in events) {
+        if (event.id in completedIds) continue
+        if (event.id !in notifiedIds) {
+            if (!runIfActive {
+                    onNotify(event)
+                    notifiedIds += event.id
+                }
+            ) return
+        }
+
+        val autoEnabled = when (event.type) {
+            "数字签到" -> settings.autoAnswerNumber
+            "雷达签到" -> settings.autoAnswerRadar
+            else -> false
+        }
+        val definitelyFinished = event.isExpired || event.remainingSeconds == 0L ||
+            event.ownStatus == STATUS_SIGNED || event.status == STATUS_SIGNED
+        if (definitelyFinished || event.type !in setOf("数字签到", "雷达签到")) {
+            if (!runIfActive {
+                    completedIds += event.id
+                    answerAttempts.remove(event.id)
+                }
+            ) return
+            continue
+        }
+        if (!autoEnabled || !settings.thresholdReached(event.progress)) continue
+        if (event.type == "数字签到" && event.numberCode.isBlank()) continue
+        // 上一笔写请求回执不明时，必须等下一轮明细明确仍未签才允许有限重试。
+        if ((answerAttempts[event.id] ?: 0) > 0 && event.ownStatus !in setOf("未签", "缺勤")) continue
+        if (!settingsStillCurrent()) continue
+        if (!runIfActive { }) return
+
+        try {
+            val accepted = onAnswer(event)
+            if (!runIfActive {
+                    // 已发出且平台明确拒绝也不自动重放，避免重复写请求。
+                    completedIds += event.id
+                    answerAttempts.remove(event.id)
+                }
+            ) return
+            if (!accepted) continue
+        } catch (error: MainSessionExpiredException) {
+            throw error
+        } catch (error: Throwable) {
+            val attempts = (answerAttempts[event.id] ?: 0) + 1
+            answerAttempts[event.id] = attempts
+            if (attempts >= maxAnswerAttempts) {
+                runIfActive { completedIds += event.id }
+            }
+            throw error
+        }
+    }
+    runIfActive(onSuccess)
+}

@@ -22,6 +22,43 @@ data class StudentRollcallProgress(
         get() = observed
 }
 
+data class StudentRollcallDetails(
+    val progress: StudentRollcallProgress?,
+    val numberCode: String,
+    val ownStatus: String?,
+)
+
+/** 一份特定 rollcall_id 的只读明细同时产出统计、数字码和本人状态。 */
+fun parseStudentRollcallDetails(
+    response: JSONObject,
+    username: String = "",
+): StudentRollcallDetails {
+    val parsedProgress = parseStudentRollcallProgress(response).takeIf { it.observed > 0 }
+    val students = response.optJSONArray("student_rollcalls")
+    var ownStatus: String? = null
+    if (students != null) {
+        for (index in 0 until students.length()) {
+            val student = students.optJSONObject(index) ?: continue
+            val userNo = listOf("user_no", "username", "student_no", "number", "account")
+                .firstNotNullOfOrNull { key -> student.optRealString(key).takeIf { it.isNotBlank() } }
+            if ((username.isNotBlank() && userNo == username) ||
+                student.optBoolean("is_current_user") || student.optBoolean("is_self")
+            ) {
+                val raw = listOf("status", "rollcall_status", "state")
+                    .firstNotNullOfOrNull { key -> student.optRealString(key).takeIf { it.isNotBlank() } }
+                ownStatus = raw?.let(::historyRollcallStatus)
+                break
+            }
+        }
+    }
+    return StudentRollcallDetails(
+        progress = parsedProgress,
+        // 响应来自 /api/rollcall/{id}/student_rollcalls，递归范围已限定为该活动。
+        numberCode = findNumberCode(response).orEmpty(),
+        ownStatus = ownStatus,
+    )
+}
+
 private enum class StudentRollcallStatus {
     PRESENT,
     ABSENT,

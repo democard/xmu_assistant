@@ -12,14 +12,13 @@ import javax.mail.internet.InternetAddress
 import javax.mail.internet.MimeMessage
 
 fun rollcallNotificationBody(event: RollcallEvent, actionUrl: String): String {
-    val remaining = if (event.deadline.isBlank()) "未知" else event.deadline
-    return listOf(
-        "课程：${event.courseTitle}",
-        "类型：${event.type}",
-        "剩余：$remaining",
-        "状态：${event.result}",
-        "打开：$actionUrl",
-    ).joinToString("\n")
+    return buildList {
+        add("课程：${event.courseTitle}")
+        add("类型：${event.type}")
+        if (remainingSecondsFromDeadline(event.deadline) != null) add("截止：${event.deadline}")
+        add("状态：${event.result}")
+        add("打开：$actionUrl")
+    }.joinToString("\n")
 }
 
 class PushPlusSender(

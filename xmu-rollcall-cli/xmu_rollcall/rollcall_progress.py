@@ -26,6 +26,35 @@ class RollcallProgress:
             return None
         return self.present * 100 / self.observed
 
+    @property
+    def reliable(self) -> bool:
+        """名单可用于自动决策：完整、非空，且每一行状态都可识别。"""
+        return self.roster_complete and self.observed > 0 and self.unknown == 0
+
+
+def wait_before_answer_satisfied(
+    progress: RollcallProgress,
+    mode: str,
+    *,
+    count: int = 5,
+    percent: int = 15,
+) -> bool:
+    """判断自动签到人数门槛；未知/空/不完整名单一律不达标。
+
+    百分比使用交叉相乘，避免先取整导致 5/40 被错误当成 15%。
+    ``none`` 表示关闭新增门槛，保持原自动处理行为。
+    """
+    if mode == "none":
+        return True
+    if not progress.reliable:
+        return False
+    if mode == "count":
+        return progress.present >= max(1, int(count))
+    if mode == "percent":
+        threshold = min(100, max(1, int(percent)))
+        return progress.present * 100 >= progress.observed * threshold
+    return False
+
 
 def classify_attendance_entry(entry: dict) -> bool | None:
     """返回 True(已签)、False(缺勤) 或 None(未知/字段冲突)。"""

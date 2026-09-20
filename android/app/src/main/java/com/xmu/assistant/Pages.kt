@@ -83,7 +83,7 @@ fun RollcallStatusPage(
                 if (openedEventId.isNotBlank()) Text("从通知打开：$openedEventId", color = MaterialTheme.colorScheme.primary)
             }
         }
-        // 卡片二：正在进行（检测到签到时的展示与原来完全一致）
+        // 卡片二：正在进行
         item {
             SectionCard("正在进行") {
                 if (events.isEmpty()) {
@@ -91,12 +91,13 @@ fun RollcallStatusPage(
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         events.forEach { event ->
-                            InfoCard {
-                                Text(event.courseTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text("${event.type} · ${event.status}")
-                                Text("发起人：${event.teacher}")
-                                Text("截止时间：${event.deadline.ifBlank { "未知" }}")
-                            }
+                            RollcallRecordCard(
+                                courseTitle = event.courseTitle,
+                                typeAndTime = "${event.type} · ${event.status}",
+                                supportingLines = listOf("发起人：${event.teacher}"),
+                                progress = event.progress,
+                                numberCode = if (event.type == "数字签到") event.numberCode else null,
+                            )
                         }
                     }
                 }
@@ -125,12 +126,16 @@ fun RollcallStatusPage(
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         historyItems.forEach { item ->
-                            InfoCard {
-                                Text(item.courseTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text("${item.type} · ${item.timeDisplay}")
-                                // 用户指定显示兜底：未知显示已签，原始状态与缓存保持不变。
-                                Text("本人状态：${historyRollcallDisplayStatus(item.ownStatus)}")
-                            }
+                            RollcallRecordCard(
+                                courseTitle = item.courseTitle,
+                                typeAndTime = "${item.type} · ${item.timeDisplay}",
+                                supportingLines = listOf(
+                                    "本人状态：${historyRollcallDisplayStatus(item.ownStatus)}",
+                                ),
+                                progress = item.progress,
+                                numberCode = if (item.type == "数字签到") item.numberCode else null,
+                                numberCodeInFacts = true,
+                            )
                         }
                     }
                 }
@@ -595,6 +600,14 @@ fun StrategyPage(
     // （修复机理见 rememberSyncedBoolean 的注释）。
     val number = rememberSyncedBoolean(current.autoAnswerNumber)
     val radar = rememberSyncedBoolean(current.autoAnswerRadar)
+    var waitMode by rememberSaveable { mutableStateOf(current.waitBeforeAnswerMode) }
+    var waitCount by rememberSaveable { mutableStateOf(current.waitBeforeAnswerCount.toString()) }
+    var waitPercent by rememberSaveable { mutableStateOf(current.waitBeforeAnswerPercent.toString()) }
+    LaunchedEffect(current.waitBeforeAnswerMode, current.waitBeforeAnswerCount, current.waitBeforeAnswerPercent) {
+        waitMode = current.waitBeforeAnswerMode
+        waitCount = current.waitBeforeAnswerCount.toString()
+        waitPercent = current.waitBeforeAnswerPercent.toString()
+    }
     // 手动周次用本地 State 持有，确保切换开关/选周时 UI 立即重组（settings 非 State）。
     // 以 termCode 为键：学期变化（新学期/缓存重载）后重读该学期的校准值，
     // 否则本地副本停留在旧学期，与 SchedulePage 实际生效值不一致。
@@ -634,10 +647,57 @@ fun StrategyPage(
         Text("二维码签到只提醒；数字签到和雷达签到可按开关自动处理。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         ToggleRow("数字签到自动处理", number.value) { number.value = it }
         ToggleRow("雷达签到自动处理", radar.value) { radar.value = it }
+        Text("自动处理时机", fontWeight = FontWeight.Bold)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(
+                WAIT_BEFORE_ANSWER_NONE to "检测到立即处理",
+                WAIT_BEFORE_ANSWER_COUNT to "达到人数",
+                WAIT_BEFORE_ANSWER_PERCENT to "达到比例",
+            ).forEach { (value, label) ->
+                OutlinedButton(onClick = { waitMode = value }, enabled = waitMode != value) { Text(label) }
+            }
+        }
+        if (waitMode == WAIT_BEFORE_ANSWER_COUNT) {
+            OutlinedTextField(
+                value = waitCount,
+                onValueChange = { waitCount = it.filter(Char::isDigit) },
+                label = { Text("达到人数后自动处理（至少 1 人）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = waitCount.toIntOrNull()?.let { it >= 1 } != true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) {
+            OutlinedTextField(
+                value = waitPercent,
+                onValueChange = { waitPercent = it.filter(Char::isDigit) },
+                label = { Text("达到比例后自动处理（1-100%）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = waitPercent.toIntOrNull()?.let { it in 1..100 } != true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Button(
             onClick = {
                 if (intervalInvalid) return@Button
-                val saved = RollcallSettings((interval.toIntOrNull() ?: 30).coerceIn(1, 300), number.value, radar.value)
+                val count = if (waitMode == WAIT_BEFORE_ANSWER_COUNT) {
+                    waitCount.toIntOrNull() ?: return@Button
+                } else current.waitBeforeAnswerCount
+                val percent = if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) {
+                    waitPercent.toIntOrNull() ?: return@Button
+                } else current.waitBeforeAnswerPercent
+                if (waitMode == WAIT_BEFORE_ANSWER_COUNT && count < 1) return@Button
+                if (waitMode == WAIT_BEFORE_ANSWER_PERCENT && percent !in 1..100) return@Button
+                val saved = RollcallSettings(
+                    pollIntervalSeconds = (interval.toIntOrNull() ?: 30).coerceIn(1, 300),
+                    autoAnswerNumber = number.value,
+                    autoAnswerRadar = radar.value,
+                    waitBeforeAnswerMode = waitMode,
+                    waitBeforeAnswerCount = count.coerceAtLeast(1),
+                    waitBeforeAnswerPercent = percent.coerceIn(1, 100),
+                )
                 settings.saveRollcall(saved)
                 onSaved(saved)
             },

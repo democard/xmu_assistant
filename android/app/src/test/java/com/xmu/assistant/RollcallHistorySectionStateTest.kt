@@ -104,6 +104,7 @@ class RollcallHistorySectionStateTest {
                 assertEquals("session=fixture", cookieHeader)
                 RollcallHistoryClient(cookieHeader, transport, { size -> java.util.concurrent.Executors.newFixedThreadPool(size) })
             },
+            createEngine = { cookieHeader -> RollcallEngine(cookieHeader, transport) },
         )
         return Harness(state, gate, transport, pendingRetries, activity)
     }
@@ -203,5 +204,19 @@ class RollcallHistorySectionStateTest {
         val harness = newHarness(transport, loggedIn = false)
         assertFalse(harness.state.refreshHistory())
         assertTrue(harness.transport.requests.isEmpty())
+    }
+
+    @Test
+    fun `active refresh reads details without submitting`() {
+        val transport = StubTransport(
+            rollcallsPayload = """{"rollcalls":[{"rollcall_id":"r1","is_number":true,"status":"unsigned"}]}""",
+            detailPayload = """{"number_code":"0042","student_rollcalls":[{"user_no":"u1","status":"on_call"},{"status":"absent"}]}""",
+        )
+        val harness = newHarness(transport)
+        assertTrue(harness.state.refresh())
+        assertTrue(await { !harness.state.loading })
+        assertEquals("0042", harness.state.events.single().numberCode)
+        assertEquals(50.0, harness.state.events.single().progress?.percentage ?: -1.0, 0.0)
+        assertTrue(transport.requests.all { it.method == "GET" })
     }
 }

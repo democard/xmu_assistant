@@ -17,9 +17,12 @@ const val THEME_MODE_DARK = "dark"
  * 缓存后各模块（Activity/监控服务/Widget）首次访问才初始化一次，
  * 冷启动与后台唤醒更快。
  */
-class AssistantSettings private constructor(context: Context) {
+class AssistantSettings private constructor(
+    context: Context,
+    prefsOverride: android.content.SharedPreferences? = null,
+) {
     private val appContext = context.applicationContext
-    private val prefs: android.content.SharedPreferences = encryptedPrefs(appContext)
+    private val prefs: android.content.SharedPreferences = prefsOverride ?: encryptedPrefs(appContext)
     private val autoLoginPolicyStore = AutoLoginPolicyStore(
         readStored = { prefs.getString("auto_login_policy", null) },
         readCookie = { cookieHeader },
@@ -137,6 +140,11 @@ class AssistantSettings private constructor(context: Context) {
         pollIntervalSeconds = prefs.getInt("poll_interval_seconds", 30).coerceIn(1, 300),
         autoAnswerNumber = prefs.getBoolean("auto_answer_number", false),
         autoAnswerRadar = prefs.getBoolean("auto_answer_radar", false),
+        waitBeforeAnswerMode = prefs.getString("wait_before_answer_mode", WAIT_BEFORE_ANSWER_NONE)
+            .takeIf { it in setOf(WAIT_BEFORE_ANSWER_NONE, WAIT_BEFORE_ANSWER_COUNT, WAIT_BEFORE_ANSWER_PERCENT) }
+            ?: WAIT_BEFORE_ANSWER_NONE,
+        waitBeforeAnswerCount = prefs.getInt("wait_before_answer_count", 5).coerceAtLeast(1),
+        waitBeforeAnswerPercent = prefs.getInt("wait_before_answer_percent", 15).coerceIn(1, 100),
     )
 
     fun saveRollcall(settings: RollcallSettings) {
@@ -144,6 +152,14 @@ class AssistantSettings private constructor(context: Context) {
             .putInt("poll_interval_seconds", settings.pollIntervalSeconds.coerceIn(1, 300))
             .putBoolean("auto_answer_number", settings.autoAnswerNumber)
             .putBoolean("auto_answer_radar", settings.autoAnswerRadar)
+            .putString(
+                "wait_before_answer_mode",
+                settings.waitBeforeAnswerMode.takeIf {
+                    it in setOf(WAIT_BEFORE_ANSWER_NONE, WAIT_BEFORE_ANSWER_COUNT, WAIT_BEFORE_ANSWER_PERCENT)
+                } ?: WAIT_BEFORE_ANSWER_NONE,
+            )
+            .putInt("wait_before_answer_count", settings.waitBeforeAnswerCount.coerceAtLeast(1))
+            .putInt("wait_before_answer_percent", settings.waitBeforeAnswerPercent.coerceIn(1, 100))
             .apply()
     }
 
@@ -273,6 +289,8 @@ class AssistantSettings private constructor(context: Context) {
     }
 
     companion object {
+        internal fun forTest(context: Context, prefs: android.content.SharedPreferences): AssistantSettings =
+            AssistantSettings(context, prefs)
         /** widgetEnabled 明文镜像的 prefs 文件名与键名（布尔开关非敏感）。 */
         const val WIDGET_MIRROR_PREFS = "widget_mirror"
         const val WIDGET_ENABLED_MIRROR_KEY = "widget_enabled"

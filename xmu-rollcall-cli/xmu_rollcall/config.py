@@ -51,6 +51,9 @@ DEFAULT_ROLLCALL_SETTINGS = {
     "radar_delay_max": 0,
     "manual_confirm": False,
     "wait_before_answer_mode": "none",
+    "wait_before_answer_count": 5,
+    "wait_before_answer_percent": 15,
+    # 早期未接入界面的占位字段保留，避免破坏已有配置文件；它们不参与新门槛判定。
     "wait_before_answer_count_min": 0,
     "wait_before_answer_count_max": 0,
 }
@@ -113,6 +116,8 @@ def normalize_rollcall_settings(settings: dict | None) -> dict:
         "number_delay_max",
         "radar_delay_min",
         "radar_delay_max",
+        "wait_before_answer_count",
+        "wait_before_answer_percent",
         "wait_before_answer_count_min",
         "wait_before_answer_count_max",
     ):
@@ -139,8 +144,14 @@ def normalize_rollcall_settings(settings: dict | None) -> dict:
     if merged["wait_before_answer_count_max"] < merged["wait_before_answer_count_min"]:
         merged["wait_before_answer_count_max"] = merged["wait_before_answer_count_min"]
 
-    if merged.get("wait_before_answer_mode") not in ("none", "fixed", "random"):
+    # fixed/random 是从未接入真实自动链路的旧占位值，迁移时必须回到 none，
+    # 不能因为磁盘里曾出现占位字段就意外开启自动签到门槛。
+    if merged.get("wait_before_answer_mode") not in ("none", "count", "percent"):
         merged["wait_before_answer_mode"] = "none"
+    merged["wait_before_answer_count"] = max(1, merged["wait_before_answer_count"])
+    merged["wait_before_answer_percent"] = min(
+        100, max(1, merged["wait_before_answer_percent"])
+    )
     merged["manual_confirm"] = _coerce_bool(merged.get("manual_confirm", False))
     return merged
 

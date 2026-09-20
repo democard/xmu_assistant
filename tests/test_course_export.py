@@ -43,7 +43,7 @@ class CourseRollcallCsvTest(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(
             lines[0],
-            "日期,课程,签到时间,类型,状态,平台状态,已核实,签到ID,备注",
+            "日期,课程,签到时间,类型,状态,已签人数,总人数,已签比例,签到码,平台状态,已核实,签到ID,备注",
         )
         self.assertEqual(len(lines), 3)
         # 行序与输入一致（导出即所见）

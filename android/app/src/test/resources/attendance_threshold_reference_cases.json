@@ -1,0 +1,23 @@
+[
+  {"name":"disabled_without_details","mode":"none","count":5,"percent":15,"progress":null,"expected":true},
+  {"name":"disabled_with_incomplete_details","mode":"none","count":5,"percent":15,"progress":{"present":0,"total":40,"reliable":false},"expected":true},
+  {"name":"percentage_below_15","mode":"percent","count":5,"percent":15,"progress":{"present":5,"total":40,"reliable":true},"expected":false},
+  {"name":"percentage_exactly_15","mode":"percent","count":5,"percent":15,"progress":{"present":6,"total":40,"reliable":true},"expected":true},
+  {"name":"one_of_seven_below_15","mode":"percent","count":5,"percent":15,"progress":{"present":1,"total":7,"reliable":true},"expected":false},
+  {"name":"one_of_six_above_15","mode":"percent","count":5,"percent":15,"progress":{"present":1,"total":6,"reliable":true},"expected":true},
+  {"name":"small_class_zero_present","mode":"percent","count":5,"percent":1,"progress":{"present":0,"total":1,"reliable":true},"expected":false},
+  {"name":"custom_18_percent_not_met","mode":"percent","count":5,"percent":18,"progress":{"present":7,"total":40,"reliable":true},"expected":false},
+  {"name":"custom_17_percent_met","mode":"percent","count":5,"percent":17,"progress":{"present":7,"total":40,"reliable":true},"expected":true},
+  {"name":"rounded_display_is_not_100_percent","mode":"percent","count":5,"percent":100,"progress":{"present":199,"total":200,"reliable":true},"expected":false},
+  {"name":"all_present_100_percent","mode":"percent","count":5,"percent":100,"progress":{"present":200,"total":200,"reliable":true},"expected":true},
+  {"name":"empty_roster","mode":"percent","count":5,"percent":15,"progress":{"present":0,"total":0,"reliable":false},"expected":false},
+  {"name":"percentage_missing_details","mode":"percent","count":5,"percent":15,"progress":null,"expected":false},
+  {"name":"count_missing_details","mode":"count","count":6,"percent":15,"progress":null,"expected":false},
+  {"name":"count_below","mode":"count","count":6,"percent":15,"progress":{"present":5,"total":40,"reliable":true},"expected":false},
+  {"name":"count_exact","mode":"count","count":6,"percent":15,"progress":{"present":6,"total":40,"reliable":true},"expected":true},
+  {"name":"custom_count_above","mode":"count","count":3,"percent":15,"progress":{"present":4,"total":40,"reliable":true},"expected":true},
+  {"name":"count_incomplete_roster","mode":"count","count":3,"percent":15,"progress":{"present":4,"total":40,"reliable":false},"expected":false},
+  {"name":"percent_incomplete_roster","mode":"percent","count":3,"percent":15,"progress":{"present":40,"total":40,"reliable":false},"expected":false},
+  {"name":"count_larger_than_class","mode":"count","count":50,"percent":15,"progress":{"present":40,"total":40,"reliable":true},"expected":false},
+  {"name":"large_count_multiplication","mode":"percent","count":5,"percent":50,"progress":{"present":1000000000,"total":2000000000,"reliable":true},"expected":true}
+]

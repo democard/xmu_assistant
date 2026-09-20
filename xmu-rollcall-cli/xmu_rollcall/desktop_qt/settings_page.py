@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_ROLLCALL_SETTINGS,
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
 )
@@ -35,7 +36,7 @@ class SettingsPageMixin:
         "_export_logs",
         "_panel",
         "_save_app_settings",
-        "_save_poll_interval_setting",
+        "_save_rollcall_strategy_settings",
         "_save_theme_mode",
     )
 
@@ -57,16 +58,42 @@ class SettingsPageMixin:
         self.poll_interval_spin.setMinimumWidth(240)
         self.poll_interval_save_button = QPushButton("确认更改")
         self.poll_interval_save_button.setObjectName("PrimaryButton")
-        self.poll_interval_save_button.clicked.connect(self._save_poll_interval_setting)
+        self.poll_interval_save_button.clicked.connect(self._save_rollcall_strategy_settings)
         self.poll_interval_status = QLabel("")
         self.poll_interval_status.setObjectName("StatusGood")
         self.poll_interval_spin.valueChanged.connect(lambda _value: self.poll_interval_status.clear())
+        self.wait_before_answer_mode_combo = QComboBox()
+        self.wait_before_answer_mode_combo.addItem("不等待人数（保持原行为）", "none")
+        self.wait_before_answer_mode_combo.addItem("已签人数达到", "count")
+        self.wait_before_answer_mode_combo.addItem("已签比例达到", "percent")
+        self.wait_before_answer_mode_combo.setMinimumWidth(240)
+        self.wait_before_answer_count_spin = QSpinBox()
+        self.wait_before_answer_count_spin.setRange(1, 1000000)
+        self.wait_before_answer_count_spin.setValue(DEFAULT_ROLLCALL_SETTINGS["wait_before_answer_count"])
+        self.wait_before_answer_count_spin.setSuffix(" 人")
+        self.wait_before_answer_percent_spin = QSpinBox()
+        self.wait_before_answer_percent_spin.setRange(1, 100)
+        self.wait_before_answer_percent_spin.setValue(DEFAULT_ROLLCALL_SETTINGS["wait_before_answer_percent"])
+        self.wait_before_answer_percent_spin.setSuffix(" %")
+        self.wait_before_answer_mode_combo.currentIndexChanged.connect(
+            self._refresh_wait_strategy_controls
+        )
         panel_layout.addWidget(
             QLabel(f"默认轮询间隔（{MIN_POLL_INTERVAL_SECONDS}-{MAX_POLL_INTERVAL_SECONDS}秒）"), 0, 0
         )
         panel_layout.addWidget(self.poll_interval_spin, 0, 1, Qt.AlignmentFlag.AlignCenter)
         panel_layout.addWidget(self.poll_interval_save_button, 0, 2, Qt.AlignmentFlag.AlignRight)
         panel_layout.addWidget(self.poll_interval_status, 1, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
+        panel_layout.addWidget(QLabel("自动签到等待条件"), 2, 0)
+        panel_layout.addWidget(
+            self.wait_before_answer_mode_combo, 2, 1, Qt.AlignmentFlag.AlignCenter
+        )
+        panel_layout.addWidget(self.wait_before_answer_count_spin, 3, 1, Qt.AlignmentFlag.AlignCenter)
+        panel_layout.addWidget(self.wait_before_answer_percent_spin, 4, 1, Qt.AlignmentFlag.AlignCenter)
+        wait_tip = QLabel("人数与比例只使用完整、状态明确的签到名单；资料暂不可用时继续等待。")
+        wait_tip.setObjectName("Subtle")
+        panel_layout.addWidget(wait_tip, 5, 0, 1, 3)
+        self._refresh_wait_strategy_controls()
         layout.addWidget(panel)
 
         app_panel = self._panel("应用行为")
@@ -112,3 +139,10 @@ class SettingsPageMixin:
         layout.addWidget(appearance_panel)
         layout.addStretch(1)
         return page
+
+    def _refresh_wait_strategy_controls(self, *_args) -> None:
+        mode = self.wait_before_answer_mode_combo.currentData()
+        self.wait_before_answer_count_spin.setVisible(mode == "count")
+        self.wait_before_answer_percent_spin.setVisible(mode == "percent")
+        if hasattr(self, "poll_interval_status"):
+            self.poll_interval_status.clear()

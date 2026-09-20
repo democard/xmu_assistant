@@ -27,6 +27,9 @@ class RollcallEngine internal constructor(
             val id = item.optRealString("rollcall_id").ifBlank { item.optRealString("id") }
             // 无 id 的事件无法去重（所有空 id 共享同一个去重键，后续事件会被误判重复丢弃），直接跳过
             if (id.isBlank()) return@mapNotNull null
+            val deadline = firstString(
+                item, "deadline", "rollcall_end_time", "end_time", "expired_at", "expire_at", "expires_at",
+            )
             RollcallEvent(
                 id = id,
                 courseTitle = item.optString("course_title", item.optString("course_name", "未知课程")),
@@ -40,10 +43,35 @@ class RollcallEngine internal constructor(
                     else -> "二维码签到"
                 },
                 status = normalizedRollcallStatus(item.optString("status", "unknown")),
-                deadline = firstString(item, "deadline", "end_time", "expired_at", "expire_at", "expires_at"),
-                remainingSeconds = remainingSecondsFromDeadline(
-                    firstString(item, "deadline", "end_time", "expired_at", "expire_at", "expires_at"),
-                ),
+                deadline = deadline,
+                remainingSeconds = remainingSecondsFromDeadline(deadline),
+                isExpired = item.optBoolean("is_expired", false),
+            )
+        }
+    }
+
+    /** 页面和监控共用：每个活动 id 同轮最多一次只读明细 GET。 */
+    fun pollWithDetails(username: String = ""): List<RollcallEvent> {
+        val detailById = mutableMapOf<String, JSONObject?>()
+        return pollOnce().map { event ->
+            val detail = if (detailById.containsKey(event.id)) {
+                detailById[event.id]
+            } else {
+                val loaded = try {
+                    getStudentRollcallDetail(event.id)
+                } catch (error: MainSessionExpiredException) {
+                    throw error
+                } catch (_: Throwable) {
+                    null
+                }
+                detailById[event.id] = loaded
+                loaded
+            } ?: return@map event
+            val parsed = parseStudentRollcallDetails(detail, username)
+            event.copy(
+                numberCode = if (event.type == "数字签到") parsed.numberCode else "",
+                progress = parsed.progress,
+                ownStatus = parsed.ownStatus,
             )
         }
     }
@@ -72,6 +100,26 @@ class RollcallEngine internal constructor(
         return JSONObject(response.body)
     }
 
+    private fun getStudentRollcallDetail(rollcallId: String): JSONObject? {
+        val url = "$baseUrl/api/rollcall/$rollcallId/student_rollcalls"
+        val headers = linkedMapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36",
+            "Accept-Language" to "zh-CN,zh;q=0.9",
+            "Accept" to "application/json, text/plain, */*",
+        )
+        if (cookieHeader.isNotBlank()) headers["Cookie"] = cookieHeader
+        val response = statusTransport.execute(
+            QueryHttpRequest(url, "GET", headers, operation = NetworkOperation.ROLLCALL_STATUS),
+        )
+        if (response.code == 401) throw MainSessionExpiredException()
+        if (response.code in 300..399 && isIdentityRedirect(response.url, response.location)) {
+            throw MainSessionExpiredException()
+        }
+        if (response.code == 403) return null
+        if (response.code !in 200..299) error("网络失败：${response.code}")
+        return JSONObject(response.body)
+    }
+
     fun answerNumber(rollcallId: String): Boolean {
         val detail = getJson("$baseUrl/api/rollcall/$rollcallId/student_rollcalls")
         val code = findNumberCode(detail) ?: return false
@@ -79,6 +127,14 @@ class RollcallEngine internal constructor(
             .put("deviceId", UUID.randomUUID().toString())
             .put("numberCode", code)
         return putJson("$baseUrl/api/rollcall/$rollcallId/answer_number_rollcall", body)
+    }
+
+    private fun answerNumber(event: RollcallEvent): Boolean {
+        if (event.numberCode.isBlank()) return false
+        val body = JSONObject()
+            .put("deviceId", UUID.randomUUID().toString())
+            .put("numberCode", event.numberCode)
+        return putJson("$baseUrl/api/rollcall/${event.id}/answer_number_rollcall", body)
     }
 
     fun answerRadar(rollcallId: String): Boolean {
@@ -107,7 +163,7 @@ class RollcallEngine internal constructor(
     }
 
     fun answer(event: RollcallEvent): Boolean = when (event.type) {
-        "数字签到" -> answerNumber(event.id)
+        "数字签到" -> answerNumber(event)
         "雷达签到" -> answerRadar(event.id)
         else -> false
     }
@@ -225,7 +281,7 @@ private fun xyToLatLon(x: Double, y: Double, lat0: Double, lon0: Double): Pair<D
 }
 
 fun firstString(json: JSONObject, vararg keys: String): String =
-    keys.firstNotNullOfOrNull { key -> json.optString(key).takeIf { it.isNotBlank() } } ?: ""
+    keys.firstNotNullOfOrNull { key -> json.optRealString(key).takeIf { it.isNotBlank() } } ?: ""
 
 fun findNumberCode(value: Any?, depth: Int = 0): String? {
     if (depth > 10 || value == null) return null

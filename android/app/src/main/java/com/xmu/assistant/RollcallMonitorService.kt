@@ -123,9 +123,12 @@ class RollcallMonitorService : Service() {
         // 若读实时 cookie，运行中换号会把旧账号已处理 id 记到新账号名下，
         // 新账号同 id 签到随后被 restoreSeen 误判「已处理」，不通知也不应答。
         val cookieSnapshot = settings.cookieHeader
-        val restoredSeen = restoreSeenRollcalls(cookieSnapshot)
-        val seen = ArrayDeque(restoredSeen)
-        val seenSet = restoredSeen.toMutableSet()
+        val restoredLegacy = restoreLegacySeenRollcalls(cookieSnapshot)
+        val notified = ArrayDeque(restoreRollcallIds(cookieSnapshot, NOTIFIED_LIST_KEY, restoredLegacy))
+        val notifiedSet = notified.toMutableSet()
+        val completed = ArrayDeque(restoreRollcallIds(cookieSnapshot, COMPLETED_LIST_KEY, restoredLegacy))
+        val completedSet = completed.toMutableSet()
+        val answerAttempts = restoreAnswerAttempts(cookieSnapshot).toMap(linkedMapOf())
         try {
             while (isMonitorRunActive(token, settings)) {
                 val rollcallSettings = settings.rollcall()
@@ -136,36 +139,39 @@ class RollcallMonitorService : Service() {
                     // 运行中换号/重登：seen 与新账号不匹配，退出循环，由重登流程重启监控
                     if (liveCookie != cookieSnapshot) return
                     val engine = RollcallEngine(liveCookie)
-                    // 先过滤再处理：去重标记在处理成功（通知+可选应答完成）后才写入，
-                    // 中途停止/异常时已处理事件不丢、未处理事件下一轮仍会通知。
-                    val allEvents = engine.pollOnce()
+                    // 同一轮详情 GET 同时供进度门槛、本人状态和数字码使用。
+                    val allEvents = engine.pollWithDetails(settings.username)
                     // 自适应轮询节奏（与桌面端 MonitorWorker 对齐）：存在进行中的签到
                     // （remainingSeconds > 0）时切密集轮询，空闲时段维持用户设定间隔。
                     // 平均发现延迟从 interval/2 降到 ACTIVE_POLL_INTERVAL_SECONDS/2；
                     // 密集期只覆盖课堂签到窗口，日均请求量几乎不变。
                     val activeRollcall = allEvents.any { (it.remainingSeconds ?: 0L) > 0 }
-                    val newEvents = allEvents.filter { it.id !in seenSet }
                     try {
-                        processActiveMonitorPoll(
-                            events = newEvents,
+                        processRollcallMonitorPoll(
+                            events = allEvents,
+                            settings = rollcallSettings,
+                            notifiedIds = notifiedSet,
+                            completedIds = completedSet,
+                            answerAttempts = answerAttempts,
                             runIfActive = { action ->
                                 monitorWorkerCoordinator.runIfCurrent(token, settings.monitorDesired, action)
                             },
                             onNotify = ::notifyRollcall,
-                            shouldAnswer = { event ->
-                                (event.type == "数字签到" && rollcallSettings.autoAnswerNumber) ||
-                                    (event.type == "雷达签到" && rollcallSettings.autoAnswerRadar)
-                            },
                             onAnswer = engine::answer,
                             onSuccess = settings::recordMonitorSuccess,
-                            onProcessed = { event ->
-                                seenSet.add(event.id)
-                                seen.addLast(event.id)
-                                evictSeenOverflow(seen, seenSet, MAX_SEEN_ROLLCALLS)
+                            settingsStillCurrent = {
+                                settings.cookieHeader == cookieSnapshot && settings.rollcall() == rollcallSettings
                             },
                         )
                     } finally {
-                        persistSeenRollcalls(cookieSnapshot, seen)
+                        while (answerAttempts.size > MAX_ANSWER_ATTEMPTS_TRACKED) {
+                            answerAttempts.remove(answerAttempts.keys.first())
+                        }
+                        syncOrderedIds(notified, notifiedSet, MAX_SEEN_ROLLCALLS)
+                        syncOrderedIds(completed, completedSet, MAX_SEEN_ROLLCALLS)
+                        persistRollcallIds(cookieSnapshot, NOTIFIED_LIST_KEY, notified)
+                        persistRollcallIds(cookieSnapshot, COMPLETED_LIST_KEY, completed)
+                        persistAnswerAttempts(cookieSnapshot, answerAttempts)
                     }
                     if (!isMonitorRunActive(token, settings)) return
                     if (!monitorWorkerCoordinator.runIfCurrent(token, settings.monitorDesired) {
@@ -336,19 +342,23 @@ class RollcallMonitorService : Service() {
         private const val SEEN_COOKIE_KEY = "cookie"
         private const val SEEN_SET_KEY = "seen_ids"
         private const val SEEN_LIST_KEY = "seen_ids_ordered"
+        private const val NOTIFIED_LIST_KEY = "notified_ids_ordered"
+        private const val COMPLETED_LIST_KEY = "completed_ids_ordered"
+        private const val ANSWER_ATTEMPTS_KEY = "answer_attempts"
         private const val TAG = "RollcallMonitorService"
         private const val CHANNEL_ID = "xmu_assistant_monitor"
         private const val FOREGROUND_NOTIFICATION_ID = 1001
         private const val MONITOR_PROBLEM_NOTIFICATION_ID = 1002
         private const val ERROR_NOTIFY_THRESHOLD = 3
         private const val MAX_SEEN_ROLLCALLS = 300
+        private const val MAX_ANSWER_ATTEMPTS_TRACKED = 512
         /** 自适应轮询：存在进行中的签到时的密集轮询间隔上限（秒），与桌面端对齐。 */
         private const val ACTIVE_POLL_INTERVAL_SECONDS = 5
     }
 
     /** 恢复已处理过的签到 id 列表（进程被杀后去重不丢失，按处理先后保序）。
      *  绑定账号：cookie 变化（换账号/重登）即返回空，避免把新账号的签到误判为已处理。 */
-    private fun restoreSeenRollcalls(cookieHeader: String): List<String> {
+    private fun restoreLegacySeenRollcalls(cookieHeader: String): List<String> {
         if (cookieHeader.isBlank()) return emptyList()
         val prefs = getSharedPreferences(SEEN_PREFS, MODE_PRIVATE)
         // 只比对 SHA-256 指纹（P1-4）：prefs 里不再保存原始会话凭据；
@@ -362,15 +372,45 @@ class RollcallMonitorService : Service() {
         return prefs.getStringSet(SEEN_SET_KEY, emptySet())?.toList().orEmpty()
     }
 
+    private fun restoreRollcallIds(cookieHeader: String, key: String, legacy: List<String>): List<String> {
+        if (cookieHeader.isBlank()) return emptyList()
+        val prefs = getSharedPreferences(SEEN_PREFS, MODE_PRIVATE)
+        if (prefs.getString(SEEN_COOKIE_KEY, "") != cookieFingerprint(cookieHeader)) return emptyList()
+        return prefs.getString(key, null)?.split('\n')?.filter { it.isNotBlank() } ?: legacy
+    }
+
     /** 持久化 seen 列表（只存签到 id 与 cookie 的 SHA-256 指纹，均非敏感；保序存储保证驱逐最旧）。
      *  绑定账号指纹防止跨账号误用——完整 Cookie 属加密存储范畴，绝不落入普通 prefs（体检报告 P1-4）。 */
-    private fun persistSeenRollcalls(cookieHeader: String, seen: Collection<String>) {
+    private fun persistRollcallIds(cookieHeader: String, key: String, ids: Collection<String>) {
         if (cookieHeader.isBlank()) return
         getSharedPreferences(SEEN_PREFS, MODE_PRIVATE)
             .edit()
             .putString(SEEN_COOKIE_KEY, cookieFingerprint(cookieHeader))
-            .putString(SEEN_LIST_KEY, seen.joinToString("\n"))
+            .putString(key, ids.joinToString("\n"))
             .remove(SEEN_SET_KEY)
+            .apply()
+    }
+
+    private fun restoreAnswerAttempts(cookieHeader: String): List<Pair<String, Int>> {
+        if (cookieHeader.isBlank()) return emptyList()
+        val prefs = getSharedPreferences(SEEN_PREFS, MODE_PRIVATE)
+        if (prefs.getString(SEEN_COOKIE_KEY, "") != cookieFingerprint(cookieHeader)) return emptyList()
+        return prefs.getString(ANSWER_ATTEMPTS_KEY, "").orEmpty().lineSequence().mapNotNull { line ->
+            val id = line.substringBefore('\t').takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val count = line.substringAfter('\t', "").toIntOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+            id to count
+        }.take(MAX_ANSWER_ATTEMPTS_TRACKED).toList()
+    }
+
+    private fun persistAnswerAttempts(cookieHeader: String, attempts: Map<String, Int>) {
+        if (cookieHeader.isBlank()) return
+        val text = attempts.entries
+            .filter { (id, count) -> id.isNotBlank() && '\n' !in id && '\t' !in id && count > 0 }
+            .take(MAX_ANSWER_ATTEMPTS_TRACKED)
+            .joinToString("\n") { (id, count) -> "$id\t$count" }
+        getSharedPreferences(SEEN_PREFS, MODE_PRIVATE).edit()
+            .putString(SEEN_COOKIE_KEY, cookieFingerprint(cookieHeader))
+            .putString(ANSWER_ATTEMPTS_KEY, text)
             .apply()
     }
 }
@@ -401,4 +441,10 @@ internal fun evictSeenOverflow(seen: ArrayDeque<String>, seenSet: MutableSet<Str
     while (seen.size > maxSeen) {
         seenSet.remove(seen.removeFirst())
     }
+}
+
+internal fun syncOrderedIds(order: ArrayDeque<String>, ids: MutableSet<String>, maxSize: Int) {
+    val orderedSet = order.toSet()
+    ids.filterNot { it in orderedSet }.forEach(order::addLast)
+    evictSeenOverflow(order, ids, maxSize)
 }

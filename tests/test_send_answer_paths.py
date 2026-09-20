@@ -74,6 +74,12 @@ class SendCodePathTests(unittest.TestCase):
         self.assertFalse(send_code(session, "r1"))
         self.assertEqual(session.puts, [])
 
+    def test_prechecked_code_reuses_progress_detail_without_second_get(self):
+        session = ScriptedSession(put_responses=[ScriptedResponse(200)])
+        self.assertTrue(send_code(session, "r1", "2468"))
+        self.assertEqual(session.gets, [])
+        self.assertEqual(session.puts[0][1]["numberCode"], "2468")
+
     def test_code_fetch_non_200_returns_false(self):
         session = ScriptedSession(
             get_responses=[ScriptedResponse(503)],

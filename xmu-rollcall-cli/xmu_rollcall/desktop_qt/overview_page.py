@@ -29,6 +29,7 @@ from .icons import app_asset_path
 
 class OverviewPageMixin:
     REQUIRED_HOST_ATTRS: tuple[str, ...] = (
+        "_cancel_all_pending_answers",
         "_make_table",
         "_refresh_event_tables",
         "_refresh_tray_menu",
@@ -232,14 +233,14 @@ class OverviewPageMixin:
         self.events_table = self._make_table(
             (
                 "\u65f6\u95f4",
-                "\u5269\u4f59",
                 "\u8bfe\u7a0b",
                 "\u53d1\u8d77\u4eba",
                 "\u7c7b\u578b",
                 "\u72b6\u6001",
+                "\u5df2\u7b7e\u4eba\u6570 / \u6bd4\u4f8b",
                 "\u7b7e\u5230\u7801",
             ),
-            (92, 80, 280, 150, 100, 90, 120),
+            (92, 280, 140, 100, 90, 150, 110),
         )
         self.events_table.setObjectName("TimelineTable")
         self.events_table.setMinimumHeight(180)
@@ -258,6 +259,10 @@ class OverviewPageMixin:
         return page
 
     def _refresh_auto_answer_status(self, *_args):
+        self._auto_answer_epoch = getattr(self, "_auto_answer_epoch", 0) + 1
+        self._auto_answer_enabled = self.auto_answer_check.isChecked()
+        if not self._auto_answer_enabled:
+            self._cancel_all_pending_answers()
         if hasattr(self, "metric_auto_answer"):
             self.metric_auto_answer.setText("\u5df2\u5f00\u542f" if self.auto_answer_check.isChecked() else "\u672a\u5f00\u542f")
         if hasattr(self, "auto_answer_rule_label"):

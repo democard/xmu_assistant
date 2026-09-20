@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..utils import clone_session
+from ..rollcall_progress import summarize_rollcall_progress
+from ..verify import find_number_code
 from .core import (
     COURSE_STATUS_DISPLAY,
     COURSE_STATUS_PRIORITY,
@@ -110,8 +112,8 @@ class CoursesPageMixin:
         layout.addWidget(toolbar)
 
         self.course_table = self._make_table(
-            ("日期", "课程", "签到时间", "类型", "状态", "签到 ID"),
-            (130, 340, 160, 100, 90, 120),
+            ("日期", "课程", "签到时间", "类型", "状态", "已签人数 / 比例", "签到码", "签到 ID"),
+            (120, 260, 150, 90, 80, 150, 100, 110),
         )
         layout.addWidget(self.course_table, 1)
         # 信号槽集中连接（B5）：仅位置收拢至 build 尾，连接序与语义不变
@@ -199,6 +201,8 @@ class CoursesPageMixin:
         try:
             detail = fetch_student_rollcall_detail(worker_session, record.rollcall_id)
             verdict = verify_own_status(detail, username, record.signed_status)
+            progress = summarize_rollcall_progress(detail, my_user_no=username)
+            number_code = find_number_code(detail) or "" if detail else ""
         except Exception as exc:
             # 会话过期等失败走独立错误事件：GUI 侧解锁按钮并给重试横幅
             self._emit(("course_records_verify_error", str(exc), worker_account_id))
@@ -207,6 +211,10 @@ class CoursesPageMixin:
             record,
             signed_status=verdict or record.signed_status,
             verified=verdict is not None,
+            attendance_present=progress.present if progress.reliable else None,
+            attendance_total=progress.observed if progress.reliable else None,
+            attendance_percent=progress.rate_percent,
+            number_code=number_code,
         )
         self._emit(("course_records_verified", [updated], worker_account_id, "manual"))
 
@@ -285,17 +293,25 @@ class CoursesPageMixin:
     def _insert_course_record_row(self, row: int, group_label: str, record: CourseRollcallRecord) -> None:
         self.course_table.insertRow(row)
         status_text = self._course_status_text(record.signed_status)
+        attendance = (
+            f"{record.attendance_present}/{record.attendance_total} "
+            f"({(record.attendance_percent or 0.0):.1f}%)"
+            if record.attendance_present is not None and record.attendance_total is not None
+            else "未获取"
+        )
         values = (
             group_label,
             record.course_title,
             record.rollcall_time,
             record.rollcall_type,
             status_text,
+            attendance,
+            record.number_code or "-",
             record.rollcall_id,
         )
         for column, value in enumerate(values):
             item = QTableWidgetItem(str(value))
-            if column in (0, 2, 3, 4, 5):
+            if column in (0, 2, 3, 4, 5, 6, 7):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if column == 4:
                 self._style_status_item(item, status_text)
@@ -445,13 +461,13 @@ class CoursesPageMixin:
         dialog.exec()
 
     def _selected_course_rollcall_id(self) -> str:
-        """当前选中行的第 6 列（签到 ID）；组行/空态行/未选中返回空串。"""
+        """当前选中行的签到 ID；组行/空态行/未选中返回空串。"""
         if not hasattr(self, "course_table"):
             return ""
         items = self.course_table.selectedItems()
         if not items:
             return ""
-        id_item = self.course_table.item(items[0].row(), 5)
+        id_item = self.course_table.item(items[0].row(), 7)
         if id_item is None:
             return ""
         text = id_item.text().strip()
@@ -485,7 +501,7 @@ class CoursesPageMixin:
             updated = by_id.get(record.rollcall_id)
             if updated is None:
                 continue
-            if (record.signed_status, record.verified) != (updated.signed_status, updated.verified):
+            if record != updated:
                 changed += 1
             self.course_records[index] = updated
 
@@ -502,7 +518,7 @@ class CoursesPageMixin:
 
         # 定向原位更新：只改状态格，不触碰其余单元格
         for row in range(self.course_table.rowCount()):
-            id_item = self.course_table.item(row, 5)
+            id_item = self.course_table.item(row, 7)
             if id_item is None:
                 continue
             updated = by_id.get(id_item.text().strip())
@@ -515,13 +531,24 @@ class CoursesPageMixin:
             status_item.setText(status_text)
             self._style_status_item(status_item, status_text)
             status_item.setToolTip(self._course_status_tooltip(updated))
+            attendance_item = self.course_table.item(row, 5)
+            if attendance_item is not None:
+                attendance_item.setText(
+                    f"{updated.attendance_present}/{updated.attendance_total} "
+                    f"({(updated.attendance_percent or 0.0):.1f}%)"
+                    if updated.attendance_present is not None and updated.attendance_total is not None
+                    else "未获取"
+                )
+            code_item = self.course_table.item(row, 6)
+            if code_item is not None:
+                code_item.setText(updated.number_code or "-")
         return changed
 
     def _course_row_of_rollcall_id(self, rollcall_id: str) -> int:
         if not rollcall_id:
             return -1
         for row in range(self.course_table.rowCount()):
-            id_item = self.course_table.item(row, 5)
+            id_item = self.course_table.item(row, 7)
             if id_item is not None and id_item.text().strip() == rollcall_id:
                 return row
         return -1

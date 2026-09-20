@@ -78,9 +78,11 @@ class MonitorWorkerLoopTest(unittest.TestCase):
         stop = _GateStopEvent(loops)
         with mock.patch(
             "xmu_rollcall.desktop_qt.core.RollcallEngine", return_value=engine
+        ), mock.patch(
+            "xmu_rollcall.desktop_qt.core.fetch_student_rollcall_detail", return_value=None
         ):
             worker = MonitorWorker(requests.Session(), events.append, stop, interval)
-        worker.run()
+            worker.run()
         return worker, events, stop
 
     def test_status_events_and_single_poll_cycle(self):

@@ -16,6 +16,7 @@ package com.xmu.assistant
  *        schedule_cache_json / theme_mode / poll_interval_seconds /
  *        monitor_desired / monitor_last_check_millis / monitor_last_error /
  *        monitor_consecutive_failures / auto_answer_number / auto_answer_radar /
+ *        wait_before_answer_mode / wait_before_answer_count / wait_before_answer_percent /
  *        auto_login_policy / exam_reminder_enabled / exam_reminder_advance_minutes /
  *        exam_reminder_full_screen / notify_system / notify_pushplus /
  *        pushplus_token / notify_qq_mail / qq_sender / qq_password /
@@ -33,8 +34,9 @@ package com.xmu.assistant
  *    与加密侧 widget_worker_logged_in 同步双写，供周期 worker 复核是否允许
  *    教务 CAS 续登——登出后凭据残留，不复核会幽灵登录）。
  * 5. rollcall_seen         【明文】RollcallMonitorService：已通知签到去重持久化。
- *    键：cookie（归属账号标识，换号失效判据）/ seen_ids（去重集合）/
- *    seen_ids_ordered（有界 FIFO，上限 MAX_SEEN_ROLLCALLS=300）。
+ *    键：cookie（归属账号标识，换号失效判据）/ notified_ids_ordered /
+ *    completed_ids_ordered（两类有界 FIFO）/ answer_attempts（回执不明写请求计数）；
+ *    seen_ids / seen_ids_ordered 仅用于旧版迁移。
  *
  * ── 登出清理链对照（clearLoggedOutUi，MainActivity；2026-08-29 与实现逐行核对）─
  * 登出时实际清理：会话键（cookie_header/score_cookie_header/score_records_json/

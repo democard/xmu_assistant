@@ -102,9 +102,15 @@ internal class RollcallHistoryClient internal constructor(
     fun resolveOwnStatuses(items: List<RollcallHistoryItem>, username: String): List<RollcallHistoryItem> {
         if (items.isEmpty()) return items
         val verdicts = boundedParallelMap(items, MAX_PARALLEL_DETAILS) { item ->
-            resolveOwnStatus(item.rollcallId, username)
+            resolveDetail(item, username)
         }
-        return items.mapIndexed { index, item -> item.copy(ownStatus = verdicts[index]) }
+        return items.mapIndexed { index, item ->
+            item.copy(
+                ownStatus = verdicts[index].ownStatus,
+                progress = verdicts[index].progress,
+                numberCode = verdicts[index].numberCode,
+            )
+        }
     }
 
     /** 单课程的签到记录（两个候选端点依次探测，与桌面 ROLLCALL_ENDPOINT_TEMPLATES 对齐）。 */
@@ -148,22 +154,37 @@ internal class RollcallHistoryClient internal constructor(
     }
 
     /** 本人明确状态才是签到结果；更新时间及提交时间均不能证明到勤。 */
-    private fun resolveOwnStatus(rollcallId: String, username: String): String {
+    private fun resolveDetail(item: RollcallHistoryItem, username: String): DetailVerdict {
         val detail = try {
             getJson(
-                "$baseUrl/api/rollcall/$rollcallId/student_rollcalls",
+                "$baseUrl/api/rollcall/${item.rollcallId}/student_rollcalls",
                 forbiddenMeansSessionExpired = false,
             )
         } catch (error: MainSessionExpiredException) {
             throw error
         } catch (_: Throwable) {
-            return STATUS_UNKNOWN
+            return DetailVerdict(STATUS_UNKNOWN, null, "")
         }
-        val own = findOwnStudentRollcall(detail, username) ?: return STATUS_UNKNOWN
-        val word = arrayOf("status", "rollcall_status", "state")
-            .firstNotNullOfOrNull { key -> own.optRealString(key).takeIf { it.isNotBlank() } }
-            ?: return STATUS_UNKNOWN
-        return historyRollcallStatus(word)
+        val obj = detail as? JSONObject
+        val parsed = obj?.let { parseStudentRollcallDetails(it, username) }
+        val ownStatus = parsed?.ownStatus ?: run {
+            val own = findOwnStudentRollcall(detail, username)
+            val word = own?.let { student ->
+                arrayOf("status", "rollcall_status", "state")
+                    .firstNotNullOfOrNull { key -> student.optRealString(key).takeIf { it.isNotBlank() } }
+            }
+            word?.let(::historyRollcallStatus) ?: STATUS_UNKNOWN
+        }
+        val progress = when (detail) {
+            is JSONObject -> parsed?.progress
+            is JSONArray -> parseStudentRollcallProgress(detail).takeIf { it.observed > 0 }
+            else -> null
+        }
+        return DetailVerdict(
+            ownStatus = ownStatus,
+            progress = progress,
+            numberCode = if (item.type == "数字签到") parsed?.numberCode.orEmpty() else "",
+        )
     }
 
     private fun findOwnStudentRollcall(payload: Any, username: String): JSONObject? {
@@ -234,6 +255,12 @@ internal class RollcallHistoryClient internal constructor(
         val sortKeyMillis: Long?,
     )
 
+    private data class DetailVerdict(
+        val ownStatus: String,
+        val progress: StudentRollcallProgress?,
+        val numberCode: String,
+    )
+
     private companion object {
         const val MAX_PARALLEL_COURSES = 4
         const val MAX_PARALLEL_DETAILS = 4
@@ -297,6 +324,8 @@ data class RollcallHistoryItem(
     val timeDisplay: String,
     val sortKeyMillis: Long?,
     val ownStatus: String,
+    val progress: StudentRollcallProgress? = null,
+    val numberCode: String = "",
 )
 
 internal const val STATUS_SIGNED = "已签"
@@ -333,7 +362,7 @@ internal const val ROLLCALL_HISTORY_FRESHNESS_MILLIS = 300_000L
 // ---------------------------------------------------------------------------
 
 /** 版本 2 废弃按更新时间误判的旧状态缓存；结构或判定语义变更时递增。 */
-internal const val ROLLCALL_HISTORY_CACHE_VERSION = 2
+internal const val ROLLCALL_HISTORY_CACHE_VERSION = 3
 private const val ROLLCALL_HISTORY_CACHE_FILE = "rollcall_history_cache.json"
 private const val TAG = "RollcallHistoryClient"
 
@@ -368,6 +397,8 @@ fun loadRollcallHistoryCache(file: File, accountId: String): RollcallHistorySnap
                 obj.optLong("sortKeyMillis")
             },
             ownStatus = obj.optString("ownStatus"),
+            progress = obj.optJSONObject("progress")?.let(::progressFromCache),
+            numberCode = obj.optRealString("numberCode"),
         )
     }
     RollcallHistorySnapshot(
@@ -395,6 +426,20 @@ fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
                     .put("timeDisplay", item.timeDisplay)
                     .put("ownStatus", item.ownStatus)
                 if (item.sortKeyMillis != null) obj.put("sortKeyMillis", item.sortKeyMillis)
+                item.progress?.let { progress ->
+                    obj.put(
+                        "progress",
+                        JSONObject()
+                            .put("observed", progress.observed)
+                            .put("present", progress.present)
+                            .put("absent", progress.absent)
+                            .put("unknown", progress.unknown)
+                            .put("reliablePercentage", progress.reliablePercentage),
+                    )
+                }
+                if (item.type == "数字签到" && item.numberCode.isNotBlank()) {
+                    obj.put("numberCode", item.numberCode)
+                }
                 obj
             }))
         synchronized(rollcallHistoryCacheWriteLock) {
@@ -419,6 +464,27 @@ fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
         // 写失败原先全链路静默（与 ScheduleCache 同款欠账）：只补日志不改控制流。
         Log.w(TAG, "签到历史缓存写入失败：${it.message}", it)
     }
+}
+
+private fun progressFromCache(obj: JSONObject): StudentRollcallProgress? {
+    val observed = obj.strictInt("observed") ?: return null
+    val present = obj.strictInt("present") ?: return null
+    val absent = obj.strictInt("absent") ?: return null
+    val unknown = obj.strictInt("unknown") ?: return null
+    if (minOf(observed, present, absent, unknown) < 0) return null
+    if (present.toLong() + absent.toLong() + unknown.toLong() != observed.toLong() || observed == 0) return null
+    val reliable = (obj.opt("reliablePercentage") as? Boolean == true) && unknown == 0
+    return StudentRollcallProgress(
+        observed, present, absent, unknown,
+        if (reliable) present * 100.0 / observed else null,
+        reliable,
+    )
+}
+
+private fun JSONObject.strictInt(name: String): Int? = when (val value = opt(name)) {
+    is Int -> value
+    is Long -> value.takeIf { it >= Int.MIN_VALUE.toLong() && it <= Int.MAX_VALUE.toLong() }?.toInt()
+    else -> null
 }
 
 /** 删除历史缓存（登出/换号清理调用，与课表缓存同姿势，共用同一把锁防 torn-write）。 */

@@ -35,6 +35,9 @@ class RollcallEvent:
     number_code: str = ""
     deadline: str = ""
     remaining_seconds: int | None = None
+    attendance_present: int | None = None
+    attendance_total: int | None = None
+    attendance_percent: float | None = None
 
     @property
     def remaining_text(self) -> str:
@@ -91,6 +94,19 @@ def remaining_seconds_from_deadline(deadline: str) -> int | None:
         except ValueError:
             continue
     return None
+
+
+def rollcall_is_expired(event: RollcallEvent) -> bool:
+    """只依据平台明确结束信号或有效截止时间判定结束，不猜活动时长。"""
+    raw_flag = event.raw.get("is_expired") if isinstance(event.raw, dict) else None
+    if raw_flag is True or raw_flag == 1:
+        return True
+    if isinstance(raw_flag, str) and raw_flag.strip().lower() in {"true", "1", "yes"}:
+        return True
+    status = str(event.status or "").strip().lower()
+    if status in {"expired", "ended", "closed", "finished", "stopped"}:
+        return True
+    return event.remaining_seconds is not None and event.remaining_seconds <= 0
 
 
 def first_value(data: dict, keys: tuple[str, ...], default=""):

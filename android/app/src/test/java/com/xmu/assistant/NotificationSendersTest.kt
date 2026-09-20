@@ -43,7 +43,7 @@ class NotificationSendersTest {
     }
 
     @Test
-    fun `rollcall notification body renders all five lines with deadline fallback`() {
+    fun `notification labels a valid deadline correctly and omits unavailable time`() {
         val event = RollcallEvent(
             id = "1", courseTitle = "数据结构", teacher = "张三",
             type = "数字签到", status = "进行中", deadline = "2026-06-14 08:00", result = "待处理",
@@ -53,14 +53,17 @@ class NotificationSendersTest {
             listOf(
                 "课程：数据结构",
                 "类型：数字签到",
-                "剩余：2026-06-14 08:00",
+                "截止：2026-06-14 08:00",
                 "状态：待处理",
                 "打开：xmurollcall://rollcall/1",
             ).joinToString("\n"),
             body,
         )
-        val noDeadline = event.copy(deadline = "")
-        assertEquals("剩余：未知", rollcallNotificationBody(noDeadline, "u").lines()[2])
+        for (deadline in listOf("", "null", "invalid")) {
+            val noDeadlineBody = rollcallNotificationBody(event.copy(deadline = deadline), "u")
+            assertEquals(4, noDeadlineBody.lines().size)
+            assertTrue(noDeadlineBody.lines().none { it.startsWith("截止：") || it.startsWith("剩余：") })
+        }
     }
 
     @Test

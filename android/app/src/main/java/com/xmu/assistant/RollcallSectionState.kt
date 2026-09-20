@@ -45,6 +45,7 @@ internal class RollcallSectionState(
     private val createHistoryClient: (String) -> RollcallHistoryClient = { cookieHeader ->
         RollcallHistoryClient(cookieHeader, OkHttpQueryTransport(), { size -> Executors.newFixedThreadPool(size) })
     },
+    private val createEngine: (String) -> RollcallEngine = { cookieHeader -> RollcallEngine(cookieHeader) },
 ) {
     /** 最近一次拉到的签到事件列表。 */
     var events by mutableStateOf(eventsInitial)
@@ -85,11 +86,12 @@ internal class RollcallSectionState(
         refreshError = ""
         loading = true
         val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
+        val accountId = username()
         scope.runModuleRequest(
             requestGate = requestGate,
             gateKey = "rollcall",
             acceptsResult = { sessionEpoch.accepts(session, cookieHeader(), loggedIn()) },
-            ioWork = { RollcallEngine(session.cookieHeader).pollOnce() },
+            ioWork = { createEngine(session.cookieHeader).pollWithDetails(accountId) },
             onResult = { result ->
                 result.onSuccess { list ->
                     refreshError = ""

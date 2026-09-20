@@ -258,4 +258,122 @@ class MonitorRunGateTest {
 
         assertEquals(1, processed)
     }
+
+    @Test
+    fun `threshold wait notifies once then submits once after progress reaches target`() {
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var notifications = 0
+        var answers = 0
+        val settings = RollcallSettings(
+            autoAnswerRadar = true,
+            waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_COUNT,
+            waitBeforeAnswerCount = 5,
+        )
+        fun event(present: Int) = RollcallEvent(
+            "r1", "课程", "老师", "雷达签到", "未签",
+            progress = progress(present, 10),
+        )
+        repeat(2) {
+            processRollcallMonitorPoll(
+                listOf(event(4)), settings, notified, completed, attempts, { action -> action(); true },
+                { notifications++ }, { answers++; true }, {},
+            )
+        }
+        processRollcallMonitorPoll(
+            listOf(event(5)), settings, notified, completed, attempts, { action -> action(); true },
+            { notifications++ }, { answers++; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(event(8)), settings, notified, completed, attempts, { action -> action(); true },
+            { notifications++ }, { answers++; true }, {},
+        )
+        assertEquals(1, notifications)
+        assertEquals(1, answers)
+        assertEquals(setOf("r1"), completed)
+    }
+
+    @Test
+    fun `number event waits for code then preserves leading zero and submits once`() {
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        val submittedCodes = mutableListOf<String>()
+        val settings = RollcallSettings(
+            autoAnswerNumber = true,
+            waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_PERCENT,
+            waitBeforeAnswerPercent = 50,
+        )
+        val base = RollcallEvent("n1", "课程", "老师", "数字签到", "未签", progress = progress(5, 10))
+        processRollcallMonitorPoll(
+            listOf(base), settings, notified, completed, attempts, { action -> action(); true }, {},
+            { submittedCodes += it.numberCode; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(base.copy(numberCode = "0042")), settings, notified, completed, attempts,
+            { action -> action(); true }, {}, { submittedCodes += it.numberCode; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(base.copy(numberCode = "0042")), settings, notified, completed, attempts,
+            { action -> action(); true }, {}, { submittedCodes += it.numberCode; true }, {},
+        )
+        assertEquals(listOf("0042"), submittedCodes)
+    }
+
+    @Test
+    fun `expired signed stopped and account invalidated events never submit`() {
+        val settings = RollcallSettings(autoAnswerRadar = true)
+        val candidates = listOf(
+            RollcallEvent("expired", "课", "师", "雷达签到", "未签", isExpired = true),
+            RollcallEvent("signed", "课", "师", "雷达签到", "未签", ownStatus = STATUS_SIGNED),
+        )
+        var answers = 0
+        processRollcallMonitorPoll(
+            candidates, settings, mutableSetOf(), mutableSetOf(), mutableMapOf(),
+            { action -> action(); true }, {}, { answers++; true }, {},
+        )
+        processRollcallMonitorPoll(
+            listOf(RollcallEvent("stopped", "课", "师", "雷达签到", "未签")),
+            settings, mutableSetOf(), mutableSetOf(), mutableMapOf(),
+            { false }, {}, { answers++; true }, {},
+        )
+        assertEquals(0, answers)
+    }
+
+    @Test
+    fun `network write failures stop retrying after bounded attempts`() {
+        val completed = mutableSetOf<String>()
+        val event = RollcallEvent("r1", "课", "师", "雷达签到", "未签")
+        var writes = 0
+        val attempts = mutableMapOf<String, Int>()
+        repeat(4) { index ->
+            runCatching {
+                processRollcallMonitorPoll(
+                    listOf(event.copy(ownStatus = if (index == 0) null else "未签")),
+                    RollcallSettings(autoAnswerRadar = true), mutableSetOf(), completed,
+                    attempts, { action -> action(); true }, {}, { writes++; error("timeout") }, {}, maxAnswerAttempts = 3,
+                )
+            }
+        }
+        assertEquals(3, writes)
+        assertEquals(setOf("r1"), completed)
+    }
+
+    @Test
+    fun `changed settings after read prevent submission with stale threshold`() {
+        var writes = 0
+        processRollcallMonitorPoll(
+            listOf(RollcallEvent("r", "课", "师", "雷达签到", "未签")),
+            RollcallSettings(autoAnswerRadar = true),
+            mutableSetOf(), mutableSetOf(), mutableMapOf(),
+            { action -> action(); true }, {}, { writes++; true }, {},
+            settingsStillCurrent = { false },
+        )
+        assertEquals(0, writes)
+    }
+
+    private fun progress(present: Int, total: Int) = StudentRollcallProgress(
+        total, present, total - present, 0, present * 100.0 / total, true,
+    )
 }

@@ -138,6 +138,7 @@ class EventRegistryFreezeTests(unittest.TestCase):
         "monitor_status": 2,
         "poll": 4,
         "rollcall": 2,
+        "rollcall_progress": 6,
         "error": 2,
         "login_success": 4,
         "login_failed": 2,

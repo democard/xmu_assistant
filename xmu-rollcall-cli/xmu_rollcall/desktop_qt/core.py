@@ -24,6 +24,7 @@ from ..rollcall_models import (
     first_value,
     format_duration,
 )
+from ..rollcall_progress import summarize_rollcall_progress
 from ..utils import (
     API_TIMEOUT,
     RetryCancelled,
@@ -75,6 +76,10 @@ class CourseRollcallRecord:
     # True 表示 signed_status 已按本人签到明细核实（而非聚合状态推断）。
     # 带默认值：旧 UI 快照缺该键仍可反序列化，无需 bump 快照版本。
     verified: bool = False
+    attendance_present: int | None = None
+    attendance_total: int | None = None
+    attendance_percent: float | None = None
+    number_code: str = ""
 
 
 class MonitorWorker(threading.Thread):
@@ -85,7 +90,7 @@ class MonitorWorker(threading.Thread):
     # 既能正确去重（新轮次的老事件不会重复 emit），又把内存占用钉在常量级。
     MAX_SEEN_ROLLCALL_IDS = 512
 
-    def __init__(self, session, emit, stop_event: threading.Event, interval: int):
+    def __init__(self, session, emit, stop_event: threading.Event, interval: int, username: str = ""):
         super().__init__(daemon=True)
         # 独立 cookiejar：避免与课件池/应答 worker 并发请求时竞争写入主 session 的
         # cookiejar（requests 不保证 Session 线程安全）。轮询是只读 GET，无 cookie 回写需求。
@@ -99,6 +104,7 @@ class MonitorWorker(threading.Thread):
             MAX_POLL_INTERVAL_SECONDS,
             max(MIN_POLL_INTERVAL_SECONDS, int(interval or DEFAULT_POLL_INTERVAL_SECONDS)),
         )
+        self.username = str(username or "")
         self.query_count = 0
         # OrderedDict 作为有界去重集合：键即 rollcall_id，值为占位 True。
         # 超过 MAX_SEEN_ROLLCALL_IDS 时 popitem(last=False) 淘汰最早插入者。
@@ -145,17 +151,33 @@ class MonitorWorker(threading.Thread):
                     event.remaining_seconds is not None and event.remaining_seconds > 0
                     for event in events
                 )
-                if payload != self.last_payload:
-                    self.last_payload = payload
-                    for event in events:
-                        if not event.rollcall_id or event.rollcall_id in self.seen_rollcall_ids:
-                            continue
-                        # 有界去重：插入新 ID 后若超上限，淘汰最早插入者，保证长期
-                        # 常驻运行内存占用恒定（托盘监控可能连续运行数天）。
+                self.last_payload = payload
+                for event in events:
+                    if not event.rollcall_id:
+                        continue
+                    if event.rollcall_id not in self.seen_rollcall_ids:
+                        # 一次事件只发一次检测提醒；人数进度另走可重复事件，不能被
+                        # seen 永久吞掉，否则低于门槛后永远等不到后续达到。
                         self.seen_rollcall_ids[event.rollcall_id] = True
                         if len(self.seen_rollcall_ids) > self.MAX_SEEN_ROLLCALL_IDS:
                             self.seen_rollcall_ids.popitem(last=False)
                         self.emit(("rollcall", event, self.stop_event))
+
+                    # 同一轮明细 GET 同时供人数/比例、本人状态和数字签到码使用，
+                    # 避免发现数字签到时再由独立 worker 重复读取一次。
+                    detail = fetch_student_rollcall_detail(self.session, event.rollcall_id)
+                    progress = summarize_rollcall_progress(detail, my_user_no=self.username)
+                    code = find_number_code(detail) or "" if detail else ""
+                    if self.stop_event.is_set():
+                        break
+                    self.emit((
+                        "rollcall_progress",
+                        event.rollcall_id,
+                        progress,
+                        code,
+                        self.stop_event,
+                        event,
+                    ))
             except RetryCancelled:
                 break
             except SessionExpiredError as exc:
@@ -632,10 +654,24 @@ def verify_recent_rollcall_records(
             # 任务内置位再上抛：同池排队的后续任务立刻可见，不再空跑登录域
             stop.set()
             raise
-        verdict = verify_own_status(detail, username, record.signed_status)
-        if verdict is None:
+        if detail is None:
             return None
-        return replace(record, signed_status=verdict, verified=True)
+        verdict = verify_own_status(detail, username, record.signed_status)
+        progress = summarize_rollcall_progress(detail, my_user_no=username)
+        number_code = find_number_code(detail) or ""
+        if verdict is None and not progress.reliable and not number_code:
+            return None
+        # 即使本人状态无法核实，人数/比例与数字码仍是该次签到的独立有效信息，
+        # 不应随 verdict=None 一起丢弃。verified 只表示本人状态已经核实。
+        return replace(
+            record,
+            signed_status=verdict if verdict is not None else record.signed_status,
+            verified=verdict is not None,
+            attendance_present=progress.present if progress.reliable else None,
+            attendance_total=progress.observed if progress.reliable else None,
+            attendance_percent=progress.rate_percent,
+            number_code=number_code,
+        )
 
     verified_records: list[CourseRollcallRecord] = []
     max_workers = min(COURSE_ROLLCALL_WORKERS, len(candidates))
@@ -738,7 +774,10 @@ def course_rollcall_csv(records: list[CourseRollcallRecord]) -> str:
 
     buffer = _io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(["日期", "课程", "签到时间", "类型", "状态", "平台状态", "已核实", "签到ID", "备注"])
+    writer.writerow([
+        "日期", "课程", "签到时间", "类型", "状态", "已签人数", "总人数",
+        "已签比例", "签到码", "平台状态", "已核实", "签到ID", "备注",
+    ])
     for record in records:
         record_time = parse_rollcall_time(record.rollcall_time)
         writer.writerow(
@@ -748,6 +787,10 @@ def course_rollcall_csv(records: list[CourseRollcallRecord]) -> str:
                 record.rollcall_time,
                 record.rollcall_type,
                 course_display_status(record.signed_status),
+                "" if record.attendance_present is None else record.attendance_present,
+                "" if record.attendance_total is None else record.attendance_total,
+                "" if record.attendance_percent is None else f"{record.attendance_percent:.1f}%",
+                record.number_code,
                 record.platform_status,
                 "是" if record.verified else "否",
                 record.rollcall_id,

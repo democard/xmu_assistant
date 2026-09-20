@@ -176,6 +176,24 @@ class RollcallHistoryClientTest {
     }
 
     @Test
+    fun `history single detail request yields status progress and number code`() {
+        val transport = FakeHistoryTransport(
+            courses = listOf(course("c1", "课程一", "2026-1")),
+            rollcallsByCourse = mapOf("c1" to listOf("""{"id":"r1","rollcall_time":"2026-07-01T08:00:00","is_number":true}""")),
+            detailsByRollcallId = mapOf(
+                "r1" to """{"number_code":"0042","student_rollcalls":[
+                    {"user_no":"u1","status":"on_call"},{"user_no":"u2","status":"absent"}
+                ]}""",
+            ),
+        )
+        val item = client(transport).fetchRecentRollcalls("u1", fakeCourses()).single()
+        assertEquals(STATUS_SIGNED, item.ownStatus)
+        assertEquals(50.0, item.progress?.percentage ?: -1.0, 0.0)
+        assertEquals("0042", item.numberCode)
+        assertEquals(1, transport.requests.count { "/api/rollcall/r1/student_rollcalls" in it.url })
+    }
+
+    @Test
     fun `detail query propagates a typed main session expiration`() {
         val transport = FakeHistoryTransport(
             courses = listOf(course("c1", "课程一", "2026-1")),
@@ -240,7 +258,10 @@ class RollcallHistoryClientTest {
             accountId = "u1",
             fetchedAtMillis = 1_720_000_000_000L,
             items = listOf(
-                RollcallHistoryItem("r1", "c1", "课程一", "雷达签到", "07-01 08:00", 1_720_000_000L * 1000, STATUS_SIGNED),
+                RollcallHistoryItem(
+                    "r1", "c1", "课程一", "数字签到", "07-01 08:00", 1_720_000_000L * 1000,
+                    STATUS_SIGNED, StudentRollcallProgress(2, 1, 1, 0, 50.0, true), "0042",
+                ),
                 RollcallHistoryItem("r2", "c1", "课程一", "数字签到", "-", null, STATUS_UNKNOWN),
             ),
         )
@@ -262,6 +283,17 @@ class RollcallHistoryClientTest {
         assertNull(loadRollcallHistoryCache(file, accountId = "u1"))
         file.writeText("{broken json")
         assertNull(loadRollcallHistoryCache(file, accountId = "u1"))
+    }
+
+    @Test
+    fun `cache does not trust malformed progress`() {
+        val file = temporaryFolder.newFile("bad_progress.json")
+        file.writeText(
+            """{"version":$ROLLCALL_HISTORY_CACHE_VERSION,"account_id":"u1","items":[{
+                "rollcallId":"r","type":"数字签到","progress":{"observed":2,"present":99,"absent":0,"unknown":0,"reliablePercentage":true}
+            }]}""",
+        )
+        assertNull(loadRollcallHistoryCache(file, "u1")?.items?.single()?.progress)
     }
 
     @Test

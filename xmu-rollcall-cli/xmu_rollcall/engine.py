@@ -50,15 +50,15 @@ class RollcallEngine:
             if isinstance(item, dict)
         ]
 
-    def answer_number(self, rollcall_id: str) -> bool:
-        return bool(send_code(self.session, rollcall_id))
+    def answer_number(self, rollcall_id: str, number_code: str = "") -> bool:
+        return bool(send_code(self.session, rollcall_id, number_code))
 
     def answer_radar(self, rollcall_id: str) -> bool:
         return bool(send_radar(self.session, rollcall_id))
 
-    def answer(self, rollcall_type: str, rollcall_id: str) -> bool:
+    def answer(self, rollcall_type: str, rollcall_id: str, number_code: str = "") -> bool:
         if rollcall_type == "数字签到":
-            return self.answer_number(rollcall_id)
+            return self.answer_number(rollcall_id, number_code)
         if rollcall_type == "雷达签到":
             return self.answer_radar(rollcall_id)
         return False

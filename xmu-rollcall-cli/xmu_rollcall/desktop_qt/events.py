@@ -26,6 +26,7 @@ EVENT_CONTRACTS: dict[str, tuple[int, str]] = {
     "monitor_status": (2, "监控启停状态文本"),
     "poll": (4, "轮询计数/时间戳/可见签到数"),
     "rollcall": (2, "新发现的签到事件(RollcallEvent)"),
+    "rollcall_progress": (6, "签到人数进度(rollcall_id, progress, code, worker_token, current_event)"),
     "error": (2, "后台错误文案"),
     # ---- 登录/恢复/应答 worker 发射 ----
     "login_success": (4, "登录或恢复成功(session, account, login_epoch)"),

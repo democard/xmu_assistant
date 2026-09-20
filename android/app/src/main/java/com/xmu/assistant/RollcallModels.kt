@@ -25,6 +25,11 @@ data class RollcallEvent(
     val result: String = "待处理",
     /** 截止剩余秒数（≤0 已截止，null 未知）：驱动监控自适应密集轮询。 */
     val remainingSeconds: Long? = null,
+    val progress: StudentRollcallProgress? = null,
+    /** 来自同一次只读明细的本人状态；null 表示无法核实。 */
+    val ownStatus: String? = null,
+    /** 平台明确标记活动已结束；无截止时间时仍可阻止后台提交。 */
+    val isExpired: Boolean = false,
 )
 
 data class NotificationSettings(
@@ -42,7 +47,26 @@ data class RollcallSettings(
     val pollIntervalSeconds: Int = 30,
     val autoAnswerNumber: Boolean = false,
     val autoAnswerRadar: Boolean = false,
+    val waitBeforeAnswerMode: String = WAIT_BEFORE_ANSWER_NONE,
+    val waitBeforeAnswerCount: Int = 5,
+    val waitBeforeAnswerPercent: Int = 15,
 )
+
+const val WAIT_BEFORE_ANSWER_NONE = "none"
+const val WAIT_BEFORE_ANSWER_COUNT = "count"
+const val WAIT_BEFORE_ANSWER_PERCENT = "percent"
+
+internal fun RollcallSettings.thresholdReached(progress: StudentRollcallProgress?): Boolean {
+    if (waitBeforeAnswerMode == WAIT_BEFORE_ANSWER_NONE) return true
+    if (progress == null || !progress.reliablePercentage || progress.total <= 0) return false
+    return when (waitBeforeAnswerMode) {
+        WAIT_BEFORE_ANSWER_COUNT -> progress.present >= waitBeforeAnswerCount.coerceAtLeast(1)
+        WAIT_BEFORE_ANSWER_PERCENT ->
+            progress.present.toLong() * 100L >=
+                progress.total.toLong() * waitBeforeAnswerPercent.coerceIn(1, 100).toLong()
+        else -> false
+    }
+}
 
 data class CourseSummary(
     val id: String,
@@ -96,15 +120,24 @@ fun normalizedRollcallStatus(raw: String): String {
 fun remainingSecondsFromDeadline(deadline: String): Long? {
     val text = deadline.trim()
     if (text.isBlank()) return null
-    for (candidate in listOf(text, text.take(19))) {
-        val instant = runCatching {
-            java.time.OffsetDateTime.parse(candidate.replace("Z", "+00:00")).toInstant()
-        }.recoverCatching {
-            java.time.LocalDateTime.parse(candidate).atZone(java.time.ZoneId.systemDefault()).toInstant()
-        }.getOrNull() ?: continue
-        return maxOf(0L, java.time.Duration.between(java.time.Instant.now(), instant).seconds)
+    var normalized = if (text.length > 10 && text[10] == ' ') {
+        text.replaceRange(10, 11, "T")
+    } else {
+        text
     }
-    return null
+    if (Regex("[+-]\\d{4}$").containsMatchIn(normalized)) {
+        normalized = normalized.replace(Regex("([+-]\\d{2})(\\d{2})$"), "\$1:\$2")
+    }
+    val hasExplicitOffset = normalized.endsWith("Z", ignoreCase = true) ||
+        Regex("[+-]\\d{2}:\\d{2}$").containsMatchIn(normalized)
+    val instant = if (hasExplicitOffset) {
+        runCatching { java.time.OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
+    } else {
+        runCatching {
+            java.time.LocalDateTime.parse(normalized).atZone(java.time.ZoneId.systemDefault()).toInstant()
+        }.getOrNull()
+    } ?: return null
+    return maxOf(0L, java.time.Duration.between(java.time.Instant.now(), instant).seconds)
 }
 
 fun shortCoursewareError(error: String): String {

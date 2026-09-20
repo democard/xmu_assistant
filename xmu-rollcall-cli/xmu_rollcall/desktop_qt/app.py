@@ -70,6 +70,9 @@ from ..courseware import (
     reset_modules_cache,
 )
 from ..engine import RollcallEngine
+from ..rollcall_progress import RollcallProgress, summarize_rollcall_progress, wait_before_answer_satisfied
+from ..rollcall_models import rollcall_is_expired
+from ..verify import find_number_code
 from ..proxy_guard import disable_system_proxies
 from ..notifications import (
     NotificationMessage,
@@ -98,6 +101,7 @@ from .core import (
     RollcallEvent,
     current_academic_year_label,
     fetch_number_code,
+    fetch_student_rollcall_detail,
     format_duration,
     format_log_export,
 )
@@ -161,6 +165,10 @@ class DashboardWindow(
         # 会误删新 worker 刚登记的取消信号 → 新延迟应答无法取消、到点照常提交）。
         self._answer_cancellations: dict[str, threading.Event] = {}
         self._answer_cancellations_lock = threading.Lock()
+        self._auto_answer_epoch = 0
+        self._auto_answer_inflight_rollcalls: dict[str, object] = {}
+        self._auto_answer_attempted_rollcalls: set[str] = set()
+        self._auto_answer_enabled = False
         # 监控重启代数：真正启动/暂停各 +1；QTimer 排队的重启回调校验代数，
         # 排队期间若用户又点启动/暂停（代数变了）则放弃本次自动拉起，避免误重启。
         self._monitor_restart_epoch = 0
@@ -506,6 +514,52 @@ class DashboardWindow(
         self.poll_interval_spin.blockSignals(True)
         self.poll_interval_spin.setValue(value)
         self.poll_interval_spin.blockSignals(False)
+        if hasattr(self, "wait_before_answer_mode_combo"):
+            mode = settings.get("wait_before_answer_mode", "none")
+            index = self.wait_before_answer_mode_combo.findData(mode)
+            self.wait_before_answer_mode_combo.blockSignals(True)
+            self.wait_before_answer_count_spin.blockSignals(True)
+            self.wait_before_answer_percent_spin.blockSignals(True)
+            self.wait_before_answer_mode_combo.setCurrentIndex(max(0, index))
+            self.wait_before_answer_count_spin.setValue(settings["wait_before_answer_count"])
+            self.wait_before_answer_percent_spin.setValue(settings["wait_before_answer_percent"])
+            self.wait_before_answer_mode_combo.blockSignals(False)
+            self.wait_before_answer_count_spin.blockSignals(False)
+            self.wait_before_answer_percent_spin.blockSignals(False)
+            self._refresh_wait_strategy_controls()
+
+    def _save_rollcall_strategy_settings(self, *_args):
+        if not hasattr(self, "poll_interval_spin"):
+            return
+        try:
+            with CONFIG_LOCK:
+                config = load_config()
+                account = get_current_account(config)
+                if not account:
+                    return
+                settings = get_rollcall_settings(account)
+                settings.update({
+                    "poll_interval_seconds": self.poll_interval_spin.value(),
+                    "wait_before_answer_mode": self.wait_before_answer_mode_combo.currentData(),
+                    "wait_before_answer_count": self.wait_before_answer_count_spin.value(),
+                    "wait_before_answer_percent": self.wait_before_answer_percent_spin.value(),
+                })
+                set_rollcall_settings(account, settings)
+                save_config(config)
+            if self.account and str(self.account.get("id")) == str(account.get("id")):
+                self.account["rollcall_settings"] = get_rollcall_settings(account)
+            # 配置变更使已排队的自动任务失效；后续监控进度会按新条件重新判定。
+            self._auto_answer_epoch += 1
+            with self._answer_cancellations_lock:
+                pending_ids = list(self._answer_cancellations)
+            for event_id in pending_ids:
+                self._cancel_pending_answer(event_id)
+            self.poll_interval_status.setText("更改成功")
+            self._show_toast("监控策略已保存")
+        except Exception as exc:
+            self.poll_interval_status.setText("更改失败")
+            self.log(f"保存监控策略失败：{exc}")
+            self._show_toast("监控策略保存失败", ok=False)
 
     def _save_poll_interval_setting(self, *_args):
         if not hasattr(self, "poll_interval_spin"):
@@ -820,6 +874,8 @@ class DashboardWindow(
         # 清空上一账号的签到数据：登出/换号后「签到情况」与首页事件表
         # 不得残留旧账号的签到记录（防串号展示）
         self.events_by_id = {}
+        self._auto_answer_inflight_rollcalls.clear()
+        self._auto_answer_attempted_rollcalls.clear()
         self.event_order = []
         self.course_records = []
         self._refresh_event_tables()
@@ -869,7 +925,13 @@ class DashboardWindow(
             return ""
         return self.events_table.item(row, 0).data(Qt.ItemDataRole.UserRole) or ""
 
-    def _answer_event(self, event_id: str, event: RollcallEvent, auto: bool = False):
+    def _answer_event(
+        self,
+        event_id: str,
+        event: RollcallEvent,
+        auto: bool = False,
+        auto_snapshot: dict | None = None,
+    ):
         if not self.session:
             if auto:
                 # 自动路径不弹模态打扰：登出/换号后在途事件晚到导致会话为空时，
@@ -896,7 +958,24 @@ class DashboardWindow(
         self._cancel_pending_answer(event_id)
         self._update_event_result(event_id, "处理中", "正在提交")
         delay = self._auto_answer_delay(event, auto)
-        self._run_thread(self._answer_worker, event_id, event, delay)
+        auto_context = None
+        if auto:
+            settings = get_rollcall_settings(self.account or {})
+            auto_context = {
+                "epoch": self._auto_answer_epoch,
+                "monitor_token": self.monitor_stop_event,
+                "mode": settings["wait_before_answer_mode"],
+                "count": settings["wait_before_answer_count"],
+                "percent": settings["wait_before_answer_percent"],
+                "username": str((self.account or {}).get("username") or ""),
+                "account_id": str((self.account or {}).get("id") or ""),
+                "recheck_activity": delay > 0,
+                "progress": (auto_snapshot or {}).get("progress"),
+                "number_code": (auto_snapshot or {}).get("number_code", event.number_code),
+                "current_event": (auto_snapshot or {}).get("current_event", event),
+                "task_token": (auto_snapshot or {}).get("task_token"),
+            }
+        self._run_thread(self._answer_worker, event_id, event, delay, auto_context)
 
     def _auto_answer_delay(self, event: RollcallEvent, auto: bool) -> float:
         """自动应答的拟人化延迟（秒）。0 = 立即提交。
@@ -925,7 +1004,19 @@ class DashboardWindow(
         if cancel is not None:
             cancel.set()
 
-    def _answer_worker(self, event_id: str, event: RollcallEvent, delay: float = 0.0):
+    def _cancel_all_pending_answers(self):
+        with self._answer_cancellations_lock:
+            pending_ids = list(self._answer_cancellations)
+        for event_id in pending_ids:
+            self._cancel_pending_answer(event_id)
+
+    def _answer_worker(
+        self,
+        event_id: str,
+        event: RollcallEvent,
+        delay: float = 0.0,
+        auto_context: dict | None = None,
+    ):
         # A2 二期（H3）：应答是唯一写 cookie 的并发路径（PUT Set-Cookie）。克隆会话隔离
         # 写入口，避免与其余只读 worker / GUI 读共享 cookiejar 发生跨线程竞争写；
         # session 为 None（登出在途）时明确返回，不再偶发 AttributeError。
@@ -937,7 +1028,10 @@ class DashboardWindow(
         worker_account_id = str((self.account or {}).get("id") or "")
         session = clone_session(self.session) if self.session is not None else None
         if session is None:
-            self._emit(("answer_result", event_id, False, "已退出登录"))
+            self._emit((
+                "answer_result", event_id, False, "已退出登录",
+                auto_context is None, False, (auto_context or {}).get("task_token"),
+            ))
             return
         ok = False
         detail = "提交失败"
@@ -949,7 +1043,10 @@ class DashboardWindow(
                     self._answer_cancellations[event_id] = cancel
                 try:
                     if cancel.wait(delay):
-                        self._emit(("answer_result", event_id, False, "已取消"))
+                        self._emit((
+                            "answer_result", event_id, False, "已取消", False, False,
+                            (auto_context or {}).get("task_token"),
+                        ))
                         return
                 finally:
                     # 仅当槽内仍是「自己的」取消信号时才移除：同一事件的新 worker 随后
@@ -963,9 +1060,26 @@ class DashboardWindow(
             # 网络提交不可中断，只能在此拦截（worker_account_id 为入口时的账号快照，
             # 换号后 id 不同、登出后 session 为 None 均命中）。
             if self.session is None or str((self.account or {}).get("id") or "") != worker_account_id:
-                self._emit(("answer_result", event_id, False, "已取消（登录状态已变更）"))
+                self._emit((
+                    "answer_result", event_id, False, "已取消（登录状态已变更）",
+                    False, False, (auto_context or {}).get("task_token"),
+                ))
                 return
-            ok = RollcallEngine(session).answer(event.rollcall_type, event.rollcall_id)
+            number_code = event.number_code
+            if auto_context is not None:
+                allowed, reason, checked_code, terminal = self._validate_auto_submission(
+                    session, event, auto_context
+                )
+                if not allowed:
+                    self._emit((
+                        "answer_result", event_id, False, reason, False, terminal,
+                        auto_context.get("task_token"),
+                    ))
+                    return
+                number_code = checked_code or number_code
+            ok = RollcallEngine(session).answer(
+                event.rollcall_type, event.rollcall_id, number_code
+            )
             detail = "提交成功" if ok else "提交失败"
         except Exception as exc:
             ok = False
@@ -977,7 +1091,87 @@ class DashboardWindow(
         finally:
             # 把 worker 克隆内新增/旋转的 cookie 合并回主会话（GUI 线程收到后单点写）
             self._emit(("merge_session_cookies", session, worker_account_id))
-        self._emit(("answer_result", event_id, ok, detail))
+        self._emit((
+            "answer_result", event_id, ok, detail, True, True,
+            (auto_context or {}).get("task_token"),
+        ))
+
+    def _auto_context_current(self, event: RollcallEvent, context: dict) -> tuple[bool, str, bool]:
+        token = context.get("monitor_token")
+        if (
+            token is None
+            or token is not self.monitor_stop_event
+            or token.is_set()
+            or context.get("epoch") != self._auto_answer_epoch
+        ):
+            return False, "已取消（监控或自动策略已变更）", False
+        if not self._auto_answer_enabled:
+            return False, "已取消（自动签到已关闭）", False
+        if event.rollcall_type not in ("数字签到", "雷达签到"):
+            return False, "已取消（该签到类型不支持自动处理）", True
+        if (
+            self.session is None
+            or str((self.account or {}).get("id") or "") != context.get("account_id")
+        ):
+            return False, "已取消（登录状态已变更）", False
+        settings = get_rollcall_settings(self.account or {})
+        fingerprint = (
+            settings["wait_before_answer_mode"],
+            settings["wait_before_answer_count"],
+            settings["wait_before_answer_percent"],
+        )
+        expected = (context.get("mode"), context.get("count"), context.get("percent"))
+        if fingerprint != expected:
+            return False, "已取消（自动策略已变更）", False
+        if rollcall_is_expired(event):
+            return False, "已取消（签到已结束）", True
+        return True, "", False
+
+    def _validate_auto_submission(self, session, event: RollcallEvent, context: dict):
+        """自动写请求前的最终守卫；返回 (可提交, 原因, 复核数字码, 终态)。"""
+        current_event = context.get("current_event") or event
+        valid, reason, terminal = DashboardWindow._auto_context_current(self, current_event, context)
+        if not valid:
+            return False, reason, "", terminal
+
+        progress = context.get("progress") or RollcallProgress()
+        checked_code = str(context.get("number_code") or "")
+        if context.get("recheck_activity"):
+            try:
+                guard_engine = RollcallEngine(session)
+                current_event = next(
+                    (
+                        item for item in guard_engine.build_events(guard_engine.poll_payload())
+                        if item.rollcall_id == event.rollcall_id
+                    ),
+                    None,
+                )
+            except Exception:
+                return False, "继续等待（无法确认签到仍在进行）", "", False
+            if current_event is None or rollcall_is_expired(current_event):
+                return False, "已取消（签到已结束）", "", True
+            detail = fetch_student_rollcall_detail(session, event.rollcall_id)
+            progress = summarize_rollcall_progress(
+                detail, my_user_no=str(context.get("username") or "")
+            )
+            checked_code = find_number_code(detail) or "" if detail else checked_code
+            # 网络读取结束后再次检查账号、停止令牌、总开关与策略，封闭在途变化窗口。
+            valid, reason, terminal = DashboardWindow._auto_context_current(self, current_event, context)
+            if not valid:
+                return False, reason, "", terminal
+        if progress.own_present is True:
+            return False, "无需提交（本人已签到）", "", True
+        mode = str(context.get("mode") or "none")
+        if mode != "none" and not wait_before_answer_satisfied(
+            progress,
+            mode,
+            count=context.get("count", 5),
+            percent=context.get("percent", 15),
+        ):
+            return False, "继续等待（签到人数未达到设定条件）", "", False
+        if event.rollcall_type == "数字签到" and not checked_code:
+            return False, "继续等待（尚未获取数字签到码）", "", False
+        return True, "", checked_code, False
 
     def _merge_worker_session(self, worker_session, worker_account_id: str):
         """GUI 线程单点写：把应答 worker 克隆会话的 cookie 回写主会话（含登出/换号守卫）。
@@ -1068,6 +1262,8 @@ class DashboardWindow(
             self.courseware_combo.clear()
             self.courseware_combo.blockSignals(False)
             self.events_by_id = {}
+            self._auto_answer_inflight_rollcalls.clear()
+            self._auto_answer_attempted_rollcalls.clear()
             self.event_order = []
             self._snapshot_account_id = ""
             # 互斥旗标随数据面一并复位（与 logout 清理面同款）：旧账号刷新/下载
@@ -1217,6 +1413,87 @@ class DashboardWindow(
             return
         self._add_rollcall_event(event[1])
 
+    def _ev_rollcall_progress(self, event):
+        rollcall_id, progress, code = event[1:4]
+        worker_token = event[4] if len(event) > 4 else None
+        current_event = event[5] if len(event) > 5 else None
+        if self.session is None or worker_token is not self.monitor_stop_event or worker_token.is_set():
+            self.log("忽略旧监控任务迟到的签到人数进度。")
+            return
+        event_id = next(
+            (
+                eid for eid in self.event_order
+                if self.events_by_id.get(eid)
+                and self.events_by_id[eid].rollcall_id == rollcall_id
+            ),
+            "",
+        )
+        rollcall = self.events_by_id.get(event_id)
+        if rollcall is None:
+            return
+        if current_event is not None:
+            # 每轮同步平台活动状态；不能让首次发现时的 deadline/is_expired 快照
+            # 在等待门槛期间变陈旧。
+            rollcall.status = current_event.status
+            rollcall.raw = current_event.raw
+            rollcall.deadline = current_event.deadline
+            rollcall.remaining_seconds = current_event.remaining_seconds
+        if progress.reliable:
+            rollcall.attendance_present = progress.present
+            rollcall.attendance_total = progress.observed
+            rollcall.attendance_percent = progress.rate_percent
+        else:
+            rollcall.attendance_present = None
+            rollcall.attendance_total = None
+            rollcall.attendance_percent = None
+        if code:
+            rollcall.number_code = code
+        self._refresh_event_tables()
+
+        if progress.own_present is True:
+            self._auto_answer_attempted_rollcalls.add(rollcall_id)
+            if rollcall.result not in ("已签到", "已签"):
+                self._update_event_result(event_id, "已签到", "本人已签到，无需重复提交")
+            return
+        if current_event is not None and rollcall_is_expired(current_event):
+            self._auto_answer_attempted_rollcalls.add(rollcall_id)
+            self._update_event_result(event_id, "已跳过", "签到已结束")
+            return
+        if not self.auto_answer_check.isChecked() or not self._auto_answer_enabled:
+            return
+        if rollcall.rollcall_type not in ("数字签到", "雷达签到"):
+            return
+        settings = get_rollcall_settings(self.account or {})
+        mode = settings["wait_before_answer_mode"]
+        if (
+            rollcall_id in self._auto_answer_inflight_rollcalls
+            or rollcall_id in self._auto_answer_attempted_rollcalls
+        ):
+            return
+        if rollcall.rollcall_type == "数字签到" and not rollcall.number_code:
+            # 名单门槛已达但数字码尚未随明细返回：继续等下个监控轮次，不能
+            # 把事件标成已处理，也不能发空码 PUT。
+            return
+        if wait_before_answer_satisfied(
+            progress,
+            mode,
+            count=settings["wait_before_answer_count"],
+            percent=settings["wait_before_answer_percent"],
+        ):
+            task_token = object()
+            self._auto_answer_inflight_rollcalls[rollcall_id] = task_token
+            self._answer_event(
+                event_id,
+                rollcall,
+                auto=True,
+                auto_snapshot={
+                    "progress": progress,
+                    "number_code": rollcall.number_code,
+                    "current_event": current_event or rollcall,
+                    "task_token": task_token,
+                },
+            )
+
     def _ev_answer_result(self, event):
         if self.session is None:
             # 登出后在途应答 worker 的晚到结果：事件表已清空（_update 无害），
@@ -1227,10 +1504,25 @@ class DashboardWindow(
         event_id = event[1]
         ok = event[2]
         detail = event[3]
+        attempted = event[4] if len(event) > 4 else True
+        terminal = event[5] if len(event) > 5 else False
+        task_token = event[6] if len(event) > 6 else None
+        rollcall = self.events_by_id.get(event_id)
+        if rollcall and task_token is not None:
+            if self._auto_answer_inflight_rollcalls.get(rollcall.rollcall_id) is not task_token:
+                self.log("忽略已失效自动任务的迟到结果。")
+                return
+            self._auto_answer_inflight_rollcalls.pop(rollcall.rollcall_id, None)
+            if attempted or terminal:
+                self._auto_answer_attempted_rollcalls.add(rollcall.rollcall_id)
+        if not attempted:
+            self._update_event_result(event_id, "已跳过" if terminal else "待处理", detail)
+            self.metric_last_result.setText(detail)
+            self.log(f"自动签到复核结果：{detail}")
+            return
         self._update_event_result(event_id, "已签到" if ok else "失败", detail)
         self.metric_last_result.setText(detail)
         self.log(f"签到处理结果：{detail}")
-        rollcall = self.events_by_id.get(event_id)
         if rollcall:
             self._notify_rollcall(event_id, rollcall)
 
@@ -1467,6 +1759,7 @@ class DashboardWindow(
         "monitor_status": _ev_monitor_status,
         "poll": _ev_poll,
         "rollcall": _ev_rollcall,
+        "rollcall_progress": _ev_rollcall_progress,
         "answer_result": _ev_answer_result,
         "number_code": _ev_number_code,
         # 会话合并（worker 克隆会话回写主会话的内部事件）
@@ -1555,11 +1848,10 @@ class DashboardWindow(
         self.log(f"检测到签到：{event.course_title} / {event.rollcall_type}")
         self._refresh_event_tables()
 
-        if event.rollcall_type == "数字签到":
-            self._run_thread(self._number_code_worker, event_id, event)
         self._notify_rollcall(event_id, event)
         if self.auto_answer_check.isChecked():
-            self._answer_event(event_id, event, auto=True)
+            event.detail = "正在读取签到人数与签到码"
+            self._refresh_event_tables()
 
     def _notify_rollcall(self, event_id: str, event: RollcallEvent):
         message = build_rollcall_notification(event, f"xmurollcall://rollcall/{event_id}")
@@ -1590,13 +1882,20 @@ class DashboardWindow(
             self._emit(("number_code", event_id, "", detail))
 
     def _event_values(self, event: RollcallEvent):
+        if event.attendance_total is None or event.attendance_present is None:
+            attendance = "未获取"
+        else:
+            attendance = (
+                f"{event.attendance_present}/{event.attendance_total} "
+                f"({(event.attendance_percent or 0.0):.1f}%)"
+            )
         return (
             time.strftime("%H:%M:%S", time.localtime(event.detected_at)),
-            event.remaining_text,
             event.course_title,
             event.teacher,
             event.rollcall_type,
             self._event_status_text(event),
+            attendance,
             event.number_code or "-",
         )
 
@@ -1616,15 +1915,13 @@ class DashboardWindow(
         if not hasattr(self, "events_table"):
             return
         if rows:
-            # 首页事件表（7 列：时间/剩余/课程/发起人/类型/状态/签到码）：
-            # 时间·发起人·类型·状态·签到码 居中，剩余/课程列左对齐；状态列着色。
-            # （旧实现的 (0,3,4..8) 中 7、8 对 7 列表是死列号，参数化时一并剔除。）
+            # 人数/比例与签到码保持为相邻的独立列。
             self._set_table_rows(
                 self.events_table,
                 rows,
                 self.event_order,
-                centered_columns=(0, 3, 4, 5, 6),
-                status_column=5,
+                centered_columns=(0, 2, 3, 4, 5, 6),
+                status_column=4,
             )
             return
         # 首页事件表空态：与「签到情况」页同款跨列灰字占位，
@@ -1714,6 +2011,7 @@ class DashboardWindow(
             self._emit,
             self.monitor_stop_event,
             self._current_poll_interval(),
+            str(self.account.get("username") or ""),
         )
         self.started_at = time.time()
         self.monitor_worker.start()

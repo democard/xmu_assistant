@@ -34,6 +34,18 @@ class RemainingSecondsFromDeadlineTest {
     }
 
     @Test
+    fun `parses space separated local datetime`() {
+        val local = java.time.LocalDateTime.now().plusMinutes(5).truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+        val remaining = remainingSecondsFromDeadline(local.toString().replace('T', ' '))!!
+        assertTrue("expected ~300s, got $remaining", remaining in 280..300)
+    }
+
+    @Test
+    fun `invalid explicit timezone is not truncated into local time`() {
+        assertNull(remainingSecondsFromDeadline("2026-09-20T12:00:00+99:99"))
+    }
+
+    @Test
     fun `past deadline clamps to zero instead of negative`() {
         val past = Instant.now().minusSeconds(60).toString()
         assertEquals(0L, remainingSecondsFromDeadline(past))
