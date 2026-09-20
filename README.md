@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.7.0 · Windows v1.7.0**
+**当前版本：Android v1.7.1 · Windows v1.7.1**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -106,6 +106,15 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 ## 📱 Android 原生端
 
 位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
+
+### v1.7.1 双端修复
+
+- 签到进度只统计明确已签的人数；请假、迟到、缺勤和其他非已签状态只计入总人数。例如 70 已签、2 迟到、1 请假、2 缺勤显示 **70/75（93.3%）**。
+- 修复名单已经读取成功，却因为出现请假或未列入词表的考勤状态而整条显示“暂未获取”的问题。详细状态优先，避免把迟到对应的粗分类误算为已签。
+- 本人明细出现冲突时等待下一轮核实，不拿旧列表状态覆盖；明确已签、迟到或请假不重复自动提交。班级比例统计与本人状态保护分别判断。
+- Android 雷达提交失败不再被记为完成，保留有界重试；历史缓存升级，避免继续展示旧统计口径。
+- Windows 454 项、Android 593 项测试通过，Android Lint 0 错误。仅对异常记录做少量只读实测，未用账号试发签到。
+- 下载：[v1.7.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)；[排查与验证交接](scripts/attendance-status-debug-handoff.md)。
 
 ### v1.7.0 双端更新
 
@@ -229,13 +238,13 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.7.0 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant-release.apk) |
-| Windows | 1.7.0 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/xmu-assistant.exe) |
+| Android 8.0 及以上 | 1.7.1 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant-release.apk) |
+| Windows | 1.7.1 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.0/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
-GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.6.9，DPAPI 凭据加密）
+GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.7.1，DPAPI 凭据加密）
                                               #   复现构建：pyinstaller xmu-assistant.spec（或 scripts/build_dashboard_exe.bat）
 GitHub Releases → xmu-assistant-release.apk   # Android 端（release 构建，R8 压缩；固定签名，覆盖安装不丢登录数据）
 release/SHA256SUMS.txt                        # 当前产物 SHA-256 校验值（随每次发布更新）
@@ -345,7 +354,7 @@ xmu_assistant/
 2. `GET /api/rollcall/{rollcall_id}/student_rollcalls` 递归查找 `number_code`；
 3. `PUT /api/rollcall/{rollcall_id}/answer_number_rollcall` 提交（带随机 deviceId）。
 
-签到状态词表、请假 / 迟到的统计口径，以及本次“进度未获取”的实测原因和回归记录，见[签到状态排查交接](scripts/attendance-status-debug-handoff.md)。该修复在开发分支，当前 v1.7.0 安装包尚未包含。
+签到状态词表、请假 / 迟到的统计口径，以及本次“进度未获取”的实测原因和回归记录，见[签到状态排查交接](scripts/attendance-status-debug-handoff.md)。v1.7.1 已包含该修复。
 
 ### 雷达签到
 
@@ -419,7 +428,7 @@ Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到�
   签名，换取 `install -r` 覆盖升级不丢本地登录态（重签会丢加密数据）。**代价：任何能拿到该密钥的人
   可伪造同签名更新覆盖安装**，触及本地加密凭据——这是刻意权衡。建议评估：如发布到公开渠道，改为产线
   独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
-- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.7.0 重建（含 DPAPI 凭据加密）；复现构建请执行
+- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.7.1 重建（含 DPAPI 凭据加密）；复现构建请执行
   `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
 - 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
 
