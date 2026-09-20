@@ -3,8 +3,17 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from simulate_attendance_progress import entry_status, make_roster, summarize
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
+from simulate_attendance_progress import make_roster
+from xmu_rollcall.rollcall_progress import classify_attendance_entry, summarize_rollcall_progress
+
+
+def summarize(payload, *, roster_complete=False, my_user_no=""):
+    return summarize_rollcall_progress(
+        payload, roster_complete=roster_complete, my_user_no=my_user_no,
+    )
 
 
 class AttendanceProgressSimulationTest(unittest.TestCase):
@@ -12,55 +21,64 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         xmu = summarize(make_roster(6, 40), roster_complete=True)
         other = summarize(make_roster(6, 40, field="rollcall_status", signed_value="on_call_fine"), roster_complete=True)
         self.assertEqual(xmu, other)
-        self.assertEqual((xmu.present, xmu.absent, xmu.observed, xmu.percent), (6, 34, 40, 15.0))
+        self.assertEqual((xmu.present, xmu.absent, xmu.observed, xmu.rate_percent), (6, 34, 40, 15.0))
 
     def test_counts_below_at_above_reference_percentage(self):
         for present, expected in [(5, 12.5), (6, 15.0), (7, 17.5)]:
             with self.subTest(present=present):
-                self.assertEqual(summarize(make_roster(present, 40), roster_complete=True).percent, expected)
+                self.assertEqual(summarize(make_roster(present, 40), roster_complete=True).rate_percent, expected)
 
     def test_small_classes_do_not_round_counts_before_division(self):
-        self.assertEqual(summarize(make_roster(0, 6), roster_complete=True).percent, 0.0)
-        self.assertAlmostEqual(summarize(make_roster(1, 7), roster_complete=True).percent, 100 / 7)
+        self.assertEqual(summarize(make_roster(0, 6), roster_complete=True).rate_percent, 0.0)
+        self.assertAlmostEqual(summarize(make_roster(1, 7), roster_complete=True).rate_percent, 100 / 7)
 
     def test_missing_malformed_and_empty_are_not_zero_percent(self):
         for payload in (None, [], {}, {"student_rollcalls": None}, {"student_rollcalls": {}}, make_roster(0, 0)):
             with self.subTest(payload=payload):
-                self.assertIsNone(summarize(payload, roster_complete=True).percent)
+                self.assertIsNone(summarize(payload, roster_complete=True).rate_percent)
 
     def test_partial_roster_never_claims_class_percentage(self):
         result = summarize(make_roster(2, 2))
         self.assertEqual(result.present, 2)
-        self.assertFalse(result.complete)
-        self.assertIsNone(result.percent)
+        self.assertFalse(result.roster_complete)
+        self.assertIsNone(result.rate_percent)
 
     def test_unknown_is_not_signed_or_absent(self):
         for raw in (None, "", "unknown", "not_signed", "fine", "on_call_pending", 1, True):
             with self.subTest(raw=raw):
                 result = summarize({"student_rollcalls": [{"status": raw}]}, roster_complete=True)
                 self.assertEqual((result.present, result.absent, result.unknown), (0, 0, 1))
-                self.assertIsNone(result.percent)
+                self.assertIsNone(result.rate_percent)
 
     def test_conflicting_status_fields_are_unknown(self):
-        self.assertIsNone(entry_status({"status": "absent", "rollcall_status": "on_call_fine"}))
-        self.assertTrue(entry_status({"status": "on_call", "rollcall_status": "on_call_fine"}))
+        self.assertIsNone(classify_attendance_entry({"status": "absent", "rollcall_status": "on_call_fine"}))
+        self.assertTrue(classify_attendance_entry({"status": "on_call", "rollcall_status": "on_call_fine"}))
 
     def test_empty_primary_field_can_use_explicit_secondary_field(self):
-        self.assertTrue(entry_status({"status": None, "student_rollcall_status": "on_call_fine"}))
+        self.assertTrue(classify_attendance_entry({"status": None, "student_rollcall_status": "on_call_fine"}))
 
     def test_malformed_rows_invalidate_denominator(self):
         payload = make_roster(1, 2)
         payload["student_rollcalls"].append(None)
         result = summarize(payload, roster_complete=True)
         self.assertEqual((result.observed, result.invalid_rows), (2, 1))
-        self.assertIsNone(result.percent)
+        self.assertIsNone(result.rate_percent)
+
+    def test_missing_identity_keeps_counts_but_suppresses_percentage(self):
+        result = summarize(
+            {"student_rollcalls": [{"status": "on_call"}, {"status": "absent"}]},
+            roster_complete=True,
+        )
+        self.assertEqual((result.present, result.absent, result.observed), (1, 1, 2))
+        self.assertFalse(result.roster_complete)
+        self.assertIsNone(result.rate_percent)
 
     def test_duplicate_students_are_not_double_counted(self):
         payload = make_roster(1, 1)
         payload["student_rollcalls"] *= 2
         result = summarize(payload, roster_complete=True)
         self.assertEqual((result.present, result.observed, result.duplicate_rows), (1, 1, 1))
-        self.assertIsNone(result.percent)
+        self.assertIsNone(result.rate_percent)
 
     def test_duplicate_conflict_invalidates_personal_confirmation(self):
         payload = {"student_rollcalls": [
@@ -74,7 +92,7 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         payload = make_roster(2, 2)
         payload["status"] = "on_call_fine"
         result = summarize(payload, roster_complete=True, my_user_no="missing")
-        self.assertEqual(result.percent, 100.0)
+        self.assertEqual(result.rate_percent, 100.0)
         self.assertIsNone(result.own_present)
 
     def test_own_status_requires_matching_student(self):
@@ -100,7 +118,7 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
             for present in range(total + 1):
                 result = summarize(make_roster(present, total), roster_complete=True)
                 self.assertEqual(result.present + result.absent + result.unknown, result.observed)
-                self.assertAlmostEqual(result.percent, present * 100 / total)
+                self.assertAlmostEqual(result.rate_percent, present * 100 / total)
 
 
 class ExistingDetailReaderSimulationTest(unittest.TestCase):
@@ -123,7 +141,7 @@ class ExistingDetailReaderSimulationTest(unittest.TestCase):
             with patch("requests.sessions.Session.request", side_effect=AssertionError("禁止真实网络")):
                 detail = self.core.fetch_student_rollcall_detail(session, "simulation")
                 result = summarize(detail, roster_complete=True)
-            self.assertEqual(result.percent, 15.0)
+                self.assertEqual(result.rate_percent, 15.0)
             # mock_calls 也包含 response.json()，请求次数只统计 get。
             self.assertEqual(session.get.call_count, 1)
             self.assertEqual(session.get.call_args.args[0], response.url)
@@ -133,7 +151,7 @@ class ExistingDetailReaderSimulationTest(unittest.TestCase):
         session = Mock(spec=["get"])
         session.get.side_effect = TimeoutError("模拟超时")
         result = summarize(self.core.fetch_student_rollcall_detail(session, "simulation"))
-        self.assertIsNone(result.percent)
+        self.assertIsNone(result.rate_percent)
 
 
 if __name__ == "__main__":

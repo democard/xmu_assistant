@@ -6,90 +6,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import sys
+from dataclasses import asdict
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
-@dataclass(frozen=True)
-class Progress:
-    observed: int = 0
-    present: int = 0
-    absent: int = 0
-    unknown: int = 0
-    invalid_rows: int = 0
-    duplicate_rows: int = 0
-    complete: bool = False
-    own_present: bool | None = None
-
-    @property
-    def percent(self) -> float | None:
-        if not self.complete or not self.observed or self.unknown:
-            return None
-        return self.present * 100 / self.observed
-
-
-def entry_status(entry: dict) -> bool | None:
-    """on_call 与 on_call_fine 均明确为已签；字段冲突不擅自选择。
-
-    不调用界面“未知显示已签”回退，也不凭顶层活动状态确认本人。
-    """
-    values = []
-    for key in ("status", "rollcall_status", "student_rollcall_status"):
-        raw = entry.get(key)
-        if raw is None or raw == "":
-            continue
-        if not isinstance(raw, str):
-            return None
-        status = raw.strip()
-        if status in {"on_call", "on_call_fine"}:
-            values.append(True)
-        elif status == "absent":
-            values.append(False)
-        else:
-            return None
-    return values[0] if values and all(v == values[0] for v in values) else None
-
-
-def summarize(payload: object, *, roster_complete: bool = False,
-              my_user_no: str = "") -> Progress:
-    if not isinstance(payload, dict) or not isinstance(payload.get("student_rollcalls"), list):
-        return Progress()
-    rows = payload["student_rollcalls"]
-    invalid = duplicates = 0
-    statuses: list[bool | None] = []
-    identities: dict[str, int] = {}
-    own_statuses: list[bool | None] = []
-    for entry in rows:
-        if not isinstance(entry, dict):
-            invalid += 1
-            continue
-        status = entry_status(entry)
-        identity = entry.get("user_no")
-        identity = identity.strip() if isinstance(identity, str) else ""
-        if identity and identity == my_user_no.strip():
-            own_statuses.append(status)
-        if identity and identity in identities:
-            duplicates += 1
-            # 同一人的冲突记录不能沿用第一条“已签”。
-            position = identities[identity]
-            if statuses[position] != status:
-                statuses[position] = None
-            continue
-        if identity:
-            identities[identity] = len(statuses)
-        statuses.append(status)
-    own = None
-    if own_statuses and all(value == own_statuses[0] for value in own_statuses):
-        own = own_statuses[0]
-    return Progress(
-        observed=len(statuses),
-        present=sum(value is True for value in statuses),
-        absent=sum(value is False for value in statuses),
-        unknown=sum(value is None for value in statuses),
-        invalid_rows=invalid,
-        duplicate_rows=duplicates,
-        complete=roster_complete and not invalid and not duplicates,
-        own_present=own,
-    )
+from xmu_rollcall.rollcall_progress import summarize_rollcall_progress
 
 
 def make_roster(present: int, total: int, *, field: str = "status",
@@ -116,8 +40,8 @@ def main() -> None:
     ]
     result = []
     for label, payload, complete in examples:
-        progress = summarize(payload, roster_complete=complete, my_user_no="not-in-roster")
-        result.append({"case": label, **asdict(progress), "percent": progress.percent})
+        progress = summarize_rollcall_progress(payload, roster_complete=complete, my_user_no="not-in-roster")
+        result.append({"case": label, **asdict(progress), "rate_percent": progress.rate_percent})
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

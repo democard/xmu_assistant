@@ -25,6 +25,7 @@
 
 - PC `desktop_qt/core.py::fetch_student_rollcall_detail`：现成明细 GET，带超时、会话过期识别、错误返回；本轮用模拟 session 直接调用，确认同一读取器能提供两类统计数据，不另写请求层。
 - Android `RollcallHistoryClient` 已有同一明细的只读请求和 `QueryHttpTransport` 测试接口；当前解析方法私有。`RollcallEngine.answerNumber` 也读取同一明细，但走另一条网络路径。未来如接入应统一读取，避免重复 GET。
+- 本轮已增加 PC `rollcall_progress.py` 和 Android `StudentRollcallProgress.kt` 两个纯解析层；它们不联网、不接界面、不改变自动签到，仅把现有请求结果转换为人数和可靠比例。
 - 单纯统计人数不需要参考项目额外的 answers 请求。
 
 ### 不应直接照搬的差异
@@ -45,9 +46,10 @@ D:/python/python.exe -m unittest discover -s tests -p test_attendance_progress_s
 D:/python/python.exe -m unittest discover -s tests -p test_rollcall_verify.py -q
 ```
 
-- 18 项模拟测试通过，包含两份公开字段结构、5/40、6/40、7/40、小班、空/缺失名单、未知/冲突状态、重复人员、部分名单、本人身份匹配、无快照串号以及复用现有明细 GET 的模拟响应。
+- PC 19 项模拟测试通过，包含两份公开字段结构、5/40、6/40、7/40、小班、空/缺失名单、未知/冲突状态、重复人员、缺少身份、部分名单、本人身份匹配、无快照串号以及复用现有明细 GET 的模拟响应。
 - 一个统计不变量测试遍历 1–24 人班级的所有已签人数，共 324 种组合。
 - 现有 PC 签到核实回归 24 项通过。
+- Android 新解析器 5 项单元测试通过（JDK 17、Gradle 离线模式），覆盖公开两种状态、`user_no`、未知/冲突、空/损坏/重复和缺少身份。
 - 脚本输出 8 个可读示例；不导入实际提交逻辑，不读账号、Cookie、缓存或个人数据。GET 复用测试使用 Mock，并拦截真实 requests 网络调用。
 - 未运行第三方程序，未提交真实签到；未做学校接口实测或 Android 新功能验收。这些结果只证明离线统计及 PC 读取器接入可行。
 
