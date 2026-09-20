@@ -7,8 +7,9 @@ import org.json.JSONObject
  * A read-only summary of the student_rollcalls payload.
  *
  * [percentage] is deliberately nullable: it is populated only when the input
- * is a non-empty, complete, duplicate-free list of object records with an
- * unambiguous status for every record. Student identity is optional for counts.
+ * is a non-empty, complete, duplicate-free list of object records with a usable
+ * string status for every record. Unrecognized non-empty statuses remain valid
+ * denominator rows but never count as signed. Student identity is optional.
  */
 data class StudentRollcallProgress(
     val observed: Int,
@@ -18,6 +19,7 @@ data class StudentRollcallProgress(
     val percentage: Double?,
     val reliablePercentage: Boolean,
     val leave: Int = 0,
+    val late: Int = 0,
 ) {
     val total: Int
         get() = observed
@@ -61,12 +63,14 @@ private enum class StudentRollcallStatus {
     PRESENT,
     ABSENT,
     LEAVE,
+    LATE,
     UNKNOWN,
 }
 
 private data class ParsedStudentRollcall(
     val status: StudentRollcallStatus,
     val identity: String?,
+    val structurallyValid: Boolean,
 )
 
 /** Parse a response object, treating a missing or non-array student_rollcalls as incomplete. */
@@ -116,7 +120,7 @@ fun parseStudentRollcallProgress(
             identities[identity] = statuses.size
             statuses += parsed.status
         }
-        if (parsed.status == StudentRollcallStatus.UNKNOWN) {
+        if (!parsed.structurallyValid) {
             complete = false
         }
     }
@@ -125,6 +129,7 @@ fun parseStudentRollcallProgress(
     val present = statuses.count { it == StudentRollcallStatus.PRESENT }
     val absent = statuses.count { it == StudentRollcallStatus.ABSENT }
     val leave = statuses.count { it == StudentRollcallStatus.LEAVE }
+    val late = statuses.count { it == StudentRollcallStatus.LATE }
     val unknown = statuses.count { it == StudentRollcallStatus.UNKNOWN }
     val reliable = complete && observed > 0
     return StudentRollcallProgress(
@@ -135,6 +140,7 @@ fun parseStudentRollcallProgress(
         percentage = if (reliable) present * 100.0 / observed else null,
         reliablePercentage = reliable,
         leave = leave,
+        late = late,
     )
 }
 
@@ -155,23 +161,24 @@ fun parseStudentRollcallProgress(
 }
 
 private fun parseStudentRollcall(record: JSONObject): ParsedStudentRollcall {
-    val statuses = STATUS_FIELDS.mapNotNull { field ->
-        if (!record.has(field) || record.isNull(field)) return@mapNotNull null
-        val raw = record.optString(field).trim().lowercase()
-        if (raw.isBlank() || raw == "null") null else classifyStatus(raw)
+    val raw = STATUS_FIELDS.firstNotNullOfOrNull { field ->
+        if (!record.has(field) || record.isNull(field)) return@firstNotNullOfOrNull null
+        (record.opt(field) as? String)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
     }
-    val distinctStatuses = statuses.toSet()
-    val status = when {
-        distinctStatuses.size != 1 -> StudentRollcallStatus.UNKNOWN
-        else -> distinctStatuses.single()
-    }
-    return ParsedStudentRollcall(status, studentIdentity(record))
+    return ParsedStudentRollcall(
+        status = raw?.let(::classifyStatus) ?: StudentRollcallStatus.UNKNOWN,
+        identity = studentIdentity(record),
+        structurallyValid = raw != null,
+    )
 }
 
 private fun classifyStatus(raw: String): StudentRollcallStatus = when (knownRollcallStatus(raw)) {
-    KnownRollcallStatus.PRESENT, KnownRollcallStatus.LATE -> StudentRollcallStatus.PRESENT
+    KnownRollcallStatus.PRESENT -> StudentRollcallStatus.PRESENT
     KnownRollcallStatus.ABSENT -> StudentRollcallStatus.ABSENT
     KnownRollcallStatus.LEAVE -> StudentRollcallStatus.LEAVE
+    KnownRollcallStatus.LATE -> StudentRollcallStatus.LATE
     KnownRollcallStatus.UNKNOWN -> StudentRollcallStatus.UNKNOWN
 }
 
@@ -226,9 +233,10 @@ private fun emptyUnreliableProgress() = StudentRollcallProgress(
     percentage = null,
     reliablePercentage = false,
     leave = 0,
+    late = 0,
 )
 
-private val STATUS_FIELDS = listOf("status", "rollcall_status", "student_rollcall_status")
+private val STATUS_FIELDS = listOf("rollcall_status", "student_rollcall_status", "status")
 private val OWN_STATUS_FIELDS = listOf("status", "rollcall_status", "student_rollcall_status", "state")
 private val IDENTITY_FIELDS = listOf(
     "user_no", "student_id", "studentId", "student_no", "studentNo",

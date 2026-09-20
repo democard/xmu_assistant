@@ -43,11 +43,20 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         self.assertFalse(result.roster_complete)
         self.assertIsNone(result.rate_percent)
 
-    def test_unknown_is_not_signed_or_absent(self):
-        for raw in (None, "", "unknown", "not_signed", "fine", "on_call_pending", 1, True):
+    def test_nonempty_unknown_status_counts_in_denominator_without_becoming_present(self):
+        for raw in ("unknown", "not_signed", "fine", "on_call_pending", "future_leave"):
             with self.subTest(raw=raw):
                 result = summarize({"student_rollcalls": [{"status": raw}]}, roster_complete=True)
                 self.assertEqual((result.present, result.absent, result.unknown), (0, 0, 1))
+                self.assertTrue(result.reliable)
+                self.assertEqual(result.rate_percent, 0.0)
+
+    def test_missing_or_non_string_status_is_structurally_unreliable(self):
+        for raw in (None, "", 1, True):
+            with self.subTest(raw=raw):
+                result = summarize({"student_rollcalls": [{"status": raw}]}, roster_complete=True)
+                self.assertEqual((result.observed, result.unknown, result.invalid_rows), (1, 1, 1))
+                self.assertFalse(result.reliable)
                 self.assertIsNone(result.rate_percent)
 
     def test_conflicting_status_fields_are_unknown(self):
@@ -70,7 +79,7 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         )
         self.assertAlmostEqual(result.rate_percent, 72 * 100 / 73)
 
-    def test_confirmed_late_fields_count_as_present_and_confirm_self(self):
+    def test_confirmed_late_is_not_class_progress_present_but_confirms_self(self):
         result = summarize(
             {"student_rollcalls": [{
                 "user_no": "me",
@@ -79,9 +88,9 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
             }]},
             my_user_no="me",
         )
-        self.assertEqual((result.present, result.leave, result.unknown), (1, 0, 0))
+        self.assertEqual((result.present, result.late, result.leave, result.unknown), (0, 1, 0, 0))
         self.assertTrue(result.own_present)
-        self.assertEqual(result.rate_percent, 100.0)
+        self.assertEqual(result.rate_percent, 0.0)
 
     def test_supported_leave_variants_share_leave_semantics(self):
         for raw in ("on_leave", "on_personal_leave", "on_sick_leave", "on_public_leave"):
@@ -89,13 +98,13 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
                 result = summarize({"student_rollcalls": [{"status": raw}]})
                 self.assertEqual((result.leave, result.unknown, result.rate_percent), (1, 0, 0.0))
 
-    def test_leave_conflicting_with_attendance_is_unknown(self):
+    def test_progress_uses_detailed_status_priority_while_personal_logic_stays_strict(self):
         result = summarize({"student_rollcalls": [
             {"status": "on_leave", "rollcall_status": "on_call_fine"},
         ]})
-        self.assertEqual((result.leave, result.unknown), (0, 1))
+        self.assertEqual((result.present, result.leave, result.unknown), (1, 0, 0))
         self.assertFalse(result.own_status_ambiguous)
-        self.assertIsNone(result.rate_percent)
+        self.assertEqual(result.rate_percent, 100.0)
 
     def test_leave_only_roster_is_reliable_zero_percent(self):
         result = summarize({"student_rollcalls": [
@@ -241,7 +250,10 @@ class AttendanceProgressSimulationTest(unittest.TestCase):
         for total in range(1, 25):
             for present in range(total + 1):
                 result = summarize(make_roster(present, total), roster_complete=True)
-                self.assertEqual(result.present + result.absent + result.leave + result.unknown, result.observed)
+                self.assertEqual(
+                    result.present + result.absent + result.leave + result.late + result.unknown,
+                    result.observed,
+                )
                 self.assertAlmostEqual(result.rate_percent, present * 100 / total)
 
 

@@ -23,6 +23,7 @@ class StudentRollcallProgressTest {
         assertEquals(2, result.present)
         assertEquals(1, result.absent)
         assertEquals(0, result.leave)
+        assertEquals(0, result.late)
         assertEquals(0, result.unknown)
         assertEquals(66.66666666666667, result.percentage!!, 0.000001)
         assertTrue(result.reliablePercentage)
@@ -44,16 +45,18 @@ class StudentRollcallProgressTest {
         assertEquals(0, result.present)
         assertEquals(0, result.absent)
         assertEquals(5, result.leave)
+        assertEquals(0, result.late)
         assertEquals(0, result.unknown)
         assertTrue(result.reliablePercentage)
         assertEquals(0.0, result.percentage!!, 0.0)
 
         val legacyConstruction = StudentRollcallProgress(1, 1, 0, 0, 100.0, true)
         assertEquals(0, legacyConstruction.leave)
+        assertEquals(0, legacyConstruction.late)
     }
 
     @Test
-    fun `late statuses count as present while retaining a reliable roster`() {
+    fun `late statuses stay in the denominator without counting as signed`() {
         val result = parseStudentRollcallProgress(
             """{"student_rollcalls":[
                 {"student_id":"1","status":"late"},
@@ -63,29 +66,64 @@ class StudentRollcallProgressTest {
         )
 
         assertEquals(3, result.total)
-        assertEquals(3, result.present)
+        assertEquals(0, result.present)
         assertEquals(0, result.leave)
+        assertEquals(3, result.late)
         assertEquals(0, result.unknown)
-        assertEquals(100.0, result.percentage!!, 0.0)
+        assertEquals(0.0, result.percentage!!, 0.0)
         assertTrue(result.reliablePercentage)
     }
 
     @Test
-    fun `leave or late conflicts with a different class status remain unknown`() {
+    fun `detailed status fields override coarse status without creating conflicts`() {
         val result = parseStudentRollcallProgress(
             """{"student_rollcalls":[
-                {"student_id":"1","status":"on_leave","rollcall_status":"on_call"},
+                {"student_id":"1","status":"on_call","rollcall_status":"on_call_arrive_late"},
                 {"student_id":"2","status":"on_personal_leave","rollcall_status":"absent"},
-                {"student_id":"3","status":"late","rollcall_status":"absent"}
+                {"student_id":"3","status":"absent","student_rollcall_status":"on_public_leave"},
+                {"student_id":"4","rollcall_status":"","student_rollcall_status":"","status":"on_call_fine"}
+            ]}""",
+        )
+
+        assertEquals(4, result.total)
+        assertEquals(1, result.present)
+        assertEquals(1, result.absent)
+        assertEquals(1, result.leave)
+        assertEquals(1, result.late)
+        assertEquals(0, result.unknown)
+        assertEquals(25.0, result.percentage!!, 0.0)
+        assertTrue(result.reliablePercentage)
+    }
+
+    @Test
+    fun `future nonempty statuses remain reliable non signed denominator rows`() {
+        val result = parseStudentRollcallProgress(
+            """{"student_rollcalls":[
+                {"student_id":"1","rollcall_status":"on_family_leave"},
+                {"student_id":"2","status":"future_attendance_state"},
+                {"student_id":"3","status":"on_call_fine"}
             ]}""",
         )
 
         assertEquals(3, result.total)
-        assertEquals(0, result.present)
-        assertEquals(0, result.absent)
-        assertEquals(0, result.leave)
-        assertEquals(3, result.unknown)
-        assertUnreliable(result)
+        assertEquals(1, result.present)
+        assertEquals(2, result.unknown)
+        assertEquals(33.333333333333336, result.percentage!!, 0.000001)
+        assertTrue(result.reliablePercentage)
+    }
+
+    @Test
+    fun `rows without any usable string status keep progress unavailable`() {
+        assertUnreliable(
+            parseStudentRollcallProgress(
+                """{"student_rollcalls":[{"student_id":"1"},{"student_id":"2","status":7}]}""",
+            ),
+        )
+        assertUnreliable(
+            parseStudentRollcallProgress(
+                """{"student_rollcalls":[{"student_id":"1","rollcall_status":false,"status":null}]}""",
+            ),
+        )
     }
 
     @Test
@@ -137,7 +175,7 @@ class StudentRollcallProgressTest {
     }
 
     @Test
-    fun `unknown and conflicting statuses suppress percentage`() {
+    fun `unknown nonempty status remains reliable and detailed field wins`() {
         val result = parseStudentRollcallProgress(
             """{"student_rollcalls":[
                 {"student_id":"1","status":"on_call","rollcall_status":"absent"},
@@ -148,10 +186,10 @@ class StudentRollcallProgressTest {
 
         assertEquals(3, result.observed)
         assertEquals(0, result.present)
-        assertEquals(1, result.absent)
-        assertEquals(2, result.unknown)
-        assertFalse(result.reliablePercentage)
-        assertEquals(null, result.percentage)
+        assertEquals(2, result.absent)
+        assertEquals(1, result.unknown)
+        assertTrue(result.reliablePercentage)
+        assertEquals(0.0, result.percentage!!, 0.0)
     }
 
     @Test
@@ -208,6 +246,7 @@ class StudentRollcallProgressTest {
             assertEquals(name, expected.getInt("present"), result.present)
             assertEquals(name, expected.getInt("absent"), result.absent)
             assertEquals(name, expected.optInt("leave", 0), result.leave)
+            assertEquals(name, expected.optInt("late", 0), result.late)
             assertEquals(name, expected.optInt("unknown", 0), result.unknown)
             assertEquals(name, expected.getInt("total"), result.total)
             if (expected.isNull("percent")) {

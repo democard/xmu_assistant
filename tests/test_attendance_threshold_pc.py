@@ -117,6 +117,23 @@ class ThresholdReferenceTests(unittest.TestCase):
         self.assertTrue(wait_before_answer_satisfied(progress, "count", count=72))
         self.assertFalse(wait_before_answer_satisfied(progress, "count", count=73))
 
+    def test_late_and_future_statuses_stay_in_threshold_denominator(self):
+        progress = RollcallProgress(
+            observed=75,
+            present=70,
+            absent=2,
+            unknown=2,
+            roster_complete=True,
+            leave=0,
+            late=1,
+        )
+        self.assertTrue(progress.reliable)
+        self.assertAlmostEqual(progress.rate_percent, 70 * 100 / 75)
+        self.assertTrue(wait_before_answer_satisfied(progress, "percent", percent=93))
+        self.assertFalse(wait_before_answer_satisfied(progress, "percent", percent=94))
+        self.assertTrue(wait_before_answer_satisfied(progress, "count", count=70))
+        self.assertFalse(wait_before_answer_satisfied(progress, "count", count=71))
+
     def test_config_save_and_reload_keeps_new_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"

@@ -306,7 +306,9 @@ class RollcallHistoryClientTest {
             items = listOf(
                 RollcallHistoryItem(
                     "r1", "c1", "课程一", "数字签到", "07-01 08:00", 1_720_000_000L * 1000,
-                    STATUS_SIGNED, StudentRollcallProgress(3, 1, 1, 0, 100.0 / 3.0, true, leave = 1), "0042",
+                    STATUS_SIGNED,
+                    StudentRollcallProgress(5, 1, 1, 1, 20.0, true, leave = 1, late = 1),
+                    "0042",
                 ),
                 RollcallHistoryItem("r2", "c1", "课程一", "数字签到", "-", null, STATUS_UNKNOWN),
             ),
@@ -323,19 +325,25 @@ class RollcallHistoryClientTest {
     }
 
     @Test
-    fun `cache without leave field remains readable as zero leave`() {
+    fun `old cache version is rejected and current cache requires late breakdown`() {
         val file = temporaryFolder.newFile("legacy_progress_cache.json")
         file.writeText(
-            """{"version":$ROLLCALL_HISTORY_CACHE_VERSION,"account_id":"u1","items":[{
+            """{"version":3,"account_id":"u1","items":[{
                 "rollcallId":"r","ownStatus":"已签","progress":{
-                    "observed":2,"present":1,"absent":1,"unknown":0,"reliablePercentage":true
+                    "observed":2,"present":1,"absent":1,"leave":0,"unknown":0,"reliablePercentage":true
                 }
             }]}""",
         )
+        assertNull(loadRollcallHistoryCache(file, "u1"))
 
-        val progress = loadRollcallHistoryCache(file, "u1")?.items?.single()?.progress
-        assertEquals(0, progress?.leave)
-        assertEquals(50.0, progress?.percentage ?: -1.0, 0.0)
+        file.writeText(
+            """{"version":$ROLLCALL_HISTORY_CACHE_VERSION,"account_id":"u1","items":[{
+                "rollcallId":"r","ownStatus":"已签","progress":{
+                    "observed":2,"present":1,"absent":1,"leave":0,"unknown":0,"reliablePercentage":true
+                }
+            }]}""",
+        )
+        assertNull(loadRollcallHistoryCache(file, "u1")?.items?.single()?.progress)
     }
 
     @Test
@@ -352,7 +360,7 @@ class RollcallHistoryClientTest {
         val file = temporaryFolder.newFile("bad_progress.json")
         file.writeText(
             """{"version":$ROLLCALL_HISTORY_CACHE_VERSION,"account_id":"u1","items":[{
-                "rollcallId":"r","type":"数字签到","progress":{"observed":2,"present":99,"absent":0,"unknown":0,"reliablePercentage":true}
+                "rollcallId":"r","type":"数字签到","progress":{"observed":2,"present":99,"absent":0,"leave":0,"late":0,"unknown":0,"reliablePercentage":true}
             }]}""",
         )
         assertNull(loadRollcallHistoryCache(file, "u1")?.items?.single()?.progress)

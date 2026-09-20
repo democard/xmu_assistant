@@ -371,8 +371,8 @@ internal const val ROLLCALL_HISTORY_FRESHNESS_MILLIS = 300_000L
 // `.tmp`+rename 原子写；进页面先渲缓存再后台刷新原位更新，失败保留缓存只报错。
 // ---------------------------------------------------------------------------
 
-/** 版本 2 废弃按更新时间误判的旧状态缓存；结构或判定语义变更时递增。 */
-internal const val ROLLCALL_HISTORY_CACHE_VERSION = 3
+/** 版本 4 废弃曾把迟到计作已签且缺少 late 分项的旧进度缓存。 */
+internal const val ROLLCALL_HISTORY_CACHE_VERSION = 4
 private const val ROLLCALL_HISTORY_CACHE_FILE = "rollcall_history_cache.json"
 private const val TAG = "RollcallHistoryClient"
 
@@ -444,6 +444,7 @@ fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
                             .put("present", progress.present)
                             .put("absent", progress.absent)
                             .put("leave", progress.leave)
+                            .put("late", progress.late)
                             .put("unknown", progress.unknown)
                             .put("reliablePercentage", progress.reliablePercentage),
                     )
@@ -481,16 +482,18 @@ private fun progressFromCache(obj: JSONObject): StudentRollcallProgress? {
     val observed = obj.strictInt("observed") ?: return null
     val present = obj.strictInt("present") ?: return null
     val absent = obj.strictInt("absent") ?: return null
-    val leave = if (obj.has("leave")) obj.strictInt("leave") ?: return null else 0
+    val leave = obj.strictInt("leave") ?: return null
+    val late = obj.strictInt("late") ?: return null
     val unknown = obj.strictInt("unknown") ?: return null
-    if (minOf(observed, present, absent, leave, unknown) < 0) return null
-    if (present.toLong() + absent.toLong() + leave.toLong() + unknown.toLong() != observed.toLong() || observed == 0) return null
-    val reliable = (obj.opt("reliablePercentage") as? Boolean == true) && unknown == 0
+    if (minOf(observed, present, absent, leave, late, unknown) < 0) return null
+    if (present.toLong() + absent.toLong() + leave.toLong() + late.toLong() + unknown.toLong() != observed.toLong() || observed == 0) return null
+    val reliable = obj.opt("reliablePercentage") as? Boolean == true
     return StudentRollcallProgress(
         observed, present, absent, unknown,
         if (reliable) present * 100.0 / observed else null,
         reliable,
         leave,
+        late,
     )
 }
 
