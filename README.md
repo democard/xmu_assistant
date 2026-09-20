@@ -6,9 +6,9 @@
 
 Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
 
-**当前版本：Android v1.7.1 · Windows v1.7.1**
+**当前版本：Android v1.7.2 · Windows v1.7.1**
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)
+[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.2/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.2)
 
 [特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
 
@@ -115,6 +115,12 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 - Android 雷达提交失败不再被记为完成，保留有界重试；历史缓存升级，避免继续展示旧统计口径。
 - Windows 454 项、Android 593 项测试通过，Android Lint 0 错误。仅对异常记录做少量只读实测，未用账号试发签到。
 - 下载：[v1.7.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)；[排查与验证交接](scripts/attendance-status-debug-handoff.md)。
+
+### v1.7.2 Android 界面修复
+
+- 修复使用教程顶部章节按钮按固定像素跳转，导致不同屏幕尺寸、字体缩放或教程内容变化后定位偏移的问题。
+- 教程按钮改为跟随实际卡片位置滚动，新增教程内容不再需要手动重算偏移。
+- Android 单元测试与 Lint 通过；沿用原签名，可覆盖 v1.7.1。
 
 ### v1.7.0 双端更新
 
@@ -238,10 +244,10 @@ Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compo
 
 | 平台 | 当前版本 | 下载 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.7.1 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant-release.apk) |
+| Android 8.0 及以上 | 1.7.2 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.2/xmu-assistant-release.apk) |
 | Windows | 1.7.1 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/xmu-assistant.exe) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.1/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
+校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.2/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
 
 ```text
 GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.7.1，DPAPI 凭据加密）

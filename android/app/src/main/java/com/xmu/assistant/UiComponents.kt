@@ -652,8 +652,12 @@ fun CoursewareItemCard(item: CoursewareUiItem, checked: Boolean, onToggle: () ->
 }
 
 @Composable
-fun TutorialSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    InfoCard {
+fun TutorialSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    InfoCard(modifier = modifier) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         content()
     }

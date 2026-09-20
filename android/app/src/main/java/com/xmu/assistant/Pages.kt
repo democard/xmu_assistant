@@ -1,6 +1,9 @@
 package com.xmu.assistant
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -402,28 +405,22 @@ fun NotificationSettingsPage(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    // 锚点滚动像素为手写近似值（跳转允许略偏）：新增小节时按前后节高
-    // （短节约 130dp、多行/带按钮节约 260dp）估算并顺延后续 offset。
-    val anchors = listOf(
-        "签到启用教程" to 0,
-        "开启监控" to 260,
-        "磁贴快捷开关" to 520,
-        "开启自动签到" to 780,
-        "查看课表" to 1040,
-        "导出日历" to 1300,
-        "考试安排与提醒" to 1430,
-        "成绩与长图分享" to 1560,
-        "模拟成绩" to 1690,
-        "桌面小卡片" to 1820,
-        "设置微信通知" to 2080,
-        "设置 QQ 邮箱通知" to 2360,
-        "下载课件" to 2620,
-        "外观主题" to 2880,
-        "常见问题" to 3010,
+    // 不再用手写像素偏移：教程内容、系统字体缩放和不同屏幕高度都会改变每张卡片的
+    // 实际高度。BringIntoViewRequester 由 Compose 根据真实布局向外层 ScrollState
+    // 滚动，新增/改写教程段落时不需要重新维护一串容易失准的数字。
+    val sectionTitles = listOf(
+        "签到启用教程", "开启监控", "磁贴快捷开关", "开启自动签到", "查看课表", "导出日历",
+        "考试安排与提醒", "成绩与长图分享", "模拟成绩", "桌面小卡片", "设置微信通知",
+        "设置 QQ 邮箱通知", "下载课件", "外观主题", "常见问题",
     )
+    val anchors = remember(sectionTitles) {
+        sectionTitles.associateWith { BringIntoViewRequester() }
+    }
     SectionCard("教程") {
         Row(
             modifier = Modifier
@@ -431,42 +428,42 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            anchors.forEach { (title, offset) ->
+            anchors.forEach { (title, _) ->
                 OutlinedButton(
-                    onClick = { scope.launch { scrollState.animateScrollTo(offset) } },
+                    onClick = { scope.launch { anchors.getValue(title).bringIntoView() } },
                     shape = RoundedCornerShape(999.dp),
                 ) {
                     Text(title, fontWeight = FontWeight.Bold)
                 }
             }
         }
-        TutorialSection("签到启用教程") {
+        TutorialSection("签到启用教程", modifier = Modifier.bringIntoViewRequester(anchors.getValue("签到启用教程"))) {
             Text("1. 在首页输入学号和密码，点击登录。")
             Text("2. 登录成功后点击启动监控。")
             Text("3. 需要自动处理数字签到和雷达签到时，再打开开启自动签到。")
             Text("账号、Cookie、通知配置和下载目录只保存在本机。")
             OutlinedButton(onClick = { navigate("首页") }) { Text("前往首页") }
         }
-        TutorialSection("开启监控") {
+        TutorialSection("开启监控", modifier = Modifier.bringIntoViewRequester(anchors.getValue("开启监控"))) {
             Text("1. 监控会按策略页的默认轮询间隔检查签到。")
             Text("2. 检测到签到后会在签到情况页展示课程、类型、剩余时间和状态。")
             Text("3. 手机端需要允许通知和后台运行，否则系统可能会限制常驻。")
             OutlinedButton(onClick = { navigate("签到情况") }) { Text("查看签到情况") }
         }
-        TutorialSection("磁贴快捷开关") {
+        TutorialSection("磁贴快捷开关", modifier = Modifier.bringIntoViewRequester(anchors.getValue("磁贴快捷开关"))) {
             Text("1. 下拉通知栏展开快捷设置面板，长按编辑，找到「签到监控」磁贴。")
             Text("2. 把磁贴拖到常用位置，之后不打开 App 点一下就能启动或暂停监控。")
             Text("3. 磁贴点亮表示监控运行中，灰色表示已暂停；与 App 内开关状态同步。")
             Text("4. 未登录时磁贴不可用，点击会跳到首页提示先登录。")
             Text("5. 长按桌面 App 图标也能看到「签到情况 / 课表 / 成绩」快捷方式直达对应页面。")
         }
-        TutorialSection("开启自动签到") {
+        TutorialSection("开启自动签到", modifier = Modifier.bringIntoViewRequester(anchors.getValue("开启自动签到"))) {
             Text("1. 自动签到只处理数字签到和雷达签到。")
             Text("2. 二维码签到只提醒，不会自动处理。")
             Text("3. 如果担心误操作，可以先关闭自动签到，只保留监控提醒。")
             OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
         }
-        TutorialSection("查看课表") {
+        TutorialSection("查看课表", modifier = Modifier.bringIntoViewRequester(anchors.getValue("查看课表"))) {
             Text("1. 进入课表页后自动读取本学期排课，按周显示课程格子。")
             Text("2. 左右滑动切换星期，顶部可以切换第几周。")
             Text("3. 格子显示课程名、节次和当周教室，不显示老师。")
@@ -474,14 +471,14 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("5. 平行教学班（同一时间多个教室）会在格子显示第一个教室，点开看全部。")
             OutlinedButton(onClick = { navigate("课表") }) { Text("前往课表") }
         }
-        TutorialSection("导出日历") {
+        TutorialSection("导出日历", modifier = Modifier.bringIntoViewRequester(anchors.getValue("导出日历"))) {
             Text("1. 课表页右上角点击「导出日历」，选择系统日历或邮件应用打开即可导入。")
             Text("2. 单双周课程会按隔周重复写入，断档的周次不会多排。")
             Text("3. 上课日期以课表页校准后的开学日为准，校准过再导出更准确。")
             Text("4. 节假日调休由学校另行安排，导入的课程不会自动跳过。")
             OutlinedButton(onClick = { navigate("课表") }) { Text("前往课表") }
         }
-        TutorialSection("考试安排与提醒") {
+        TutorialSection("考试安排与提醒", modifier = Modifier.bringIntoViewRequester(anchors.getValue("考试安排与提醒"))) {
             Text("1. 考试安排页查看各学期考试的时间、地点和座位，顶栏可切换学期，下拉即刷新。")
             Text("2. 首次进入显示骨架占位，读取完成后展示列表。")
             Text("3. 在策略页开启「考试提醒」并设置提前分钟数，到点会发通知提醒。")
@@ -489,14 +486,14 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("5. 可选「全屏提醒」：锁屏时也能弹出横幅（需要系统允许全屏通知）。")
             OutlinedButton(onClick = { navigate("考试安排") }) { Text("前往考试安排") }
         }
-        TutorialSection("成绩与长图分享") {
+        TutorialSection("成绩与长图分享", modifier = Modifier.bringIntoViewRequester(anchors.getValue("成绩与长图分享"))) {
             Text("1. 成绩页点击刷新按钮拉取各学期成绩，卡片显示课程、成绩、学分与绩点。")
             Text("2. 页面顶部汇总面板展示总学分、平均绩点等整体情况。")
             Text("3. 点击「分享长图」可把成绩单生成为一张长图，保存或分享给他人。")
             Text("4. 成绩数据按账号加密保存在本机，换账号登录会自动清空。")
             OutlinedButton(onClick = { navigate("成绩") }) { Text("前往成绩") }
         }
-        TutorialSection("模拟成绩") {
+        TutorialSection("模拟成绩", modifier = Modifier.bringIntoViewRequester(anchors.getValue("模拟成绩"))) {
             Text("1. 成绩页顶部点击「模拟成绩」，页面跳到底部的模拟区。")
             Text("2. 填入预计出分课程的成绩（0-100）和学分，可添加多行，每行可单独删除。")
             Text("3. 面板实时显示计入模拟行后的整体平均绩点、加权绩点、平均分数、加权分数；模拟课不计入已修总学分。")
@@ -504,7 +501,7 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("5. 换算采用厦大官方 4.0 分制，纯本地计算，不上传任何数据。")
             OutlinedButton(onClick = { navigate("成绩") }) { Text("前往成绩") }
         }
-        TutorialSection("桌面小卡片") {
+        TutorialSection("桌面小卡片", modifier = Modifier.bringIntoViewRequester(anchors.getValue("桌面小卡片"))) {
             Text("1. 在策略页开启「桌面小卡片」，然后点击「添加到桌面」。")
             Text("2. 系统会弹出固定小部件窗口，选一个位置放置即可。")
             Text("3. 小卡片显示今天的课程、时间和地点，点击可打开 App 课表页。")
@@ -512,14 +509,14 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("5. 如果没弹出添加窗口，可以长按手机桌面空白处 -> 小部件 -> 找到 xmu助手。")
             OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
         }
-        TutorialSection("设置微信通知") {
+        TutorialSection("设置微信通知", modifier = Modifier.bringIntoViewRequester(anchors.getValue("设置微信通知"))) {
             Text("1. 打开通知页，开启微信通知。")
             Text("2. 填入 PushPlus Token，保存后点击发送测试通知。")
             Text("3. 收到测试消息后，说明微信通知可用。")
             Text("PushPlus 会收取约 3.5 元实名费用。", color = themeWarning(), fontWeight = FontWeight.Bold)
             OutlinedButton(onClick = { navigate("通知") }) { Text("前往通知") }
         }
-        TutorialSection("设置 QQ 邮箱通知") {
+        TutorialSection("设置 QQ 邮箱通知", modifier = Modifier.bringIntoViewRequester(anchors.getValue("设置 QQ 邮箱通知"))) {
             Text("1. 在 QQ 邮箱网页版开启 SMTP 服务，并生成授权码。")
             Text("网页版", color = themeWarning(), fontWeight = FontWeight.Bold)
             Text("打开网页 -> 点击设置 -> 点击账号与安全 -> 安全设置 -> 下滑找到生成入口。")
@@ -528,7 +525,7 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("4. 保存后点击发送测试通知，确认邮箱能收到提醒。")
             OutlinedButton(onClick = { navigate("通知") }) { Text("前往通知") }
         }
-        TutorialSection("下载课件") {
+        TutorialSection("下载课件", modifier = Modifier.bringIntoViewRequester(anchors.getValue("下载课件"))) {
             Text("1. 进入课程课件页，先点击刷新课程。")
             Text("2. 选择学年、学期和课程，再点击刷新课件。")
             Text("3. 勾选需要的课件，点击下载；也可以点击全选后统一下载。")
@@ -536,13 +533,13 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("5. 下载失败的课件会在卡片里显示原因，例如平台未提供地址、登录过期、网络失败。")
             OutlinedButton(onClick = { navigate("课程课件") }) { Text("前往课程课件") }
         }
-        TutorialSection("外观主题") {
+        TutorialSection("外观主题", modifier = Modifier.bringIntoViewRequester(anchors.getValue("外观主题"))) {
             Text("1. 策略页底部的「外观」可选浅色、深色或跟随系统。")
             Text("2. 切换即时生效并自动记忆，下次启动保持上次选择。")
             Text("3. 桌面小卡片会同步使用深色配色，夜间不刺眼。")
             OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
         }
-        TutorialSection("常见问题") {
+        TutorialSection("常见问题", modifier = Modifier.bringIntoViewRequester(anchors.getValue("常见问题"))) {
             Text(
                 "重要：系统后台限制无法绕过。手机锁屏后，Android 系统（尤其国产系统）可能延迟或停止后台服务，自动签到和提醒最多可能延迟约 6 小时（系统数据同步周期）。",
                 color = themeWarning(),

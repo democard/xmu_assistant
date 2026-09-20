@@ -87,3 +87,10 @@
 - EXE 为 35,952,750 字节，APK 为 3,983,574 字节。发布校验值以 [`release/SHA256SUMS.txt`](../release/SHA256SUMS.txt) 为准。
 - [v1.7.1 发布入口](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)，附双端安装包与 SHA-256 清单；Git 作者沿用 `democard`。
 - 本次提交只保留脱敏统计与合成测试数据；真实账号配置、Cookie、原始名单、私有签名材料、诊断日志与桌面备份不随发布上传。
+
+### v1.7.2 Android 教程定位修复
+
+- 教程顶部章节按钮原先按固定像素偏移滚动；卡片高度、系统字体缩放或屏幕尺寸变化后会定位到错误段落。
+- 改为 `BringIntoViewRequester` 绑定每张教程卡片，由实际布局驱动滚动；未改变教程内容和跨页导航。
+- Android 单元测试与 Lint 通过，正式 APK 构建成功；版本号 `1.7.2 / 29`，签名证书与 v1.7.1 一致。
+- 本次仍未使用真实校园账号做网络请求或签到提交。
