@@ -1,459 +1,168 @@
 <div align="center">
 
-# 🎓 xmu助手（XMU Assistant）
+<img src="assets/xmu-assistant-mark.png" width="96" alt="xmu助手图标">
 
-**厦门大学 LNT / TronClass 双端助手 —— Windows 桌面端 + Android 原生端，签到、课件、课表、成绩、考试安排一站搞定。**
+# xmu助手 · XMU Assistant
 
-Windows 桌面端 · PySide6 　|　 Android 原生端 · Kotlin + Jetpack Compose
+在 Windows 上查看签到、下载课件，在 Android 上管理课表、成绩和考试安排。
 
-**当前版本：Android v1.7.3 · Windows v1.7.3**
+面向厦门大学 LNT / TronClass 与教务系统的个人学习工具。
 
-[下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [发布说明与校验文件](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)
+**当前版本：Windows 1.7.3 · Android 1.7.3**
 
-[特性总览](#-特性总览) · [快速开始](#-快速开始) · [二次开发](#-二次开发) · [项目结构](#-项目结构) · [接口实现说明](#-接口实现说明)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)
 
 </div>
 
----
+两端独立登录、独立运行，无需配对。Windows 端适合在电脑上查看签到记录、批量下载课件；Android 端还提供周课表、桌面小组件、成绩统计和考前提醒。
 
-## 🤔 为什么有它
+[安装与使用](#安装与使用) · [功能对照](#功能对照) · [本版更新](#本版更新) · [数据与隐私](#数据与隐私) · [开发与验证](#开发与验证) · [问题反馈](#问题反馈)
 
-厦大教学用的是 TronClass（LNT 学习平台）和教务系统：签到总是悄悄出现、课件散落在章节里、课表成绩考试各在一个系统。xmu助手把这些**碎片化的学生日常全部收进一个工具**：
+## 安装与使用
 
-- **桌面端**替你在电脑上 7×24 盯住签到，识别数字 / 雷达 / 二维码签到，数字码自动填、雷达自动答，再也不会错过签到；
-- **Android 端**把教务系统搬进手机：全学期课表（支持桌面小卡片）、成绩统计与长图分享、考试安排与考前强提醒；
-- 两端都能像本地应用一样**直接下载课件**；平台版权保护的附件桌面端会识别并标记，Android 端直接尝试下载、失败时保留网页入口。
+### 下载
 
----
-
-## 📜 参考与致谢
-
-- 签到监控、数字签到与雷达签到处理思路参考 [KrsMt-0113/XMU-Rollcall-Bot](https://github.com/KrsMt-0113/XMU-Rollcall-Bot)（签到轮询接口、`number_code` 递归提取、基于距离估算候选位置、Cookie 保存恢复）；
-- 课件下载参考 [KrsMt-0113/XMUFD](https://github.com/KrsMt-0113/XMUFD)；
-- Android 端课表、成绩、考试查询为本项目自行实现并真机 / 模拟器调试；
-- 依赖开源项目：[requests](https://github.com/psf/requests)、[PySide6](https://doc.qt.io/qtforpython/)、[OkHttp](https://github.com/square/okhttp)、Jetpack Compose（Material 3）、WorkManager、[AndroidX Security（EncryptedSharedPreferences）](https://developer.android.com/jetpack/androidx/releases/security)、MockWebServer / Robolectric / JUnit4。
-
----
-
-## ✨ 特性总览
-
-| 能力 | Windows 桌面端 | Android 原生端 |
-| --- | :-: | :-: |
-| 账号登录（学号 + 密码，厦大统一认证） | ✅ | ✅ |
-| 登录态 Cookie 保存 / 恢复 / 会话健康探测 | ✅ | ✅ |
-| 签到事件轮询监控（数字 / 雷达 / 二维码识别） | ✅ | ✅ |
-| 数字签到自动填码、雷达签到自动应答 | ✅ | ✅ |
-| 轮询间隔与自动处理开关 | ✅ | ✅ |
-| 本次全班已签人数、比例和数字签到码 | ✅ | ✅ |
-| 自定义人数 / 比例门槛后自动签到 | ✅ | ✅ |
-| 通知：系统通知 / PushPlus 微信 / QQ 邮箱 | ✅ | ✅ |
-| 签到历史查询（按学年 / 学期 / 时间范围 / 未签筛选） | ✅ | ✅ 最近十次（本人明细核实） |
-| 课程课件浏览与批量下载 | ✅ | ✅ |
-| 课表（教务系统全学期排课，周 / 日程视图） | — | ✅ |
-| 桌面小卡片（今日课程 Widget） | — | ✅ |
-| 成绩统计（GPA / 加权 / 学分）与长图分享 | — | ✅ |
-| 专业排名（手动申请、成绩变化标记待更新） | — | ✅ |
-| 绩点证明 PDF 导出与本地清理 | — | ✅ |
-| 考试安排查询与考前提醒（精确闹钟 + 全屏强提醒） | — | ✅ |
-| 深链接直达（`xmurollcall://`） | — | ✅ |
-| 快捷设置磁贴一键开关监控 | — | ✅ |
-| 桌面图标长按快捷方式（签到情况 / 课表 / 成绩） | — | ✅ |
-| 签到记录 CSV 导出（utf-8-sig）与按课程签到率统计 | ✅ | — |
-| 课表导出日历（.ics，单双周按隔周重复写入） | — | ✅ |
-| 运行日志导出为文本文件 / 页面快捷键 Ctrl+1..6 · Ctrl+R | ✅ | — |
-| 系统托盘、开机自启 | ✅ | — |
-
----
-
-## 🖥️ Windows 桌面端
-
-由 `/xmu-rollcall-cli` Python 包驱动，`PySide6` 实现，多页签工作台 + 系统托盘常驻。
-
-### 首页 · 签到监控
-
-- 登录、退出登录、**自动恢复登录态**（Cookie 存本地，重启免登录）；
-- 轮询当前账号可见的签到事件，识别**数字签到 / 雷达签到 / 二维码签到**；
-- 数字签到自动读取并显示签到码，支持手动处理选中签到或标记跳过；
-- 「开启自动签到」总开关控制数字 / 雷达自动处理；数字签到作答前使用配置的延迟；
-- 策略页可选择人数或比例门槛，填写达到多少人 / 多少百分比后才自动处理；未达标继续检测，数据未获取时不视为达标。主动手动处理不受自动门槛限制。
-- 二维码签到**只提醒、不自动处理**（需要扫码，无法代做）；
-- 三种通知渠道：系统通知、PushPlus 微信、QQ 邮箱（SMTP）。
-
-### 签到情况
-
-- 拉取账号的全部课程与签到记录，按学年 / 第一 / 第二 / 第三学期筛选；
-- 时间范围筛选：今天 / 本周 / 本学期，默认本学期，支持只看未签到；
-- 按日期聚合展示，状态区分：未签 / 未知 / 已签 / 无记录；
-- **导出 CSV**：当前筛选结果一键导出（utf-8-sig 编码，Excel 双击直开），导出内容与页面所见一致；
-- **签到率统计**：按课程聚合已签 / 未签 / 未知与签到率（「无记录」占位行不计入分母）。
-
-### 课程课件
-
-- 按学年、学期、课程筛选，课程顺序保持平台接口原始顺序；
-- 课件严格按**平台章节树**排序展示（而非活动接口顺序），活动详情**并发拉取**减少等待；
-- 显示文件名、类型、大小、发布时间、处理状态与下载权限；
-- Ctrl 多选批量下载 / 下载整个课程；下载按课程分目录保存，重名不覆盖；
-- `allow_download=false` 但程序可下载的课件标记为「可下载（平台版权保护）」并允许下载。
-
-### 策略与日志
-
-- 策略页：轮询间隔（1–300 秒可调）、自动签到开关与延迟参数；
-- 日志全程留痕（登录、刷新、轮询、异常），设置页可一键**导出运行日志**为文本文件，便于反馈问题；
-- 页面快捷键：`Ctrl+1..6` 直达左侧页签，`Ctrl+R` 刷新当前页（签到情况 / 课程课件页）。
-
----
-
-## 📱 Android 原生端
-
-位于 `/android`，`Kotlin + Jetpack Compose (Material 3)`，独立登录、独立后台监控，与桌面端互不依赖。
-
-### v1.7.3 双端稳定性修复
-
-- 双端续传校验服务器范围与实际字节数，错误响应保留断点；支持带查询参数、fragment 的课件直链。
-- Windows 换号及重新登录后丢弃旧下载事件，课程章节缓存按会话隔离；修复压缩下载误报、非法邮件端口及 pip 安装后缺少图标。
-- Android 下载 Cookie 仅发往同源地址；课表缓存替换失败保留旧数据，考试缓存可从系统时间回拨恢复。
-- 修复日历事件 UID 碰撞、Android 8/9 成绩图片连续保存覆盖及压缩失败残留，恢复网络基准变体编译。
-- 日历 UID 规则已更新：向含旧版本导入事件的日历再次导入，可能出现新旧两组事件，建议先移除旧导入。
-- 双端版本统一为 1.7.3；Android versionCode 30，沿用原签名。验证详情见 [测试报告](TEST_REPORT.md)。
-- 下载：[v1.7.3 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)。
-
-### v1.7.1 双端修复
-
-- 签到进度只统计明确已签的人数；请假、迟到、缺勤和其他非已签状态只计入总人数。例如 70 已签、2 迟到、1 请假、2 缺勤显示 **70/75（93.3%）**。
-- 修复名单已经读取成功，却因为出现请假或未列入词表的考勤状态而整条显示“暂未获取”的问题。详细状态优先，避免把迟到对应的粗分类误算为已签。
-- 本人明细出现冲突时等待下一轮核实，不拿旧列表状态覆盖；明确已签、迟到或请假不重复自动提交。班级比例统计与本人状态保护分别判断。
-- Android 雷达提交失败不再被记为完成，保留有界重试；历史缓存升级，避免继续展示旧统计口径。
-- Windows 454 项、Android 593 项测试通过，Android Lint 0 错误。仅对异常记录做少量只读实测，未用账号试发签到。
-- 下载：[v1.7.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)；[排查与验证交接](scripts/attendance-status-debug-handoff.md)。
-
-### v1.7.2 Android 界面修复
-
-- 修复使用教程顶部章节按钮按固定像素跳转，导致不同屏幕尺寸、字体缩放或教程内容变化后定位偏移的问题。
-- 教程按钮改为跟随实际卡片位置滚动，新增教程内容不再需要手动重算偏移。
-- Android 单元测试与 Lint 通过；沿用原签名，可覆盖 v1.7.1。
-
-### v1.7.0 双端更新
-
-- 双端接入本次签到已签人数、总人数与比例，策略页支持自定义“达到 N 人”或“达到 X%”再自动签到。默认不启用人数条件，原自动签到开关继续独立生效。
-- Android 首页标明自动签到是与策略页同步的快捷开关，显示实际类型与人数条件；尚未启动监控时提示未生效，并提供直达策略页的入口。
-- 修复 Android 数字签到提交失败后被提前记为完成、后续不再尝试的问题：下一轮读取最新数字码，有界恢复；响应丢失或服务端异常时先核实本人状态，已签不重复提交。单条签到被拒绝不会直接判定整个账号登录失效。
-- Android 进行中记录右侧显示人数和比例，数字码在卡片底部支持复制；已结束数字签到在右侧统计下方追加签到码。未获取时使用中性提示，不显示虚假的 0% 或“全班已签”。
-- PC 首页与历史表增加人数 / 比例和签到码列，移除没有可靠来源的剩余时间占位；历史沿用最近 20 条自动核实，更旧记录可通过“核实所选”补充明细。
-- 查看人数、获取签到码、刷新与复制本身不提交签到；后台处理需要满足用户已开启的自动策略。有效截止时间仍参与内部判断，无截止时间不凭开始时间推算倒计时。
-- 修复等待门槛被旧去重逻辑吞掉、缺码被误记为完成，以及修改策略时旧任务仍可能触发提交的问题。统计严格使用原始状态，不采用历史显示的状态兜底。
-- 包含此前的签到状态统一、会话过期识别和 PushPlus 回执判定修复。580 项 Android 测试、431 项 Windows 测试通过；未使用真实校园账号联调。
-- 修复 Windows 打包时误收集其他工具的 ICU 库而导致 Qt 启动失败的问题，避免同名 DLL 冲突并减少包体积。
-- 下载：[v1.7.0 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)；[实现、边界与验收交接](scripts/attendance-threshold-integration.md)。
-
-### v1.6.9 更新
-
-- 修复（Windows 桌面端）：登录在途被取消、登出或换号后，迟到的会话不再写入账号和 Cookie；签到监控事件带运行令牌，停止、换号或重启后的旧 worker 事件会被丢弃，避免旧账号事件影响当前界面或触发处理。
-- 修复（Android）：课程列表和课程课件使用的 `academic_cache_json` 在同一会话内按 revision 提交，旧请求完成得更晚时不再覆盖较新的缓存；桌面小组件在本地登录镜像缺失时，只有自动登录策略为 ENABLED 且主 Cookie 非空才允许继续同步，明确退出或无有效主会话时会被拦截。
-- 同时包含此前本地构建的 v1.6.8 修复：Android 15 签到监控前台服务改用 `specialUse` 类型，桌面端 `_MEI` 残留仅在带本应用所有权标记时清理。
-- 532 项 Android 测试、390 项 Windows 桌面端测试通过；下载：[v1.6.9 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9)。
-
-### v1.6.8（本地改动，已随 v1.6.9 发布）
-
-- 修复（Android）：签到监控前台服务在 Android 15 改用 `specialUse` 类型——原先的 `dataSync` 类型在该系统有 24 小时内累计 6 小时的强制超时，全天候监控必然触顶被停；现按系统版本分派 FGS 类型（API 35+ specialUse / 29–34 dataSync / 更早两参版本），manifest 声明用途与权限，并加超时兜底回调。
-- 修复（Windows 桌面端）：后台 `_MEI` 残留清理加「所有权标记」——此前按前缀 + 年龄整树删除 %TEMP% 解包目录，可能误删同机其他 PyInstaller 应用正在使用的目录（对方功能懒加载全失效）；现只清理带本应用标记且超龄的残留，宁可少清也不误删。
-- 528 项 Android 测试、379 项 Windows 桌面端测试通过。
-- 本地改动已随 [v1.6.9 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9) 发布。
-
-### v1.6.7 更新
-
-- 安全修复（Windows 桌面端）：凭据加密（DPAPI）在打包版中此前会间歇性失效——部分保存会把统一身份认证密码 / SMTP 授权码 / 会话 Cookie 以**明文**写盘并留下误导性告警（「未安装 pywin32」）。现改为应用启动期一次性加载加密模块并缓存，保存路径不再依赖运行中途可能失效的解包目录；若启动期即不可用，告警会带上真实原因。
-- 已有的 dpapi 加密数据完全兼容，无需重新登录；此前若某次保存被写成明文，本次保存起会自动重新加密。
-- 527 项 Android 测试通过（Android 端本轮无改动）。Windows 桌面端版本号 1.6.7。
-- 下载：[v1.6.7 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.7)。
-
-### v1.6.6 更新
-
-- 安全：QQ 邮箱通知的两条 SMTP 通道（465/587）补上服务器证书校验（此前标准库默认不验证，局域网中间人可截获授权码）；教务重定向一旦离开厦大域或降级明文，立即剥离会话 Cookie（CAS 登录链不受影响）。
-- 隐私：云备份/换机迁移排除清单补齐——明文考试安排、签到去重集、加密凭据 prefs（MasterKey 不随迁移，密文恢复到新设备会解不开）、外部课件目录不再进备份。
-- 修复：pip 安装包补齐 desktop_qt 子包（此前入口点必挂）；PyInstaller spec 的 iconengines 过滤规则补上 plugins 段（此前从未生效）。
-- 优化：课件表整表重建改为一次预留行（去 O(n²) 行插入，下载过程更顺滑）；课件缓存接入进程级快照，转屏不再全量重解析。527 项 Android 测试通过。
-- 下载：[v1.6.6 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.6)。
-
-### v1.6.5 更新
-
-- 专业排名读取流程修复：点击「获取专业排名」先探测所选范围的已有记录——已有完整记录直接读取复用并标注原因，不再重复提交申请；教务对已存在记录的范围会忽略重复申请，原先「先提交再等待」必然白等。
-- 等待兜底：服务端已有有效记录时重复申请可能不生成新记录，等待窗口内未出现新记录时改用所选范围最近一次完整计算记录出结果并明确标注来源，不再永远卡在「正在等待计算」。
-- 排名范围未选时按钮明示原因；522 项 Android 测试通过。Windows 端沿用 v1.5.0，无功能改动。
-- 下载：[v1.6.5 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.5)。
-
-### v1.6.3 更新
-
-- 签到历史状态判定修正：本人状态仅凭明确状态词判定（已签 / 未签 / 缺勤），不再凭更新时间／提交时间误判为已签；历史明细未回时仅作展示兜底，原始状态与缓存保持不变。
-- 下载：[v1.6.3 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.3)。
-
-### v1.6.1 更新
-
-- 成绩页新增独立专业排名页：用户手动申请绩点计算、读取本次证明排名，成绩变化仅标记待更新；中断后继续查询不重复申请，原始 PDF 支持导出与本地清理。
-- 优化首页与底部导航；课表固定 11 节、节次对齐，多个教室逐行显示；桌面小组件沿用紧凑布局并适配不同尺寸。
-- 移除顶部标语并对齐标题；精简未使用的算法资源，Android 安装包约 3.95 MB。501 项 Android 测试通过。
-- 排名接口依据接口文档实现，尚未使用真实校园账号联调。Windows 端沿用 v1.5.0，无功能改动。
-- 下载：[v1.6.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.1)。PDF 文字读取使用 [PDFBox Android](https://github.com/tomroush/pdfbox-android)（Apache-2.0）。
-
-### 签到监控（移动端）
-
-- 前台服务 `RollcallMonitorService` 常驻轮询，检测到签到后推送本地通知（课程、类型和状态；有有效截止时间时附带截止时间）；
-- 数字 / 雷达签到可开关自动处理，二维码签到只提醒；
-- 通知携带深链接 `xmurollcall://rollcall/{id}`，点击直达处理页；
-- 「签到情况」页含**最近十次签到**历史区块：学期倒序分批拉取（凑够即停）、按本人明细判定准确状态（已签 / 未签 / 未知），缓存先行秒开、失败保留旧数据只报错。
-- **快捷设置磁贴**：通知栏快捷面板添加「签到监控」磁贴，不打开 App 一键启动 / 暂停监控；未登录时置灰并引导去首页；
-- **桌面图标快捷方式**：长按 App 图标可直达「签到情况 / 课表 / 成绩」三个高频页面。
-
-### 课表、成绩与考试
-
-- **课表**：每周 7 天、每天固定 11 节，支持周 / 日程视图；全表节次等高，课程块按实际节次对齐，多个教室逐行完整列出；文字较多时统一增高并可滚动查看。点击查看老师、完整周次与平行教学班详情；支持**导出日历（.ics）**，单双周自动隔周重复、断档周次不错排；
-- **成绩**：百分制成绩 + 统计面板（平均绩点 / 加权绩点 / 平均分数 / 加权分数 / 已修总学分），一键渲染成**竖版长图**分享；
-- **考试安排**：当前学期 + 历史学期查询，未排考课程识别；支持下拉刷新与首载骨架占位；每场未完成考试在开考前指定分钟数触发**精确闹钟提醒**（可选锁屏全屏强提醒，Android 13+ 自动引导通知授权）。
-
-### 专业排名与绩点证明
-
-- 从「成绩」进入独立的「专业排名」页，点击「获取专业排名」才提交新的绩点计算申请，进入页面不会自动申请。
-- 成绩新增或更正后，旧排名标记为「待更新」，是否重新获取由用户决定；页面以红字提醒不要频繁申请。
-- 申请响应丢失或短时等待未完成时，可「继续查询结果」，不会重复提交；查询失败保留已有排名与日期。
-- 「导出绩点证明」通过系统文件选择器保存原始 PDF。「清理 PDF」仅删除应用内证明，保留排名与日期，不影响已经导出的文件。
-- 排名以本次计算范围和时间为准。该接口依据文档接入，尚未使用真实校园账号联调，学校接口或证明模板变化时可能需要适配。
-
-### 页面导航与桌面小组件（Widget）
-
-- 底部固定「首页 / 课表 / 成绩 / 签到 / 更多」，课件、考试、通知和策略集中在更多页；顶部标题与图标、登录状态对齐。
-- 桌面「今日课程」小组件默认申请 4×1，支持缩窄和拉高；宽尺寸分列显示时间、课程和教室，窄尺寸使用两行摘要，优先展示尚未结束的课程。
-- 根据可用尺寸安排课程数量；缓存未来 14 天课程摘要，跨日读取本地排课，超出缓存范围提示刷新。支持浅色、深色及点击打开课表。
-- 策略页一键添加、可开关；组件只读取非敏感摘要，不含学号 / 密码 / Cookie。具体尺寸和刷新时机受系统及桌面启动器影响。
-
-### 内置教程
-
-- 每个功能页内置图文使用说明，含国产系统后台限制与电池策略提示，开箱即用不迷路。
-
----
-
-## 🔐 安全与隐私设计
-
-这是本项目工程化最深的部分，不止是"能用"：
-
-- **数据只在本机**：账号、Cookie、通知配置、课表 / 成绩 / 考试缓存全部只存本地，无任何云端中转；
-- **加密存储**：Android 端账号与 Cookie 使用 `EncryptedSharedPreferences`（AndroidX Security）加密保存；
-- **会话健康探测**：`SessionHealthProbe` 通过状态码、身份页跳转（`c-identity.xmu.edu.cn` / `ids.xmu.edu.cn`）与登录页特征识别会话是否过期，绝不在失效会话上空跑签到；
-- **请求门控**：`RequestGate` / `MonitorRunGate` 以互斥区串行化登录、登出、轮询、刷新，杜绝竞态；换号登录自动清空成绩 / 课表 / 考试缓存与提醒闹钟，**防串号、防串提醒**；
-- **有界并发**：批量请求走 `BoundedParallel` 有界并发池；课件详情并发拉取但受窗口限制，不给平台造成压力；
-- **只读网络基准**：专门的 `networkBenchmark` 构建变体只做只读探测并输出网络时延统计（`NetworkTiming`），用于评估校园网 / 隧道环境，不产生任何写操作；
-- **缓存版本化**：课表缓存带格式版本号，旧格式自动失效重拉；数据刷新带 `SessionEpoch` 防过期结果覆盖新数据；
-- **覆盖安装不丢数据**：Android 固定调试签名（keystore 入库），`install -r` 覆盖升级保留本地登录态；
-- **桌面端可定位配置目录**：默认 `~/.xmu_rollcall`，可用环境变量 `XMU_ROLLCALL_CONFIG_DIR` 重定向；写失败自动回退到当前目录。
-
----
-
-## 🚀 快速开始
-
-### 开箱即用（推荐）
-
-构建产物发布在 GitHub Releases（仓库内 `release/` 仅保留 SHA256SUMS.txt 校验文件）：
-
-| 平台 | 当前版本 | 下载 |
+| 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Android 8.0 及以上 | 1.7.3 | [APK 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) |
-| Windows | 1.7.3 | [EXE 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) |
+| Windows | 1.7.3 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe)，下载后运行，无需另装 Python |
+| Android | 1.7.3（versionCode 30） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.7.3 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.7.3.zip) |
 
-校验文件：[SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/SHA256SUMS.txt)。Android 延续原有签名，可覆盖同签名旧版；请只从本仓库官方发布页获取更新。
-
-```text
-GitHub Releases → xmu-assistant.exe           # Windows 桌面端（含 Python 运行时 + PySide6，免安装；v1.7.3，DPAPI 凭据加密）
-                                              #   复现构建：pyinstaller xmu-assistant.spec（或 scripts/build_dashboard_exe.bat）
-GitHub Releases → xmu-assistant-release.apk   # Android 端（release 构建，R8 压缩；固定签名，覆盖安装不丢登录数据）
-release/SHA256SUMS.txt                        # 当前产物 SHA-256 校验值（随每次发布更新）
-```
-
-- **Windows**：下载 `xmu-assistant.exe` 双击运行。首次登录后在「首页」输入学号密码，程序自动恢复 / 保存 TronClass Cookie、刷新签到情况、读取课件列表并预加载默认课程课件；账号等敏感信息经 DPAPI 加密落盘。
-- **Android**：通过 ADB 或系统安装器安装 `xmu-assistant-release.apk`；系统通知 / 电池策略 / 小卡片按内置教程配置即可。
-
-> 根据所选客户端使用 Windows 或 Android；校园功能需要可访问厦大统一认证、LNT/TronClass 和教务系统的网络环境。
-
-### 从源码运行（二次开发）
+文件校验值见 [SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与校验文件中的同名条目核对：
 
 ```powershell
-# 环境准备（推荐 Conda）
-conda create -n xmu-rollcall-dashboard python=3.11
-conda run -n xmu-rollcall-dashboard python -m pip install -r .\xmu-rollcall-cli\requirements.txt pyinstaller
-
-# 运行桌面端
-$env:PYTHONPATH=(Resolve-Path .\xmu-rollcall-cli).Path
-conda run -n xmu-rollcall-dashboard python -m xmu_rollcall.desktop
+Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
+Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 ```
 
-Android 端用 Android Studio 打开 `android/` 直接构建（要求 JDK 17 + Android SDK，`compileSdk 35`、`minSdk 26`）。
+**Android 更新请从本仓库发布页下载。** 当前 APK 沿用仓库内公开的固定调试签名，支持覆盖同签名旧版；该签名不能证明安装包来自维护者，任何持有公开密钥的人都能制作同签名安装包。卸载应用会清除应用私有数据，正常更新请使用覆盖安装。
 
----
+### 第一次使用
 
-## 🛠️ 技术栈
+1. 打开应用，用自己的厦大统一身份认证账号登录。网络需要能访问统一认证、LNT / TronClass；课表、成绩和考试查询还需要能访问教务系统。
+2. 按需查看签到记录、课程课件，或在 Android 端查看课表和成绩。登录过期时重新登录。
+3. 需要签到提醒时，先配置通知渠道，再启动监控。Android 请按照内置教程检查通知权限和后台电池限制；考试强提醒还受精确闹钟、全屏通知权限影响。
+4. 需要自动处理时，在策略页确认数字 / 雷达签到开关、延迟及人数条件。**查看记录、刷新人数或复制签到码本身不会提交签到。**
 
-| 端 | 技术 |
+监控依赖应用运行、有效登录态和网络连接。Windows 端需保持程序运行；Android 使用前台服务，仍可能受系统或厂商后台策略影响。提醒和自动处理不保证始终及时、成功。
+
+## 功能对照
+
+| 功能 | Windows | Android |
+| --- | --- | --- |
+| 登录态保存与恢复、会话过期检测 | 支持 | 支持 |
+| 数字 / 雷达 / 二维码签到事件识别与提醒 | 支持 | 支持 |
+| 数字 / 雷达签到自动处理 | 支持，可配置开关与门槛 | 支持，可配置开关与门槛 |
+| 本次已签人数、比例、数字签到码 | 支持 | 支持 |
+| 历史签到查询 | 学年、学期、时间范围与未签筛选 | 最近十次，核实本人明细 |
+| 签到记录导出与统计 | CSV 导出、按课程统计签到率 | — |
+| 课程课件浏览与批量下载 | 支持 | 支持 |
+| 系统通知、PushPlus、QQ 邮箱通知 | 支持 | 支持 |
+| 全学期课表、周 / 日程视图、日历导出 | — | 支持 |
+| 今日课程桌面小组件 | — | 支持 |
+| 成绩、GPA / 加权均分 / 学分统计、长图分享 | — | 支持 |
+| 专业排名、绩点证明 PDF 导出 | — | 手动申请或读取已有结果 |
+| 考试安排与考前提醒 | — | 支持 |
+| 常驻与快捷操作 | 系统托盘、开机自启、页面快捷键 | 快捷设置磁贴、图标长按入口 |
+
+### 签到与课件
+
+数字和雷达签到按所选策略处理；二维码签到只提醒，需要用户自行扫码。人数门槛可选“达到 N 人”或“达到 X%”；数据未获取时不视为达标。统计中只有明确已签计入已签人数，迟到、请假、缺勤等仍计入总人数。本人状态有冲突时等待核实，明确已签、迟到或请假时不重复自动提交。
+
+课件可按课程浏览并批量下载。Windows 按平台章节组织列表、按课程目录保存，重名文件不直接覆盖；Android 支持课程搜索和学年学期筛选，无法直接下载时保留平台入口。下载是否成功仍取决于当前账号权限、链接有效性和服务器响应。
+
+### Android 课表与教务功能
+
+课表提供每周七天、每天十一节的网格和日程视图，支持查看今天、跳转周次、复制课程详情及导出 `.ics` 日历。今日课程小组件保存未来十四天的课程摘要，跨日可读取本地排课，超过缓存范围需刷新；显示数量和刷新时机也受桌面启动器影响。
+
+成绩页支持统计、模拟成绩计算和长图分享。专业排名需要用户手动发起查询；已有完整结果时可复用，成绩变化只标记待更新。证明 PDF 可导出或清理应用内副本，已导出的副本需自行管理。**专业排名接口尚未用真实校园账号完成联调。**
+
+考试页按学期展示安排，可设置考前提醒。课表、成绩和考试的缓存用于离线查看，最新安排仍应以学校系统为准。更多入口与构建说明见 [Android 文档](android/README.md)。
+
+## 本版更新
+
+v1.7.3 主要修复下载、账号切换和导出中的边界问题：
+
+- **双端下载**：续传前校验响应范围与实际字节数，错误响应保留断点；识别带查询参数和 fragment 的课件直链。
+- **Windows**：账号切换或重新登录后丢弃旧下载事件，章节缓存按会话隔离；修复压缩下载误报、非法邮件端口及 Python 安装包缺少图标。
+- **Android**：初始下载请求仅向同源地址发送 Cookie；课表缓存替换失败时保留旧数据，考试缓存可从系统时间回拨恢复。
+- **日历与成绩图片**：修复日历事件标识碰撞，以及 Android 8 / 9 连续保存成绩图片时的覆盖和失败残留。
+
+日历事件标识规则已改变：向保留旧版导入事件的日历再次导入，可能出现重复事件，建议先移除旧导入。完整记录见 [v1.7.3 发布页](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)与[测试报告](TEST_REPORT.md)，旧版本记录见 [Releases](https://github.com/democard/xmu_assistant/releases)。
+
+## 数据与隐私
+
+应用在本机保存配置、登录态和业务缓存。登录、查询、签到操作会连接学校系统；启用 PushPlus 或邮件通知时，通知内容会发送到所选服务。导出的课表、成绩图片、证明和日志也可能包含个人信息，分享前请自行检查。
+
+| 数据 | 保存方式与边界 |
 | --- | --- |
-| Windows 桌面端 | Python 3.11+、PySide6、requests、xmulogin、pywin32（DPAPI 加密账号/授权码/Token）、PyInstaller 打包 |
-| Android 端 | Kotlin、Jetpack Compose（Material 3）、OkHttp、EncryptedSharedPreferences、WorkManager、AlarmManager、AppWidget |
-| 测试 | pytest（桌面引擎 / 课件 / 通知 / 配置）、MockWebServer + Robolectric + Compose UI Test（Android JVM 测试，无需模拟器） |
+| Windows 密码、Cookie、通知密钥 | 使用当前 Windows 用户的 DPAPI 加密；若加密组件不可用或加密失败，当前实现会告警并回退为明文，不能把整个配置目录视为始终加密 |
+| Android 账号、Cookie 等凭据 | 使用 EncryptedSharedPreferences 保存；不等于所有业务缓存和导出文件均已加密 |
+| 课表、成绩、考试与签到缓存 | 用于本地展示；换号和登出时按业务清理或隔离，外部导出副本不随登出自动删除 |
+| Android 小组件摘要 | 包含课程名、时间和地点，不包含密码或 Cookie；课程安排本身仍可能涉及个人隐私 |
 
----
+Windows 默认配置目录为当前用户主目录下的 `.xmu_rollcall`。需要独立测试配置时，可在启动前设置 `XMU_ROLLCALL_CONFIG_DIR`。目录结构、加密限制及开发方式见 [Windows 文档](xmu-rollcall-cli/README.md)。
 
-## 📁 项目结构
+提交代码或反馈问题时，不要附带真实账号、密码、Cookie、通知密钥、运行配置和未经脱敏的截图。仓库保存源码、测试和校验文件，EXE / APK 通过 GitHub Releases 分发；本地运行数据和构建日志不作为发布内容。
+
+## 开发与验证
+
+### 从源码运行
+
+先获取源码，再在项目根目录执行环境准备和启动命令。以下示例使用 PowerShell，需要 Python 3.11 或以上；独立虚拟环境无需 Conda：
+
+```powershell
+git clone https://github.com/democard/xmu_assistant.git
+cd xmu_assistant
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\xmu-rollcall-cli\requirements.txt
+$env:PYTHONPATH = (Resolve-Path .\xmu-rollcall-cli).Path
+.\.venv\Scripts\python.exe -m xmu_rollcall.desktop
+```
+
+Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 35，再使用仓库的 Gradle 8.7 Wrapper 构建。测试与产物路径见 [Android 构建说明](android/README.md#构建与测试)；Windows 的测试、打包及本地配置见 [Windows 开发说明](xmu-rollcall-cli/README.md)。
+
+### v1.7.3 验证范围
+
+| 检查 | 发布前结果 |
+| --- | --- |
+| Windows 自动化回归 | 481 项测试、144 个子测试通过；致命语法 / 名称检查与编译检查通过 |
+| Android Debug 回归 | 610 项测试通过；Lint 0 错误、6 警告 |
+| Android 网络基准变体 | 编译及 4 项定向模式 / 安全测试通过，未发起实际校园网络基准请求 |
+| 安装包 | Windows EXE 构建、首页和图标检查通过；Android release 构建、签名检查、模拟器覆盖升级与启动通过 |
+| 脱敏 | 源码与安装包未发现真实身份、凭据或运行配置被打入；本地日志和敏感截图已排除提交 |
+
+以上是 v1.7.3 的发布记录，不代表每个功能、设备或网络环境都已验证。本次未完成真实校园功能、真实通知发送和 Android 真机全流程验收；Windows 页面切换也未完成单独人工验收。测试方法、证据说明与剩余边界见 [TEST_REPORT.md](TEST_REPORT.md)。
+
+### 项目结构
 
 ```text
 xmu_assistant/
-├── README.md
-├── LICENSE                        # Apache-2.0
-├── assets/                        # 图标 / Logo（含 SVG 源文件与多尺寸 PNG）
-├── release/                       # 发布产物目录（本地产物不入库，仓库内仅 SHA256SUMS.txt 入库）
-├── xmu-assistant.spec             # PyInstaller 打包规格（a.binaries 过滤未用 Qt6 模块）
-├── scripts/                       # 打包与测试脚本
-│   ├── build_dashboard_exe.bat    # 一键打包 Windows EXE
-│   ├── start_android_test.ps1/bat # Android 构建测试
-│   ├── xmu_dashboard_launcher.py  # PyInstaller 打包入口（spec 引用）
-│   ├── simulate_rollcall_detection.py
-│   └── generate_logo_assets.py
-├── tests/                         # Python 侧测试（pytest）
-├── xmu-rollcall-cli/              # Windows 桌面端 Python 包
-│   ├── pyproject.toml
-│   ├── requirements.txt
-│   └── xmu_rollcall/
-│       ├── config.py              # 配置与默认策略
-│       ├── courseware.py          # 课件活动 / 章节树 / 下载
-│       ├── engine.py              # 统一签到引擎（双端复用）
-│       ├── verify.py              # 数字签到 / 雷达签到作答（含距离估算定位）
-│       ├── notifications.py       # 系统 / PushPlus / QQ 邮箱通知
-│       ├── proxy_guard.py
-│       ├── request_probe.py       # HTTP-JSON 探测判定单一来源
-│       ├── diag_log.py            # 无 stdout 场景诊断日志（包根，供引擎层共用）
-│       ├── rollcall_models.py / secrets.py / desktop.py
-│       ├── utils.py               # 重试、请求与基础 URL
-│       └── desktop_qt/            # PySide6 桌面界面
-│           ├── app.py             # 主窗口 / 事件分发表
-│           ├── core.py            # 数据模型与 LNT 查询
-│           ├── events.py          # 事件总线契约登记表
-│           ├── icons.py           # 图标与资源解析
-│           ├── tray.py            # 系统托盘混入
-│           ├── notifications_page.py  # 通知页混入
-│           ├── overview_page.py   # 首页总览混入（驾驶舱/登录/监控状态）
-│           ├── courseware_page.py # 课程课件页混入
-│           ├── courses_page.py    # 签到情况页混入
-│           ├── settings_page.py   # 策略页混入
-│           ├── tutorial_page.py   # 教程页混入
-│           ├── ui_snapshot.py     # 首屏快照（SWR 缓存先行）
-│           ├── startup_registry.py # 开机自启注册
-│           ├── single_instance.py # 单实例互斥与唤起
-│           ├── maintenance.py     # 磁盘冗余清理
-│           └── theme.py
-└── android/                       # Android 原生端（Kotlin + Compose）
-    ├── README.md
-    ├── app/src/main/java/com/xmu/assistant/
-    │   ├── RollcallMonitorService.kt   # 前台服务轮询
-    │   ├── MonitorControlTileService.kt # 快捷设置磁贴
-    │   ├── TronclassLogin.kt / SessionHealth.kt / SessionRecovery.kt
-    │   ├── RequestGate.kt / MonitorRunGate.kt / BoundedParallel.kt
-    │   ├── XmuScheduleClient.kt / ScheduleWidgetProvider.kt
-    │   ├── XmuScoreAutoQueryClient.kt / ScoreShare.kt
-    │   ├── XmuExamClient.kt / ExamReminder.kt / ExamSectionState.kt
-    │   ├── CoursewareClient.kt / CoursewareDownloadBatch.kt
-    │   └── ReadOnlyBenchmarkRunner.kt  # networkBenchmark 只读基准
-    ├── keystore/                  # 固定调试签名（覆盖安装不丢数据，已入库）
-    └── app/                       # 模块源码与资源
+├── android/                 # Kotlin + Compose 原生客户端及 JVM 测试
+├── xmu-rollcall-cli/        # Python 包、PySide6 桌面界面与业务逻辑
+├── tests/                   # Python 回归测试
+├── assets/                  # 图标与品牌资源
+├── scripts/                 # 构建、模拟器启动及维护脚本
+├── xmu-assistant.spec        # Windows PyInstaller 打包配置
+├── release/SHA256SUMS.txt    # 发布文件校验值；二进制不入库
+├── TEST_REPORT.md           # 扫描、修复与发布验证记录
+└── LICENSE                  # Apache-2.0
 ```
 
----
+桌面端使用 Python、PySide6、requests 和 xmulogin；Android 端使用 Kotlin、Jetpack Compose、OkHttp、WorkManager 与 AlarmManager。测试使用 pytest，以及 Android 的 JUnit、MockWebServer 和 Robolectric。具体依赖以 [Python 包配置](xmu-rollcall-cli/pyproject.toml)和 [Android 版本目录](android/gradle/libs.versions.toml)为准。
 
-## 🔌 接口实现说明
+发布时核对双端源码版本、Android versionCode 与签名，完成测试和安装包检查后计算 SHA-256。`release/` 仅提交校验文件；安装包上传到对应版本的 Release。涉及运行数据的日志或截图应先脱敏再分享。
 
-### 数字签到
+## 问题反馈
 
-1. `GET /api/radar/rollcalls` 读取当前账号可见签到事件，取 `rollcall_id`；
-2. `GET /api/rollcall/{rollcall_id}/student_rollcalls` 递归查找 `number_code`；
-3. `PUT /api/rollcall/{rollcall_id}/answer_number_rollcall` 提交（带随机 deviceId）。
+请在 [Issues](https://github.com/democard/xmu_assistant/issues) 中提供应用版本、系统版本、复现步骤、预期和实际表现。涉及网络问题时可说明使用校园网、校外网络或隧道，但不要公开账号和会话信息。截图请遮挡姓名、学号、课程安排等个人信息，日志请检查请求头、查询参数和本地路径。
 
-签到状态词表、请假 / 迟到的统计口径，以及本次“进度未获取”的实测原因和回归记录，见[签到状态排查交接](scripts/attendance-status-debug-handoff.md)。v1.7.1 已包含该修复。
+使用前请遵守学校、课程和平台规则。本项目用于个人学习、研究及本人数据管理；自动化操作可能失败或被平台判定异常，不应被用于访问无权查看的数据或干扰平台服务。
 
-### 雷达签到
+## 致谢与许可
 
-- 提交接口 `PUT /api/rollcall/{rollcall_id}/answer`，请求体含经纬度、精度、设备 ID 等；
-- 平台无直接"老师位置"接口时：利用两次已知坐标应答返回的 `distance`，做**平面坐标圆相交求解**估算签到中心点，再尝试候选位置（代码见 `verify.py`）。
+- 签到轮询、数字码提取、雷达处理及 Cookie 保存恢复的实现思路参考 [KrsMt-0113/XMU-Rollcall-Bot](https://github.com/KrsMt-0113/XMU-Rollcall-Bot)。
+- 课件下载实现参考 [KrsMt-0113/XMUFD](https://github.com/KrsMt-0113/XMUFD)。
+- 感谢 requests、PySide6、xmulogin、OkHttp、AndroidX、Jetpack Compose、pytest、JUnit 和 Robolectric 等开源项目。
 
-### 课程课件
-
-- 课程列表：多候选课程接口依次探测（`/api/my-courses`、`/api/courses?...` 等）；
-- 章节树：`GET /api/courses/{course_id}/modules`；活动：`GET /api/course/{course_id}/courseware-activities`；详情：`GET /api/activities/{activity_id}` 并发；
-- 展示顺序按**章节树合并**；`homework` 类型活动在取详情前过滤，不作为课件展示。
-
-### 会话与登录
-
-- 登录走厦大统一认证（xmulogin），Cookie 本地存取；
-- Android 端 `SessionHealthProbe` 判定过期：`401/403`、跳转至已知身份域、响应体含登录表单特征均可识别。
-
----
-
-## ⚙️ 本地配置
-
-桌面端默认配置目录：当前用户主目录 `~\.xmu_rollcall`
-
-```text
-~\.xmu_rollcall\
-├── config.json     # 账号与策略配置
-└── 1.json、2.json  # 对应账号的 TronClass Cookie
-```
-
-可用环境变量改目录：
-
-```powershell
-$env:XMU_ROLLCALL_CONFIG_DIR="<config-directory>"
-```
-
----
-
-## 🧪 测试与发布
-
-```powershell
-# 桌面端：测试与编译检查
-conda run -n xmu-rollcall-dashboard python -m pytest tests
-conda run -n xmu-rollcall-dashboard python -m compileall xmu-rollcall-cli\xmu_rollcall
-
-# 无 Conda 时（维护者实况：系统 Python）：先装依赖，再从项目根直接跑测试
-python -m pip install -r .\xmu-rollcall-cli\requirements.txt
-python -m pytest tests
-# 从源码运行桌面端必须设 PYTHONPATH 指向 xmu-rollcall-cli，
-# 否则可能命中 site-packages 里的旧副本（若安装过）
-$env:PYTHONPATH=(Resolve-Path .\xmu-rollcall-cli).Path; python -m xmu_rollcall.desktop
-
-# 打包 EXE
-.\scripts\build_dashboard_exe.bat   # 产物 dist\xmu-assistant.exe
-
-# 发布（改版本号 → 测试 → 打包 → 算 SHA256 → 打 tag → 上 GitHub Releases）
-# 资产固定三件：exe、apk、SHA256SUMS.txt（与 release/ 目录一致）
-gh release create vx.y.z .\release\xmu-assistant.exe .\release\xmu-assistant-release.apk .\release\SHA256SUMS.txt --title "vx.y.z" --notes "Release notes"
-```
-
-Android 端：`.\scripts\start_android_test.ps1` 将已构建的 APK 安装到模拟器并启动应用——按优先级探测 Android SDK（环境变量 > Android Studio 默认路径），复用已在运行的模拟器，否则拉起 `xmu_assistant_api30`；等待开机完成后 `adb install -r` 安装 `android/app/build/outputs/apk/release/app-release.apk` 并 `am start` 启动 MainActivity，日志写入桌面 `xmu-android-test.log`。该脚本不构建、不跑 JVM 测试（APK 需先经 `android/gradlew assembleRelease` 构建）；JVM 单测在 `android/` 目录执行 `gradlew :app:testDebugUnitTest`。
-
-### 发布版本约定（Android）
-
-- 每次合入功能性修复后发布前：`android/app/build.gradle.kts` 中 `versionCode` +1，`versionName` 按语义化版本递增（修复 +0.0.1，功能 +0.1）。
-- 发布产物同步到 `release/` 后，必须更新 `release/SHA256SUMS.txt`：
-  `cd release && sha256sum xmu-assistant.exe xmu-assistant-release.apk > SHA256SUMS.txt`
-
-### 发布安全说明（务必读）
-
-- **固定调试签名**：`release` APK 用仓库内固定 `android/keystore/debug.keystore`（默认口令 `android/android`，公开）
-  签名，换取 `install -r` 覆盖升级不丢本地登录态（重签会丢加密数据）。**代价：任何能拿到该密钥的人
-  可伪造同签名更新覆盖安装**，触及本地加密凭据——这是刻意权衡。建议评估：如发布到公开渠道，改为产线
-  独立 keystore 并妥善保管，或在 README/发布说明中向用户明示"仅接受官方来源更新"。
-- **桌面 EXE**：`release/xmu-assistant.exe` 已随 v1.7.3 重建（含 DPAPI 凭据加密）；复现构建请执行
-  `pyinstaller xmu-assistant.spec`（已带 `--hidden-import win32crypt`，spec 内过滤未用 Qt6 二进制）并同步 SHA256SUMS。
-- 发布前检查：产物与源码 HEAD 一致（`release/` 仅提交 `SHA256SUMS.txt`，exe/apk 按 `.gitignore` 由 GitHub Releases 托管）、SHA256SUMS 已更新、APK 无 DEBUGGABLE、versionCode 单调递增。
-
----
-
-## ⚠️ 免责声明
-
-本项目**仅用于个人学习、研究和本人数据管理**。请遵守学校、课程与平台规则：程序只查询当前登录账号有权访问的数据，不应被用于绕过权限、访问他人信息或干扰平台服务。签到自动化存在被平台判定异常的风险，请合理使用并自行承担后果。
-
----
-
-本项目基于 Apache-2.0 许可证开源。
+本项目采用 [Apache-2.0 许可证](LICENSE)。第三方依赖遵循各自许可证。

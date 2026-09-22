@@ -1,81 +1,91 @@
 # xmu助手 Android
 
-原生 Android 端，和 Windows 端独立运行：本地登录、本地保存 Cookie、本地后台轮询、本地缓存课表成绩。
+面向厦门大学 LNT / TronClass 与教务系统的原生客户端，使用 Kotlin 和 Jetpack Compose。与 Windows 端独立运行，登录态和业务缓存保存在设备本地。
 
-## v1.7.3
+当前版本 **1.7.3 / versionCode 30**，支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35。
 
-- 下载增加续传范围/长度校验，错误响应保留断点；Cookie 只发送到同协议、主机及端口的地址，课件链接支持 fragment。
-- 课表缓存替换失败保留旧数据，考试缓存可恢复系统时间回拨；修复日历 UID 碰撞和 Android 8/9 成绩分享覆盖、压缩失败残留。
-- 日历 UID 规则改变，已有旧导入的日历再次导入可能出现重复事件，建议先移除旧导入。
-- 修复网络基准变体编译；版本号 1.7.3 / 30，沿用原签名，支持覆盖升级。
-- 验证详情：[测试报告](../TEST_REPORT.md)。下载：[v1.7.3 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)。
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md)
 
-## v1.7.2
+## 使用入口
 
-- 修复使用教程章节按钮按固定像素定位，在不同屏幕尺寸、字体缩放或教程内容变化后跳错位置的问题。
-- 改为按实际教程卡片位置滚动；沿用原签名，版本号 1.7.2 / 29，可覆盖 v1.7.1。
-- 下载：[v1.7.2 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.2)。
+底部导航为「首页 / 课表 / 成绩 / 签到 / 更多」。课件、考试、通知、策略和教程集中在「更多」。
 
-## v1.7.1
+| 入口 | 可以做什么 |
+| --- | --- |
+| 首页 | 登录、启停签到监控、查看近期状态与自动处理策略 |
+| 课表 | 周课表 / 日程视图、查看今天、跳转周次、复制详情、导出日历 |
+| 成绩 | 成绩与学分统计、GPA / 均分、模拟成绩计算、长图分享、专业排名与证明 |
+| 签到 | 查看进行中签到与最近十次历史，核实本人明细，显示人数、比例和数字码 |
+| 更多 | 课件批量下载、考试安排与提醒、通知渠道、策略、使用教程 |
 
-- 全班进度只计明确已签人数；迟到、请假、缺勤等保留在总人数中，不计已签。正常非已签状态不再使整个进度失效，详细状态优先于粗分类。
-- 本人状态冲突时暂停提交并等待下一轮核实，明确已签、迟到、请假不重复自动提交；班级计数与本人状态保护分别判断。
-- 雷达提交失败不再记为完成，保留有界恢复；历史缓存升级至版本 4，避免沿用迟到计入已签的旧数据。
-- 593 项 Android 测试通过，Lint 0 错误；APK 延续原签名，版本号 1.7.1 / 28。下载：[v1.7.1 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.1)；[排查与验证交接](../scripts/attendance-status-debug-handoff.md)。
+应用支持浅色、深色和跟随系统主题。切页、旋转时保留部分页面状态；登出或切换账号时隔离账号相关状态。快捷设置磁贴可启停监控，长按应用图标可直达签到、课表和成绩。
 
-## v1.7.0
+## 功能边界
 
-- 修复数字签到失败后被提前去重的问题。明确拒绝后下一轮重新取码，响应不明先核实本人状态，每次签到最多自动尝试 3 次；已签不重复提交，单条资源拒绝不再误判为全局登录失效。
+- **签到监控**：使用前台服务轮询，需要有效登录态、网络和后台运行条件。数字 / 雷达自动处理受策略开关及人数门槛控制；二维码只提醒。刷新和复制签到码本身不会提交签到，人数未获取时不视为达到门槛。
+- **课表**：支持七天、十一节的周网格和日程列表，重叠课程分别展示；课表右上角菜单可导出 `.ics`，按单双周和分段周次编排。
+- **今日课程小组件**：保存未来十四天课程摘要，优先展示尚未结束的课程；跨日可读本地排课，超出缓存范围需刷新。尺寸和后台刷新受系统、桌面启动器影响。
+- **专业排名**：手动查询或申请计算，已有完整记录可复用；成绩变化仅标记待更新。证明 PDF 支持系统导出和应用内清理，导出副本需自行删除。该接口尚未用真实校园账号完成联调。
+- **考试提醒**：精确闹钟和全屏提醒受系统权限限制，请按内置教程配置；不能保证系统限制后台时仍按时触发。
+- **课件下载**：支持课程搜索、学年学期筛选和批量下载；不能直接下载的条目保留平台入口。续传会校验响应范围与长度，异常时保留断点。
 
-- 签到记录接入全班已签人数与比例；进行中数字签到码放卡片底部并支持复制，已结束数字签到码追加在右侧人数与比例下方。
-- 策略页可自定义达到 N 人或 X% 后自动处理，未达标继续检测，未知数据不算达标；默认不启用人数条件，数字/雷达自动处理仍分别受原开关控制。
-- 首页快捷开关与策略页共用设置，显示当前类型和人数条件；未启动监控时提示尚未生效，可直接进入策略页调整。策略页会阻止保存无效的当前条件输入。
-- 刷新、获取数字码和复制本身不提交签到。历史复用本人明细核实请求，缓存绑定账号，缺少人数或码时显示暂未获取。
-- 移除没有数据的截止时间占位，保留有效截止时间解析；窄屏、长课程名与大字体适配沿用原主题。
-- 580 项 Android 测试通过，Lint 0 错误；未使用真实校园账号联调。下载：[v1.7.0 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.7.0)；[双端实现与验收交接](../scripts/attendance-threshold-integration.md)。
+v1.7.3 更新了日历事件标识。向已有旧版导入的日历再次导入可能形成重复事件，建议先移除旧导入再导入新版。
 
-## v1.6.9
+## 数据与更新
 
-- 课程列表和课程课件使用的 `academic_cache_json` 在同一会话内按 revision 落盘；旧请求迟到时不会覆盖更新后的本地缓存。
-- 桌面小组件本地登录镜像缺失时，只有自动登录策略为 ENABLED 且主 Cookie 非空才允许继续同步；明确退出或无有效主会话时会被拦截。
-- 包含 Android 15 签到监控前台服务的 `specialUse` 类型修复；下载：[v1.6.9 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.6.9)。
+账号、Cookie 等凭据使用 EncryptedSharedPreferences 保存。业务缓存和课件不等于加密凭据；小组件摘要包含课程名、时间和地点，虽不含密码或 Cookie，仍可能涉及个人安排。历史展示缓存登出时删除；通知 / 应答去重存储保留，并按账号 Cookie 指纹隔离。
 
-## 功能
+查询和签到连接学校系统；开启 PushPlus 或邮件通知会向所选服务发送通知。成绩长图、课表日历、证明 PDF 和日志可能包含个人信息，分享前需要检查。应用内清理不代替删除已经导出的副本。
 
-- **专业排名**：从成绩页进入，用户手动提交计算并读取证明排名；成绩变化仅标记待更新，申请中断可继续查询；原始 PDF 支持系统导出与应用内清理，保留排名日期，不删除导出副本。接口按用户文档接入，尚未用真实校园账号联调。
+**当前 release APK 使用仓库内公开的固定调试密钥签名。** 它保持旧版覆盖升级兼容，但不能证明发布者身份；任何持有该密钥的人都能签出同签名 APK。请从本仓库发布页下载并核对校验值，不要安装来源不明的同签名更新。卸载会清除应用私有数据。
 
-- **导航**：底部固定「首页 / 课表 / 成绩 / 签到 / 更多」，更多集中提供课件、考试、通知、策略与教程；系统返回键逐级回到更多或首页
-- **首页**：未登录时显示校园账号登录，支持密码显隐和键盘提交；登录后收起表单，直接操作监控、查看近期状态，快捷进入课件与考试
-- **签到情况 / 监控**：前台服务后台轮询，检测到签到后展示课程、类型和状态；支持数字签到和雷达签到自动处理；页面含「正在进行」与「历史签到（最近十次，本人明细核实）」两个卡片，顶部刷新一键刷两块；显示人数、比例、数字码，并可设置自动处理门槛
-- **成绩**：读取百分制成绩，支持长图分享；页尾「模拟成绩」计算器（多行输入分数/学分，按厦大 4.0 分制换算 GPA/均分）
-- **课表**：固定每周 7 天、每天 11 节，支持周课表 / 日程、一键查看今天和周次跳转；课程名、节次、时间和教室分层展示，多个教室逐行完整列出，全表节次等高，按实际文字换行统一增长；课程卡片铺满对应节次；时间重叠的课程分别显示、分别点击；详情抽屉支持长按复制；导出日历在课表右上角「更多」中（单双周/断档周次正确编排）
-- **考试安排**：读取考试安排，按学期查看；支持考前提醒（精确闹钟 + 全屏提醒）
-- **桌面小卡片（Widget）**：「今日课程」在旧版紧凑布局上优化，默认申请 4×1，支持缩窄和拉高；宽尺寸为时间／课程／教室三列，窄尺寸为两行摘要，按卡片宽高和实际文字高度安排可见课程，优先显示未结束的课程，仅在放不下时提示剩余数量；同步时保存未来 14 天的摘要，跨日可按本地排课显示，超出缓存范围提示刷新；支持浅深色、点击打开课表、策略页开关与一键添加
-- **课程课件**：按名称、学期搜索课程，可叠加学年学期筛选，刷新并批量下载课件；无法直接下载的保存平台入口并显示原因
-- **通知**：系统通知 + PushPlus 微信通知 + QQ 邮箱通知
-- **教程**：内置各功能使用说明
-- **外观**：浅色 / 深色 / 跟随系统主题切换，状态栏图标随主题变化；键盘弹出时收起底部导航，保留表单空间
-- **页面状态**：切页和旋转时保留页面的可保存状态（滚动位置、课件搜索与筛选等），登出或切换账号时隔离这些状态
-- **快捷入口**：长按图标直达签到情况/课表/成绩；下拉快捷设置磁贴一键启停监控
-- **策略**：轮询间隔、自动签到开关、自定义人数 / 比例门槛、桌面小卡片设置
+## 构建与测试
 
-## 本地与隐私
+需要 JDK 17、Android SDK Platform 35 及对应构建工具。用 Android Studio 打开本目录，设置 Gradle JDK 为 17，并配置本机 SDK；也可以通过 `JAVA_HOME`、`ANDROID_HOME` 指定环境。`local.properties` 中的 `sdk.dir` 只供本机使用，不应提交。
 
-- 账号、Cookie、通知配置、课表缓存只保存在本机
-- 监控去重缓存的账号绑定只存 Cookie 的 SHA-256 指纹，完整会话凭据仅存于加密存储（EncryptedSharedPreferences）
-- 桌面小卡片只读取非敏感摘要（课程名/时间/地点），不包含学号密码 Cookie；深色系统下自动使用夜间配色
-- 课表缓存带格式版本号，旧版本缓存自动失效并重新拉取
-- 最近十次签到缓存（rollcall_history_cache.json）同样带版本号并按账号绑定，登出/换号即删除
+仓库携带 Gradle 8.7 Wrapper。以下 PowerShell 命令从**仓库根目录**开始执行；首次构建需联网下载 Gradle 和依赖：
 
-## 技术栈
+```powershell
+cd android
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug
+.\gradlew.bat :app:assembleRelease
+```
 
-- Kotlin + Jetpack Compose（Material 3）
-- 前台服务 `RollcallMonitorService` 后台轮询
-- `xmurollcall://rollcall/{event_id}` 深链接入口
-- `AppWidgetProvider` 桌面小部件
-- 加密存储（EncryptedSharedPreferences）保存账号与 Cookie
+| 产物 | 相对 `android/` 的位置 |
+| --- | --- |
+| Release APK | `app/build/outputs/apk/release/app-release.apk` |
+| 单元测试报告 | `app/build/reports/tests/testDebugUnitTest/index.html` |
+| Lint 报告 | `app/build/reports/lint-results-debug.html` |
 
-## 本轮交接
+单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。v1.7.3 发布前共 610 项 Debug 测试通过，Lint 0 错误、6 警告；release 构建、签名及模拟器覆盖升级已验证。真实校园功能、真实通知与 Android 真机全流程不在本次验收范围，详见[测试报告](../TEST_REPORT.md)。
 
-- [项目根 README](../README.md)：当前发布版本、v1.7.1 双端修复、构建方式与验收范围。
-- 后续工具链升级路线仅为本地规划，不属于仓库发布说明；本轮没有升级 Android 工具链。
+仓库另带 `gradle/init.gradle` 作为可选镜像配置，可用 `-I gradle/init.gradle` 显式加载。依赖未缓存完整时，不要添加 `--offline`。
+
+### 安装到设备或模拟器
+
+在 `android/` 目录、已有设备连接且 `adb` 可用时：
+
+```powershell
+adb install -r .\app\build\outputs\apk\release\app-release.apk
+adb shell am start -n com.xmu.assistant/.MainActivity
+```
+
+也可从仓库根目录执行 `scripts/start_android_test.ps1`。该脚本只负责安装和启动已构建的 APK，优先复用运行中的模拟器，否则尝试启动名为 `xmu_assistant_api30` 的 AVD；使用前需准备该 AVD。它不构建 APK，也不运行 JVM 单元测试。
+
+## 开发定位
+
+源码位于 `app/src/main/java/com/xmu/assistant/`，测试位于 `app/src/test/`。
+
+| 模块 | 相关文件 |
+| --- | --- |
+| 签到监控与入口 | `RollcallMonitorService.kt`、`MonitorControlTileService.kt` |
+| 登录与会话 | `TronclassLogin.kt`、`SessionHealth.kt`、`SessionRecovery.kt` |
+| 并发与旧请求隔离 | `RequestGate.kt`、`MonitorRunGate.kt`、`SessionEpoch.kt` |
+| 课表与小组件 | `XmuScheduleClient.kt`、`ScheduleWidgetProvider.kt` |
+| 成绩与图片分享 | `XmuScoreAutoQueryClient.kt`、`ScoreShare.kt` |
+| 考试与提醒 | `XmuExamClient.kt`、`ExamReminder.kt` |
+| 课件下载 | `CoursewareClient.kt`、`CoursewareDownloadBatch.kt` |
+
+依赖版本集中在 [gradle/libs.versions.toml](gradle/libs.versions.toml)，应用版本、SDK、签名及构建类型在 [app/build.gradle.kts](app/build.gradle.kts)。`networkBenchmark` 是用于只读网络测量的开发变体，不是发布安装包。
+
+功能修复发布前递增 `versionCode`，同步 `versionName`、根 README 与校验文件，核对签名兼容性。公开反馈和提交中不要包含真实账号、Cookie、通知密钥、运行缓存或未脱敏截图。
