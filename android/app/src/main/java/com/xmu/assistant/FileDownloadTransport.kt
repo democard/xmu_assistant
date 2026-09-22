@@ -76,11 +76,52 @@ internal class OkHttpFileDownloadTransport(
                         val body = checkNotNull(it.body) { "下载响应为空" }
                         // 206 = 服务端确认从断点续传，追加写；
                         // 200（服务端忽略 Range 或文件已变）= 全量覆盖，不可盲目拼接
-                        val appending = resumeFrom > 0 && it.code == 206
+                        val partialResponse = it.code == 206
+                        val appending = resumeFrom > 0 && partialResponse
                         target.parentFile?.mkdirs()
-                        body.byteStream().use { input ->
-                            java.io.FileOutputStream(target, appending).use { output ->
-                                input.copyTo(output, COPY_BUFFER_BYTES)
+                        if (partialResponse) {
+                            val range = parseContentRange(it.header("Content-Range"))
+                            check(range != null && range.start == resumeFrom) {
+                                "下载范围无效（期望从 $resumeFrom 字节继续）"
+                            }
+                            check(range.endExclusive <= range.total && range.endExclusive > range.start) {
+                                "下载范围无效"
+                            }
+                            check(it.header("Content-Encoding").orEmpty().equals("identity", ignoreCase = true) ||
+                                it.header("Content-Encoding").isNullOrBlank()) {
+                                "压缩响应不支持断点续传"
+                            }
+                            // 先暂存 206 内容，校验通过后再接入已有断点。
+                            val chunk = java.io.File.createTempFile(
+                                "xmu-download-",
+                                ".download-chunk",
+                                target.parentFile,
+                            )
+                            try {
+                                body.byteStream().use { input ->
+                                    java.io.FileOutputStream(chunk).use { output ->
+                                        input.copyTo(output, COPY_BUFFER_BYTES)
+                                    }
+                                }
+                                val expectedChunk = range.endExclusive - range.start
+                                val declaredLength = it.header("Content-Length")?.toLongOrNull()
+                                check(chunk.length() == expectedChunk &&
+                                    (declaredLength == null || declaredLength == expectedChunk)
+                                ) { "下载范围数据不完整" }
+                                check(range.endExclusive == range.total) { "下载范围未到达文件末尾" }
+                                java.io.FileOutputStream(target, appending).use { output ->
+                                    chunk.inputStream().use { input ->
+                                        input.copyTo(output, COPY_BUFFER_BYTES)
+                                    }
+                                }
+                            } finally {
+                                chunk.delete()
+                            }
+                        } else {
+                            body.byteStream().use { input ->
+                                java.io.FileOutputStream(target, appending).use { output ->
+                                    input.copyTo(output, COPY_BUFFER_BYTES)
+                                }
                             }
                         }
                         // 短流收尾校验（对齐 PC courseware 短 body 校验）：服务端提前断流
@@ -126,6 +167,22 @@ internal class OkHttpFileDownloadTransport(
 
         /** 下载流拷贝缓冲：默认 8KB 偏小，64KB 显著减少系统调用次数。 */
         const val COPY_BUFFER_BYTES = 64 * 1024
+
+        private data class ContentRange(
+            val start: Long,
+            val endExclusive: Long,
+            val total: Long,
+        )
+
+        private fun parseContentRange(value: String?): ContentRange? {
+            val match = Regex("^bytes\\s+(\\d+)-(\\d+)/(\\d+)$", RegexOption.IGNORE_CASE)
+                .matchEntire(value?.trim().orEmpty()) ?: return null
+            val start = match.groupValues[1].toLongOrNull() ?: return null
+            val end = match.groupValues[2].toLongOrNull() ?: return null
+            val total = match.groupValues[3].toLongOrNull() ?: return null
+            if (end < start || total <= end) return null
+            return ContentRange(start, end + 1, total)
+        }
 
         /** 有效端口：未显式指定（-1）时按协议默认端口归一化（http=80，https=443）。 */
         fun java.net.URL.effectivePort(): Int =

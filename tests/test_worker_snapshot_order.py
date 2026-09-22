@@ -11,6 +11,7 @@ GUI 线程的换号恰好插在这两步之间，就会出现「旧账号会话 
 from __future__ import annotations
 
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
 from xmu_rollcall.courseware import CoursewareItem  # noqa: E402
+from xmu_rollcall.courseware import _get_modules_cached, reset_modules_cache  # noqa: E402
 from xmu_rollcall.desktop_qt.app import DashboardWindow  # noqa: E402
 
 
@@ -43,6 +45,101 @@ def _item() -> CoursewareItem:
 
 
 class DownloadWorkerSnapshotOrderTest(unittest.TestCase):
+    def test_clone_failure_still_emits_batch_done(self):
+        from xmu_rollcall.desktop_qt.courseware_page import CoursewarePageMixin
+
+        events = []
+        host = object.__new__(CoursewarePageMixin)
+        host.session = object()
+        host.account = {"id": "A"}
+        host._emit = events.append
+        host._courseware_key = lambda item: "k1"
+        with patch(
+            "xmu_rollcall.desktop_qt.courseware_page.clone_session",
+            side_effect=RuntimeError("clone failed"),
+        ):
+            host._courseware_download_worker([_item()], Path("D:/tmp"), object(), "A", host.session)
+        done = next(event for event in events if event[0] == "courseware_download_done")
+        self.assertTrue(done[5], "clone 失败必须进入失败列表")
+        self.assertIn("clone failed", done[7][0])
+
+    def test_courseware_worker_keeps_modules_cache_on_gui_session_scope(self):
+        from xmu_rollcall.desktop_qt.courseware_page import CoursewarePageMixin
+
+        class Response:
+            status_code = 200
+            headers = {"Content-Type": "application/json"}
+            url = "https://lnt.xmu.edu.cn/api/courses/c1/modules"
+            history = []
+            text = "{}"
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"modules": []}
+
+        class Source:
+            def __init__(self):
+                self.module_calls = 0
+
+            def get(self, *args, **kwargs):
+                self.module_calls += 1
+                return Response()
+
+        source_a = Source()
+        source_b = Source()
+        host = object.__new__(CoursewarePageMixin)
+        host.session = source_a
+        host.account = {"id": "A"}
+        host._emit = lambda event: None
+        reset_modules_cache()
+
+        def fake_fetch(session, _course_id):
+            _get_modules_cached(session, "c1")
+            return []
+
+        with patch("xmu_rollcall.desktop_qt.courseware_page.clone_session", side_effect=lambda session: session), \
+             patch("xmu_rollcall.desktop_qt.courseware_page.fetch_courseware", side_effect=fake_fetch):
+            host._courseware_worker(types.SimpleNamespace(course_id="c1"), True)
+            host._courseware_worker(types.SimpleNamespace(course_id="c1"), True)
+            host.session = source_b
+            host.account = {"id": "B"}
+            host._courseware_worker(types.SimpleNamespace(course_id="c1"), True)
+
+        self.assertEqual(source_a.module_calls, 1)
+        self.assertEqual(source_b.module_calls, 1)
+
+    def test_courseware_worker_snapshots_source_before_clone_race(self):
+        from xmu_rollcall.desktop_qt.courseware_page import CoursewarePageMixin
+
+        old_source = object()
+        new_source = object()
+        cloned = types.SimpleNamespace()
+        events = []
+        host = object.__new__(CoursewarePageMixin)
+        host.session = old_source
+        host.account = {"id": "A"}
+        host._emit = events.append
+
+        def racing_clone(source):
+            self.assertIs(source, old_source)
+            host.session = new_source
+            host.account = {"id": "B"}
+            return cloned
+
+        def fake_fetch(session, _course_id):
+            self.assertIs(session, cloned)
+            self.assertIs(session._xmu_modules_cache_scope, old_source)
+            return []
+
+        with patch("xmu_rollcall.desktop_qt.courseware_page.clone_session", side_effect=racing_clone), \
+             patch("xmu_rollcall.desktop_qt.courseware_page.fetch_courseware", side_effect=fake_fetch):
+            host._courseware_worker(types.SimpleNamespace(course_id="c1"), True)
+
+        self.assertEqual(events[0][0], "courseware")
+        self.assertEqual(events[0][3], "A")
+
     def test_account_id_is_read_before_the_session_is_cloned(self):
         from xmu_rollcall.desktop_qt.courseware_page import CoursewarePageMixin
 

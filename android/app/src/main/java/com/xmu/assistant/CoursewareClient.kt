@@ -8,6 +8,7 @@ import java.io.File
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 候选端点记忆（与桌面端 utils.remember_good_endpoint/ordered_endpoints 对齐）：
@@ -295,7 +296,7 @@ class CoursewareClient private constructor(
             // 避免把登录 cookie 外泄给无关服务器（安全红线）。
             // 同源判定按 URL host 解析比对，不用字符串前缀：lnt.xmu.edu.cn.evil.com
             // 这类前缀伪装域也会 startsWith 命中，Cookie 会外泄给攻击者主机。
-            if (cookieHeader.isNotBlank() && isSameHostAsBaseUrl(url)) headers["Cookie"] = cookieHeader
+            if (cookieHeader.isNotBlank() && isSameOriginAsBaseUrl(url)) headers["Cookie"] = cookieHeader
             val result = fileDownloadTransport.download(
                 FileDownloadRequest(url = url, headers = headers, operation = NetworkOperation.DOWNLOAD),
                 partial,
@@ -305,7 +306,17 @@ class CoursewareClient private constructor(
             if (result.code == 401) throw MainSessionExpiredException()
             if (result.code == 403) error("课件下载被平台拒绝（无下载权限）")
             if (result.code !in 200..299) error("网络失败")
-            if ("text/html" in result.contentType.lowercase()) error("网络失败")
+            val contentType = result.contentType.lowercase()
+            // The transport deliberately leaves HTML/JSON/XHTML challenge
+            // payloads out of the .part file.  Treat all of them as failures
+            // here too; otherwise an empty placeholder (or an old partial)
+            // could be renamed as a successful download.
+            if ("text/html" in contentType ||
+                "application/json" in contentType ||
+                "application/xhtml" in contentType
+            ) {
+                error("网络失败")
+            }
             check(partial.renameTo(target)) { "课件文件保存失败" }
             target.absolutePath
         } catch (error: Throwable) {
@@ -319,9 +330,13 @@ class CoursewareClient private constructor(
         }
     }
 
-    /** URL 是否指向 baseUrl 同一主机（按 host 解析比对，防前缀伪装域外泄 Cookie）。 */
-    private fun isSameHostAsBaseUrl(url: String): Boolean = runCatching {
-        java.net.URL(url).host.equals(java.net.URL(baseUrl).host, ignoreCase = true)
+    /** URL 是否与 baseUrl 同源；Cookie 只发往相同 scheme/host/有效端口。 */
+    private fun isSameOriginAsBaseUrl(url: String): Boolean = runCatching {
+        val candidate = java.net.URL(url)
+        val base = java.net.URL(baseUrl)
+        candidate.protocol.equals(base.protocol, ignoreCase = true) &&
+            candidate.host.equals(base.host, ignoreCase = true) &&
+            candidate.effectivePort() == base.effectivePort()
     }.getOrDefault(false)
 
     private fun getJson(
@@ -419,10 +434,7 @@ class CoursewareClient private constructor(
         }
     }
 
-    private fun isDirectDownloadUrl(url: String): Boolean {
-        val lowered = url.lowercase().substringBefore("?")
-        return DIRECT_COURSEWARE_EXTENSIONS.any { lowered.endsWith(it) }
-    }
+    private fun isDirectDownloadUrl(url: String): Boolean = isDirectCoursewareUrl(url)
 
     private fun availableFile(directory: File, rawName: String): File {
         val target0 = File(directory, sanitizedFileName(rawName))
@@ -491,3 +503,13 @@ class CoursewareClient private constructor(
         val claimedParts = mutableSetOf<String>()
     }
 }
+
+/** True when the URL path ends in a supported downloadable extension. */
+fun isDirectCoursewareUrl(url: String): Boolean = runCatching {
+    // 用 OkHttp 同样的 URL 解析规则，兼容空格和中文等可编码链接。
+    val path = url.toHttpUrlOrNull()?.encodedPath.orEmpty().lowercase()
+    DIRECT_COURSEWARE_EXTENSIONS.any { path.endsWith(it) }
+}.getOrDefault(false)
+
+private fun java.net.URL.effectivePort(): Int =
+    if (port != -1) port else if (protocol.equals("https", ignoreCase = true)) 443 else 80

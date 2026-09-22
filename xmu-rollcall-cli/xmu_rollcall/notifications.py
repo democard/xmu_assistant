@@ -127,14 +127,21 @@ class QQMailNotifier:
     def _ports(self) -> list[int]:
         values = self.smtp_port if isinstance(self.smtp_port, (list, tuple)) else str(self.smtp_port).split(",")
         ports: list[int] = []
+        had_value = False
         for value in values:
+            if str(value).strip():
+                had_value = True
             try:
                 port = int(str(value).strip())
             except (TypeError, ValueError):
                 continue
-            if port and port not in ports:
+            if 1 <= port <= 65535 and port not in ports:
                 ports.append(port)
-        return ports or [465, 587]
+        if ports:
+            return ports
+        if had_value:
+            raise ValueError("SMTP port is invalid")
+        return [465, 587]
 
     def send(self, title: str, body: str) -> None:
         if not (self.sender and self.password and self.recipient):

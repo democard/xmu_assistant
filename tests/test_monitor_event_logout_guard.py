@@ -207,6 +207,19 @@ class DownloadDoneLogoutGuardTest(unittest.TestCase):
         self.assertEqual(len(host.courseware_summary.texts), 1)
         self.assertTrue(any(str(m) == "modal" for m in host.logs))
 
+    def test_old_batch_done_after_account_switch_is_dropped_without_clearing_new_batch(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(object())
+        host.courseware_download_batch_token = "new-batch"
+        host.courseware_download_in_progress = True
+        DW._ev_courseware_download_done(
+            host, ("courseware_download_done", "old-batch", "A", ["a"], [], [], "D:/x", []),
+        )
+        self.assertTrue(host.courseware_download_in_progress)
+        self.assertEqual(host.courseware_summary.texts, [])
+        self.assertFalse(any(str(m) == "modal" for m in host.logs))
+
 
 class DownloadProgressLogoutGuardTest(unittest.TestCase):
     """登出后晚到的下载进度：不得重建状态表/摘要/徽标。
@@ -245,6 +258,124 @@ class DownloadProgressLogoutGuardTest(unittest.TestCase):
         )
         self.assertEqual(host.courseware_download_status, {"k1": "下载中"})
         self.assertEqual(len(host.courseware_summary.texts), 1)
+
+    def test_old_batch_progress_after_account_switch_is_dropped(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host(object())
+        host.courseware_download_batch_token = "new-batch"
+        DW._ev_courseware_download_progress(
+            host, ("courseware_download_progress", "old-batch", "A", 2, 5, "讲义.pdf", "k1"),
+        )
+        self.assertEqual(host.courseware_download_status, {})
+
+
+class DownloadLoginGenerationGuardTest(unittest.TestCase):
+    def _host(self, account_id):
+        host = types.SimpleNamespace(
+            session=object(), account={"id": account_id, "username": account_id},
+            _login_in_progress=True, _login_epoch=7, monitor_worker=None,
+            _snapshot_account_id=account_id, logs=[], course_records=[],
+            courseware_courses=[], courseware_items=[], courseware_download_status={"old": "下载中"},
+            courseware_course_by_display={}, events_by_id={}, event_order=[],
+            _auto_answer_inflight_rollcalls={}, _auto_answer_attempted_rollcalls=set(),
+            course_refresh_in_progress=False, course_verify_in_progress=False,
+            courseware_courses_refresh_in_progress=False, courseware_refresh_in_progress=False,
+            courseware_download_in_progress=True, courseware_download_batch_token=object(),
+            started_at=object(),
+        )
+        host.log = host.logs.append
+        host.stop_monitor = lambda: None
+        host._reset_background_error_state = lambda: None
+        host._set_login_status = lambda *a, **k: None
+        host._load_rollcall_settings = lambda *a, **k: None
+        host._refresh_after_login = lambda: None
+        host._refresh_event_tables = lambda: None
+        host._refresh_course_table = lambda: None
+        host._refresh_courseware_table = lambda: None
+        host._show_toast = lambda *a, **k: None
+        host._show_courseware_download_result = lambda *a, **k: None
+        host._update_nav_badges = lambda: None
+        host.merges = []
+        host._merge_worker_session = lambda *a: host.merges.append(a)
+        host.courseware_summary = types.SimpleNamespace(setText=lambda *_: None)
+        host.courseware_combo = types.SimpleNamespace(blockSignals=lambda *_: None, clear=lambda: None)
+        for name in ("metric_last_result", "metric_rollcall_count", "metric_last_check", "metric_runtime"):
+            setattr(host, name, types.SimpleNamespace(setText=lambda *_: None))
+        host.metric_account = types.SimpleNamespace(setText=lambda *_: None)
+        return host
+
+    def _login_success(self, host, account_id):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        new_session = object()
+        DW._ev_login_success(
+            host,
+            ("login_success", new_session, {"id": account_id, "username": account_id}, host._login_epoch),
+        )
+        return new_session
+
+    def _assert_old_events_dropped(self, host, old_token, old_account):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        DW._ev_courseware_download_progress(
+            host, ("courseware_download_progress", old_token, old_account, 1, 1, "a", "a")
+        )
+        DW._ev_courseware_download_item_done(
+            host, ("courseware_download_item_done", old_token, old_account, "a", "成功")
+        )
+        DW._ev_courseware_download_done(
+            host, ("courseware_download_done", old_token, old_account, ["a"], [], [], "D:/a", [])
+        )
+        DW._ev_merge_session_cookies(host, ("merge_session_cookies", object(), old_account, old_token))
+        self.assertEqual(host.courseware_download_status, {})
+        self.assertFalse(host.courseware_download_in_progress)
+        self.assertEqual(host.merges, [])
+
+    def test_real_login_success_invalidates_old_batch_for_account_switch_and_relogin(self):
+        host = self._host("A")
+        host.courseware_download_in_progress = True
+        host.courseware_download_batch_token = object()
+        old_token = host.courseware_download_batch_token
+        old_session = host.session
+        new_session = self._login_success(host, "B")
+        self.assertIs(host.session, new_session)
+        self.assertIsNot(host.session, old_session)
+        self.assertIsNone(host.courseware_download_batch_token)
+        self._assert_old_events_dropped(host, old_token, "A")
+
+        host.courseware_download_batch_token = object()
+        old_token = host.courseware_download_batch_token
+        old_session = host.session
+        new_session = self._login_success(host, "B")
+        self.assertIs(host.session, new_session)
+        self.assertIsNot(host.session, old_session)
+        self.assertIsNone(host.courseware_download_batch_token)
+        host.courseware_download_in_progress = True
+        host.courseware_download_batch_token = object()
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+        DW._ev_courseware_download_done(host, ("courseware_download_done", old_token, "B", ["a"], [], [], "D:/a", []))
+        self.assertTrue(host.courseware_download_in_progress)
+
+    def test_same_account_relogin_invalidates_real_old_batch(self):
+        host = self._host("A")
+        old_token = host.courseware_download_batch_token
+        old_session = host.session
+        new_session = self._login_success(host, "A")
+        self.assertIs(host.session, new_session)
+        self.assertIsNot(host.session, old_session)
+        self.assertIsNone(host.courseware_download_batch_token)
+        self._assert_old_events_dropped(host, old_token, "A")
+
+    def test_current_batch_done_releases_lock(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host("B")
+        token = object()
+        host.courseware_download_batch_token = token
+        DW._ev_courseware_download_done(host, ("courseware_download_done", token, "B", ["a"], [], [], "D:/a", []))
+        self.assertFalse(host.courseware_download_in_progress)
+        self.assertIsNone(host.courseware_download_batch_token)
 
 
 class ErrorEventLogoutGuardTest(unittest.TestCase):

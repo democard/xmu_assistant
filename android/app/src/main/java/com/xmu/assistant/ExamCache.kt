@@ -121,7 +121,10 @@ internal object ExamCache {
     fun shouldReProbe(context: Context, intervalMillis: Long = 6 * 60 * 60 * 1000L): Boolean {
         val last = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getLong(KEY_LAST_PROBE, 0L)
-        return last == 0L || System.currentTimeMillis() - last >= intervalMillis
+        val now = System.currentTimeMillis()
+        // 系统时钟回拨时差值为负；按过期处理，避免学期探测被抑制到
+        // 墙上时钟再次追上旧时间戳（可能持续数小时甚至更久）。
+        return last == 0L || now < last || now - last >= intervalMillis
     }
 
     /** 记录一次学期列表探测（节流基准）。 */

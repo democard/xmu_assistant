@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -28,6 +29,16 @@ class AppAssetPathTest(unittest.TestCase):
         self.assertEqual(path.name, "no-such-asset.bin")
         self.assertEqual(path.parent.name, "assets")
         self.assertFalse(path.exists())
+
+    def test_package_fallback_assets_match_repository_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        package_assets = root / "xmu-rollcall-cli" / "xmu_rollcall" / "assets"
+        for name in ("xmu-assistant.ico", "xmu-assistant-mark.png"):
+            self.assertEqual(
+                (root / "assets" / name).read_bytes(),
+                (package_assets / name).read_bytes(),
+                f"wheel fallback asset {name} must stay in sync with root asset",
+            )
 
 
 class AppIconTest(unittest.TestCase):

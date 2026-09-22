@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import threading
 import time
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import request_probe
 from .rollcall_models import first_value as _first_value
@@ -19,8 +22,8 @@ from .utils import (
     base_url,
     clone_session,
     headers,
-    remember_good_endpoint,
     ordered_endpoints,
+    remember_good_endpoint,
     response_session_expired,
     unwrap_list as _unwrap_list,
 )
@@ -349,13 +352,26 @@ def _courseware_item_from_activity(
 # 按 course_id 做 TTL 进程级缓存：命中则每门课每次刷新省 1 个 RTT；
 # TTL 过期或进程重启后自然重新拉取。会话过期异常不缓存（直接上抛）。
 MODULES_CACHE_TTL_SECONDS = 300
-_modules_cache: dict[str, tuple[float, dict]] = {}
+# Cache is scoped to the effective authenticated Session.  A course id can be
+# reused by two accounts, and an old request may finish after an account switch;
+# a process-wide course-id key would then leak the old account's module layout.
+_modules_cache: weakref.WeakKeyDictionary[object, dict[str, tuple[float, dict]]] = weakref.WeakKeyDictionary()
 _modules_cache_lock = threading.Lock()
 
 
+def _modules_cache_scope(session):
+    # The desktop clones a worker Session for each refresh but marks it with the
+    # stable GUI-session scope, preserving the within-session TTL benefit while
+    # keeping account changes isolated.  Direct callers naturally scope by the
+    # Session object itself.
+    return getattr(session, "_xmu_modules_cache_scope", session)
+
+
 def _get_modules_cached(session, course_id: str):
+    scope = _modules_cache_scope(session)
     with _modules_cache_lock:
-        hit = _modules_cache.get(course_id)
+        entries = _modules_cache.setdefault(scope, {})
+        hit = entries.get(course_id)
         if hit is not None and time.monotonic() - hit[0] < MODULES_CACHE_TTL_SECONDS:
             return hit[1]
     payload = _get_json(session, f"/api/courses/{course_id}/modules", "课程章节读取")
@@ -363,9 +379,10 @@ def _get_modules_cached(session, course_id: str):
         # 写入时清过期项：TTL 只影响命中与否、过期条目永不删除的话，托盘
         # 常驻依次浏览全课程会让 payload 按课程数无界驻留内存
         now = time.monotonic()
-        for key in [k for k, (ts, _p) in _modules_cache.items() if now - ts >= MODULES_CACHE_TTL_SECONDS]:
-            del _modules_cache[key]
-        _modules_cache[course_id] = (now, payload)
+        entries = _modules_cache.setdefault(scope, {})
+        for key in [k for k, (ts, _p) in entries.items() if now - ts >= MODULES_CACHE_TTL_SECONDS]:
+            del entries[key]
+        entries[course_id] = (now, payload)
     return payload
 
 
@@ -461,7 +478,7 @@ def available_path(directory: Path, filename: str) -> Path:
 
 
 def _looks_direct_url(url: str) -> bool:
-    return url.split("?", 1)[0].lower().endswith(DIRECT_URL_EXTENSIONS)
+    return urlsplit(str(url)).path.lower().endswith(DIRECT_URL_EXTENSIONS)
 
 
 def _write_url_shortcut(directory: Path, item: CoursewareItem) -> Path:
@@ -537,23 +554,57 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
         # Range 起点续传出损坏文件
         if "application/json" in content_type or "application/xhtml" in content_type:
             raise RuntimeError("下载返回了非文件内容，请稍后再试")
-        # 206 = 服务端确认从断点续传，追加写；200 = 全量响应，覆盖重下
-        append_mode = resume_from > 0 and response.status_code == 206
-        with partial.open("ab" if append_mode else "wb") as file:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    file.write(chunk)
-        # 短 body 干净收尾校验：服务端提前断流但连接正常结束时 iter_content
-        # 不报错，截断文件会被 os.replace 扶正为成品——比对 Content-Length
-        # （206 断点续传时按起始偏移折算），不符即报错并保留 .part 供续传
-        expected_total = str(response.headers.get("Content-Length") or "")
-        if expected_total.isdigit():
-            base = resume_from if append_mode else 0
-            received = partial.stat().st_size - base
-            if received != int(expected_total):
-                raise RuntimeError(
-                    f"下载不完整（收到 {received}/{expected_total} 字节），已保留断点续传记录"
-                )
+        content_encoding = (response.headers.get("Content-Encoding") or "").lower()
+        compressed = any(value.strip() in {"gzip", "deflate", "br"}
+                         for value in content_encoding.split(","))
+        # requests 会自动解压；压缩 206 无法按 Content-Range 安全拼接。
+        # 压缩 200 可写入，但 Content-Length 不再对应解压后的字节数。
+        if response.status_code == 206:
+            content_range = _parse_content_range(response.headers.get("Content-Range"))
+            if content_range is None or content_range[0] != resume_from:
+                raise RuntimeError("下载范围无效，已保留断点续传记录")
+            range_start, range_end, range_total = content_range
+            if range_end <= range_start or range_end > range_total or range_end != range_total:
+                raise RuntimeError("下载范围未覆盖文件末尾，已保留断点续传记录")
+            if compressed:
+                raise RuntimeError("压缩的断点续传响应无法安全拼接")
+
+            # 先校验临时片段，避免错误范围或短流污染既有 .part。
+            chunk_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=directory, prefix=".xmu-download-", suffix=".chunk", delete=False,
+                ) as chunk_file:
+                    chunk_path = Path(chunk_file.name)
+                    for chunk in response.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            chunk_file.write(chunk)
+                received = chunk_path.stat().st_size
+                expected_chunk = range_end - range_start
+                expected_length = str(response.headers.get("Content-Length") or "")
+                if received != expected_chunk or (expected_length.isdigit() and int(expected_length) != expected_chunk):
+                    raise RuntimeError(
+                        f"下载不完整（收到 {received}/{expected_chunk} 字节），已保留断点续传记录"
+                    )
+                with partial.open("ab" if resume_from > 0 else "wb") as file, chunk_path.open("rb") as chunk_file:
+                    for chunk in iter(lambda: chunk_file.read(1024 * 256), b""):
+                        file.write(chunk)
+            finally:
+                if chunk_path is not None:
+                    chunk_path.unlink(missing_ok=True)
+        else:
+            # 200 是全量响应，压缩体跳过 Content-Length 校验。
+            with partial.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        file.write(chunk)
+            expected_total = str(response.headers.get("Content-Length") or "")
+            if not compressed and expected_total.isdigit():
+                received = partial.stat().st_size
+                if received != int(expected_total):
+                    raise RuntimeError(
+                        f"下载不完整（收到 {received}/{expected_total} 字节），已保留断点续传记录"
+                    )
         os.replace(partial, target)
         return target
     finally:
@@ -561,3 +612,11 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
         # 失败时刻意保留 .part：已下载的字节是断点续传的依据。
         # 所有失败分支都在写文件之前抛出（流式探测不消费 body），
         # 或写入了合法的前缀字节，保留均安全；成功路径已 os.replace 不存在。
+
+
+def _parse_content_range(value: str | None) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"bytes\s+(\d+)-(\d+)/(\d+)", str(value or "").strip(), re.IGNORECASE)
+    if not match:
+        return None
+    start, end, total = (int(part) for part in match.groups())
+    return (start, end + 1, total) if end >= start and total > end else None

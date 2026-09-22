@@ -5,6 +5,9 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * 课表缓存格式版本。
@@ -106,31 +109,51 @@ private val scheduleCacheWriteLock = Any()
 fun saveScheduleSnapshotToFile(file: File, snapshot: XmuScheduleSnapshot) {
     runCatching {
         val json = xmuScheduleSnapshotToJson(snapshot)
-        synchronized(scheduleCacheWriteLock) {
-            val temp = File(file.parentFile, "${file.name}.tmp")
-            temp.writeText(json)
-            // 原子替换，避免写一半崩溃留下损坏缓存。
-            // renameTo 失败时短暂重试：直接覆盖会破坏原子性，读侧可能读到写入中途的半截文件
-            var renamed = temp.renameTo(file)
-            if (!renamed) {
-                repeat(3) {
-                    Thread.sleep(20)
-                    if (temp.renameTo(file)) {
-                        renamed = true
-                        return@repeat
-                    }
-                }
-            }
-            if (!renamed) {
-                // 极端情况（文件被占用等）最后手段：先删旧再写（读侧 runCatching 兜底为空快照）
-                file.delete()
-                file.writeText(json)
-            }
-        }
+        writeScheduleSnapshotAtomically(file, json)
     }.onFailure {
         // 写失败原先全链路静默：磁盘满/权限异常时缓存悄悄陈旧，零线索可查。
         // 只补日志不改控制流（与 RollcallMonitorService 推送失败日志同款风格）。
         Log.w(TAG, "课表缓存写入失败：${it.message}", it)
+    }
+}
+
+/** 原子写入实现；替换器参数仅供 JVM 测试模拟 rename 失败。 */
+internal fun writeScheduleSnapshotAtomically(
+    file: File,
+    json: String,
+    rename: (File, File) -> Boolean = { source, target ->
+        runCatching {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+            true
+        }.getOrDefault(false)
+    },
+) {
+    synchronized(scheduleCacheWriteLock) {
+        val temp = File(file.parentFile, "${file.name}.tmp")
+        try {
+            temp.writeText(json)
+            // 原子替换，避免写一半崩溃留下损坏缓存。
+            var renamed = rename(temp, file)
+            if (!renamed) {
+                for (attempt in 1..3) {
+                    Thread.sleep(20)
+                    renamed = rename(temp, file)
+                    if (renamed) break
+                }
+            }
+            if (!renamed) {
+                // 替换失败时保留正式文件；删除临时文件，避免下次读取到半成品。
+                temp.delete()
+                throw IOException("schedule cache atomic replace failed")
+            }
+        } finally {
+            if (temp.exists()) temp.delete()
+        }
     }
 }
 

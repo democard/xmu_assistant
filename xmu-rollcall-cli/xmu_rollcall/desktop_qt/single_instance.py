@@ -8,7 +8,12 @@ QTimer 周期监听（install_show_event_watcher/_show_event_tick）一并随迁
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QTimer
+
+if TYPE_CHECKING:
+    from .app import DashboardWindow
 
 # 单例互斥量名：OS 在进程退出时自动释放。选 Win32 命名互斥量而非 Qt QLocalServer，
 # 后者依赖 PySide6.QtNetwork 的命名管道后端，在 PyInstaller onefile 打包后不可靠。

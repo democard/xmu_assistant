@@ -156,11 +156,19 @@ private fun saveToMediaStore(context: Context, bitmap: Bitmap): Uri? {
 
 private fun saveToPrivateFile(context: Context, bitmap: Bitmap): Uri? {
     val dir = File(context.filesDir, "images").apply { mkdirs() }
-    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    val file = File(dir, "xmu成绩_$stamp.png")
+    val file = try {
+        reservePrivateImageFile(dir)
+    } catch (error: Throwable) {
+        Log.w("ScoreShare", "pre-Q 成绩长图文件创建失败", error)
+        return null
+    }
     return try {
-        FileOutputStream(file).use { output ->
+        val compressed = FileOutputStream(file).use { output ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
+        if (!compressed) {
+            file.delete()
+            return null
         }
         // 顺带清理 30 天前的旧分享图，避免私有目录无限累积
         try {
@@ -173,8 +181,21 @@ private fun saveToPrivateFile(context: Context, bitmap: Bitmap): Uri? {
         }
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     } catch (error: Throwable) {
+        runCatching { file.delete() }
         Log.w("ScoreShare", "pre-Q 成绩长图分享失败", error)
         null
+    }
+}
+
+/** Reserve before opening so two same-second saves cannot truncate each other. */
+private fun reservePrivateImageFile(dir: File): File {
+    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+    var index = 0
+    while (true) {
+        val suffix = if (index == 0) "" else "_$index"
+        val candidate = File(dir, "xmu成绩_${stamp}${suffix}.png")
+        if (candidate.createNewFile()) return candidate
+        index += 1
     }
 }
 

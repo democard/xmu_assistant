@@ -107,6 +107,11 @@ class NetworkBenchmarkActivity : Activity() {
             val items = CoursewareClient(applicationContext, cookieHeader).fetchCourseware(cachedCourseId)
             BenchmarkOperationResult(hasPartialCoursewareFailure = items.any { it.failureReason.isNotBlank() })
         }
+        // These operations are intentionally excluded from the current read-only
+        // benchmark plan. Keep the branches explicit so a future plan change
+        // cannot silently turn an unsupported operation into a network call.
+        NetworkOperation.SCHEDULE -> error("UnsupportedBenchmarkOperation:SCHEDULE")
+        NetworkOperation.EXAM -> error("UnsupportedBenchmarkOperation:EXAM")
         NetworkOperation.DOWNLOAD,
         NetworkOperation.UNKNOWN,
         -> error("UnsafeBenchmarkOperation")

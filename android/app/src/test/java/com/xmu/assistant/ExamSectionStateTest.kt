@@ -381,6 +381,19 @@ class ExamSectionStateTest {
     }
 
     @Test
+    fun `clock rollback does not suppress exam term reprobe`() {
+        val prefs = app.getSharedPreferences("exam_cache", android.content.Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putLong("last_probe_epoch_millis", System.currentTimeMillis() + 60 * 60 * 1000L)
+            .commit()
+
+        assertTrue("系统时间回拨后应立即允许重探", ExamCache.shouldReProbe(app))
+
+        prefs.edit().clear().commit()
+    }
+
+    @Test
     fun `logout race drops backfill and recovers loading via clearLoadingState`() {
         val transport = StubSilentRefreshTransport(
             termCodes = listOf("2025-2026-1", "2025-2026-2", "2025-2026-3", "2026-2027-1"),

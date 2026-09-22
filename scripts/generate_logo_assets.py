@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+import shutil
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -10,6 +11,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
+PACKAGE_ASSETS = ROOT / "xmu-rollcall-cli" / "xmu_rollcall" / "assets"
 ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
 
 LOGO_SVG = ASSETS / "xmu-assistant-logo.svg"
@@ -98,6 +100,12 @@ def main() -> None:
         write_png(MARK_SVG, ASSETS / f"xmu-assistant-mark-{size}.png", size)
         write_png(MARK_FOREGROUND_SVG, ASSETS / f"xmu-assistant-mark-foreground-{size}.png", size)
     write_ico(ASSETS / "xmu-assistant.ico", [16, 20, 24, 32, 40, 48, 64, 128, 256])
+
+    # Keep the two small desktop fallbacks inside the Python package so an
+    # installed wheel does not depend on the repository-level assets folder.
+    PACKAGE_ASSETS.mkdir(parents=True, exist_ok=True)
+    for name in ("xmu-assistant.ico", "xmu-assistant-mark.png"):
+        shutil.copy2(ASSETS / name, PACKAGE_ASSETS / name)
 
     # Android in-app display assets.
     drawable = ANDROID_RES / "drawable-nodpi"

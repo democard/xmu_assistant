@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.security.MessageDigest
 
 /**
  * 课表 → iCalendar (.ics) 导出（纯函数，无 Android 依赖）。
@@ -94,7 +95,7 @@ fun buildScheduleIcs(
             builder.append("BEGIN:VEVENT\r\n")
             builder
                 .append("UID:")
-                .append(icsUid(entry))
+                .append(icsUid(entry, run))
                 .append("-w")
                 .append(run.firstWeek)
                 .append("@xmu-assistant\r\n")
@@ -148,10 +149,23 @@ fun buildScheduleIcs(
 private fun dateOfWeekday(calendar: XmuAcademicCalendar, week: Int, weekday: Int): LocalDate =
     calendar.startDate.plusDays((week - 1L) * 7L + (weekday - 1L))
 
-/** 稳定 UID：同学期同排课再次导出 UID 一致，重复导入时日历应用可按 UID 替换去重。 */
-private fun icsUid(entry: XmuScheduleEntry): String =
-    "${entry.termCode}-${entry.weekday}-${entry.startSection}-" +
-        "${entry.courseName.hashCode()}"
+/**
+ * 稳定标识一段导出周次：纳入可区分排课的字段和拆分周段，避免 hashCode 碰撞；
+ * 不含导出时间或列表下标，因此同一排课重复导出仍保持 UID。
+ */
+private fun icsUid(entry: XmuScheduleEntry, run: IcsWeekRun): String {
+    val identity = listOf(
+        entry.termCode, entry.weekday.toString(), entry.startSection.toString(),
+        entry.endSection.toString(), entry.startTime.toString(), entry.endTime.toString(),
+        entry.courseName, entry.room, entry.teacher, entry.weeks,
+        run.firstWeek.toString(), run.lastWeek.toString(), run.step.toString(),
+    ).joinToString("\u001f")
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+        .take(16)
+        .joinToString("") { "%02x".format(it) }
+    return digest
+}
 
 private fun formatXmuTimeOrNull(value: Int): String? =
     if (value in 100..2359 && value % 100 < 60) formatXmuTime(value) else null

@@ -155,9 +155,9 @@ class EventRegistryFreezeTests(unittest.TestCase):
         "courseware_courses_error": 4,
         "courseware": 4,
         "courseware_error": 4,
-        "courseware_download_progress": 5,
-        "courseware_download_item_done": 3,
-        "courseware_download_done": 6,
+        "courseware_download_progress": 7,
+        "courseware_download_item_done": 5,
+        "courseware_download_done": 8,
     }
 
     def test_registry_kind_set_and_min_arity_frozen(self):

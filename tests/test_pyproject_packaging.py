@@ -48,6 +48,14 @@ class PyprojectPackagingTests(unittest.TestCase):
             "pyproject 的包声明漏掉以下子包（pip install 后入口点会挂）",
         )
 
+    def test_package_data_includes_desktop_icon_fallbacks(self):
+        if sys.version_info < (3, 11):
+            self.skipTest("tomllib requires 3.11+")
+        tool = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["setuptools"]
+        package_data = tool.get("package-data", {}).get("xmu_rollcall", [])
+        self.assertIn("assets/*.ico", package_data)
+        self.assertIn("assets/*.png", package_data)
+
 
 class PyInstallerSpecFilterTests(unittest.TestCase):
     """spec 的 PySide6 过滤规则必须命中真实落盘路径。

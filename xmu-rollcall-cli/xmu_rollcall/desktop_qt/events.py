@@ -34,7 +34,7 @@ EVENT_CONTRACTS: dict[str, tuple[int, str]] = {
     "restore_failed": (3, "自动恢复失败(原因, silent[, login_epoch])"),
     "answer_result": (4, "签到应答结果(event_id, ok, detail)"),
     "number_code": (3, "数字签到码(event_id, code[, detail])；detail 可省略"),
-    "merge_session_cookies": (3, "worker 克隆会话回写(session[, worker_account_id])"),
+    "merge_session_cookies": (3, "worker 克隆会话回写(session, worker_account_id[, batch_token])"),
     "notification_result": (3, "通知发送结果(ok, detail)"),
     # ---- 签到情况 / 课件刷新 worker 发射 ----
     "course_rollcalls": (4, "签到情况结果(records, source, worker_account_id)"),
@@ -45,7 +45,7 @@ EVENT_CONTRACTS: dict[str, tuple[int, str]] = {
     "courseware_courses_error": (4, "课件课程列表失败(message, silent, worker_account_id)"),
     "courseware": (4, "单课程课件列表(course, items, worker_account_id)"),
     "courseware_error": (4, "单课程课件失败(message, silent, worker_account_id)"),
-    "courseware_download_progress": (5, "下载进度(index, total, filename, key)"),
-    "courseware_download_item_done": (3, "单个文件完成(key, status)"),
-    "courseware_download_done": (6, "批量下载收尾(downloaded, entries, errors, destination[, raw_errors])"),
+    "courseware_download_progress": (7, "下载进度(batch_token, worker_account_id, index, total, filename, key)"),
+    "courseware_download_item_done": (5, "单个文件完成(batch_token, worker_account_id, key, status)"),
+    "courseware_download_done": (8, "批量下载收尾(batch_token, worker_account_id, downloaded, entries, errors, destination, raw_errors)"),
 }

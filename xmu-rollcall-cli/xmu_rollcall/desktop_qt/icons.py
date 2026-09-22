@@ -18,11 +18,18 @@ def app_asset_path(name: str) -> Path:
     bundle_dir = getattr(sys, "_MEIPASS", None)
     if bundle_dir:
         bases.append(Path(bundle_dir))
+    # Keep the repository/PyInstaller lookup first for development and the
+    # existing one-file layout.  Installed wheels carry a small package-local
+    # fallback because the repository-level assets directory is not packaged.
     bases.extend((Path(__file__).resolve().parents[3], Path.cwd()))
+    package_assets = Path(__file__).resolve().parents[1] / "assets"
     for base in bases:
         candidate = base / "assets" / name
         if candidate.exists():
             return candidate
+    package_candidate = package_assets / name
+    if package_candidate.exists():
+        return package_candidate
     return bases[-1] / "assets" / name
 
 

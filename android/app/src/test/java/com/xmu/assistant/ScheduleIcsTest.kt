@@ -164,4 +164,36 @@ class ScheduleIcsTest {
         assertFalse(text.contains("RRULE:"))
         assertTrue(text.contains("DTSTART:${date(5, 1)}T083000"))
     }
+
+    @Test
+    fun `uids distinguish Java hash collision course names`() {
+        // "Aa" and "BB" deliberately share Java String.hashCode(); every
+        // other scheduling field remains equal.
+        val aa = entry(courseName = "Aa")
+        val bb = entry(courseName = "BB")
+        val text = buildScheduleIcs(listOf(aa, bb), calendar)!!
+        fun uids(text: String) = text.lineSequence().filter { it.startsWith("UID:") }.toSet()
+        assertEquals(2, uids(text).size)
+    }
+
+    @Test
+    fun `uids distinguish same course rows with different time or sections`() {
+        val morning = entry(startTime = 830)
+        val afternoon = entry(startTime = 900).copy(endSection = 3)
+        val first = buildScheduleIcs(listOf(morning, afternoon), calendar)!!
+        val reversed = buildScheduleIcs(listOf(afternoon, morning), calendar)!!
+        fun uids(text: String) = text.lineSequence().filter { it.startsWith("UID:") }.toSet()
+        assertEquals(2, uids(first).size)
+        assertEquals(uids(first), uids(reversed))
+    }
+
+    @Test
+    fun `identical exported segment keeps uid across repeated exports`() {
+        val first = buildScheduleIcs(listOf(entry()), calendar)!!
+        val second = buildScheduleIcs(listOf(entry()), calendar)!!
+        assertEquals(
+            first.lineSequence().first { it.startsWith("UID:") },
+            second.lineSequence().first { it.startsWith("UID:") },
+        )
+    }
 }

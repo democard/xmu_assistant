@@ -217,6 +217,24 @@ class CoursewareClientTest {
     }
 
     @Test
+    fun `JSON and XHTML challenge responses do not promote partial`() {
+        val directory = temporaryFolder.newFolder("json-challenge")
+        listOf("application/json; charset=utf-8", "application/xhtml+xml").forEachIndexed { index, contentType ->
+            val client = downloadClient(directory) { target ->
+                target.writeText(if (index == 0) "existing-partial" else "")
+                FileDownloadResult(200, contentType)
+            }
+            val error = assertThrows(IllegalStateException::class.java) {
+                client.download(directItem(filename = "challenge-$index.pdf"))
+            }
+            assertTrue(error.message.orEmpty().contains("网络失败"))
+            assertFalse(File(directory, "challenge-$index.pdf").exists())
+            assertTrue(File(directory, "challenge-$index.pdf.part").exists())
+            assertEquals(if (index == 0) "existing-partial" else "", File(directory, "challenge-$index.pdf.part").readText())
+        }
+    }
+
+    @Test
     fun `download reports a typed main session expiration on 401`() {
         val directory = temporaryFolder.newFolder("expired")
         val client = downloadClient(directory) { FileDownloadResult(401, "application/pdf") }
@@ -312,13 +330,13 @@ class CoursewareClientTest {
     }
 
     @Test
-    fun `download attaches cookie only to same-host urls`() {
+    fun `download attaches cookie only to same-origin urls`() {
         // 安全回归：Cookie 附带按 URL host 精确比对，不用字符串前缀——
         // lnt.xmu.edu.cn.evil.com 这类前缀伪装域不得携带会话 Cookie。
-        val captured = mutableListOf<Map<String, String>>()
+        val captured = mutableMapOf<String, Map<String, String>>()
         val directory = temporaryFolder.newFolder("cookie-host")
         val transport = FileDownloadTransport { request, target ->
-            synchronized(captured) { captured += request.headers }
+            synchronized(captured) { captured[request.url] = request.headers }
             target.writeText("ok")
             FileDownloadResult(200, "application/pdf")
         }
@@ -341,14 +359,45 @@ class CoursewareClientTest {
         )
         client.download(
             CoursewareUiItem(
+                id = "http-same-host", courseId = "course-1", activityId = "activity-http-same-host",
+                title = "t", filename = "http.pdf", type = "file",
+                sourceUrl = "http://lnt.xmu.edu.cn/f/http.pdf",
+            ),
+        )
+        client.download(
+            CoursewareUiItem(
+                id = "port-same-host", courseId = "course-1", activityId = "activity-port-same-host",
+                title = "t", filename = "port.pdf", type = "file",
+                sourceUrl = "https://lnt.xmu.edu.cn:8443/f/port.pdf",
+            ),
+        )
+        client.download(
+            CoursewareUiItem(
+                id = "explicit-default-port", courseId = "course-1", activityId = "activity-default-port",
+                title = "t", filename = "default.pdf", type = "file",
+                sourceUrl = "https://lnt.xmu.edu.cn:443/f/default.pdf",
+            ),
+        )
+        client.download(
+            CoursewareUiItem(
                 id = "prefix-spoof", courseId = "course-1", activityId = "activity-prefix-spoof",
                 title = "t", filename = "spoof.pdf", type = "file",
                 sourceUrl = "https://lnt.xmu.edu.cn.evil.com/f/spoof.pdf",
             ),
         )
 
-        assertTrue(captured[0].containsKey("Cookie"))
-        assertFalse(captured[1].containsKey("Cookie"))
+        assertTrue(captured.getValue("https://lnt.xmu.edu.cn/f/same.pdf").containsKey("Cookie"))
+        assertFalse(captured.getValue("http://lnt.xmu.edu.cn/f/http.pdf").containsKey("Cookie"))
+        assertFalse(captured.getValue("https://lnt.xmu.edu.cn:8443/f/port.pdf").containsKey("Cookie"))
+        assertTrue(captured.getValue("https://lnt.xmu.edu.cn:443/f/default.pdf").containsKey("Cookie"))
+        assertFalse(captured.getValue("https://lnt.xmu.edu.cn.evil.com/f/spoof.pdf").containsKey("Cookie"))
+    }
+
+    @Test
+    fun `direct download URL parsing uses path with query fragment and spaces`() {
+        assertTrue(isDirectCoursewareUrl("https://storage.example/course notes/file.pdf#page=1"))
+        assertTrue(isDirectCoursewareUrl("https://storage.example/course notes/file.pdf?token=1#page=1"))
+        assertFalse(isDirectCoursewareUrl("https://storage.example/view?name=file.pdf"))
     }
 
     private fun downloadClient(

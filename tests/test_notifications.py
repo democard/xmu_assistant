@@ -275,6 +275,62 @@ class NotificationTests(unittest.TestCase):
         self.assertTrue(smtp.started_tls)
         self.assertEqual(smtp.messages[0]["Subject"], "签到提醒")
 
+    def test_qq_mail_rejects_invalid_explicit_smtp_port_without_connecting(self):
+        notifier = QQMailNotifier(
+            sender="sender@example.invalid",
+            password="fixture-mail-password",
+            recipient="recipient@example.invalid",
+            smtp_port="not-a-port",
+        )
+        with patch.object(smtplib, "SMTP_SSL") as smtp_ssl, patch.object(smtplib, "SMTP") as smtp:
+            with self.assertRaisesRegex(ValueError, "SMTP port is invalid"):
+                notifier.send("签到提醒", "课程：数学")
+        smtp_ssl.assert_not_called()
+        smtp.assert_not_called()
+
+    def test_qq_mail_rejects_out_of_range_explicit_smtp_port_without_connecting(self):
+        notifier = QQMailNotifier(
+            sender="sender@example.invalid",
+            password="fixture-mail-password",
+            recipient="recipient@example.invalid",
+            smtp_port="0,65536",
+        )
+        with patch.object(smtplib, "SMTP_SSL") as smtp_ssl, patch.object(smtplib, "SMTP") as smtp:
+            with self.assertRaisesRegex(ValueError, "SMTP port is invalid"):
+                notifier.send("签到提醒", "课程：数学")
+        smtp_ssl.assert_not_called()
+        smtp.assert_not_called()
+
+    def test_qq_mail_empty_port_uses_default_ssl_port(self):
+        FakeSMTPSSL.fail_init = False
+        FakeSMTPSSL.instances.clear()
+        with patch.object(smtplib, "SMTP_SSL", FakeSMTPSSL), patch.object(smtplib, "SMTP", FakeSMTP):
+            QQMailNotifier(
+                sender="sender@example.invalid",
+                password="fixture-mail-password",
+                recipient="recipient@example.invalid",
+                smtp_port="",
+            ).send("签到提醒", "课程：数学")
+        self.assertEqual(FakeSMTPSSL.instances[-1].port, 465)
+
+    def test_qq_mail_mixed_ports_attempts_only_valid_ports(self):
+        FakeSMTP.instances.clear()
+        ssl_ports = []
+
+        def fail_ssl(host, port, timeout=None, context=None):
+            ssl_ports.append(port)
+            raise TimeoutError("465 timed out")
+
+        with patch.object(smtplib, "SMTP_SSL", side_effect=fail_ssl), patch.object(smtplib, "SMTP", FakeSMTP):
+            QQMailNotifier(
+                sender="sender@example.invalid",
+                password="fixture-mail-password",
+                recipient="recipient@example.invalid",
+                smtp_port="465,garbage,0,587,65536",
+            ).send("签到提醒", "课程：数学")
+        self.assertEqual(ssl_ports, [465])
+        self.assertEqual([smtp.port for smtp in FakeSMTP.instances], [587])
+
 
 if __name__ == "__main__":
     unittest.main()

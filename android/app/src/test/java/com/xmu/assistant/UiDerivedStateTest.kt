@@ -68,6 +68,9 @@ class UiDerivedStateTest {
             )
         }
         assertTrue(isDirectCoursewareUrl("https://storage.example/file.PDF?token=1"))
+        assertTrue(isDirectCoursewareUrl("https://storage.example/file.pdf#page=1"))
+        assertTrue(isDirectCoursewareUrl("https://storage.example/file.pdf?token=1#page=1"))
+        assertFalse(isDirectCoursewareUrl("https://storage.example/view?name=file.pdf"))
         assertFalse(isDirectCoursewareUrl("https://platform.example/entry-page"))
     }
 

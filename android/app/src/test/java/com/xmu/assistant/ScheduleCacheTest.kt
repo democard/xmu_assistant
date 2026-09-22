@@ -171,6 +171,64 @@ class ScheduleCacheTest {
     }
 
     @Test
+    fun `failed atomic replace preserves the previous cache`() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "schedule-cache-test-${System.nanoTime()}")
+        dir.mkdirs()
+        try {
+            val file = File(dir, "cache.json")
+            val old = XmuScheduleSnapshot(termCode = "20261", updatedAtMillis = 111L)
+            saveScheduleSnapshotToFile(file, old)
+
+            val newer = xmuScheduleSnapshotToJson(old.copy(updatedAtMillis = 222L))
+            assertEquals(
+                "failed replacement should report the write failure",
+                true,
+                runCatching { writeScheduleSnapshotAtomically(file, newer) { _, _ -> false } }.isFailure,
+            )
+
+            assertEquals("atomic replace failure must keep the old cache", old, loadScheduleSnapshotFromFile(file))
+            assertEquals(false, File(dir, "cache.json.tmp").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `successful retry stops invoking the replacer`() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "schedule-cache-test-${System.nanoTime()}")
+        dir.mkdirs()
+        try {
+            val file = File(dir, "cache.json")
+            var calls = 0
+            val json = xmuScheduleSnapshotToJson(XmuScheduleSnapshot(termCode = "20261"))
+
+            writeScheduleSnapshotAtomically(file, json) { _, _ ->
+                calls++
+                calls == 2
+            }
+
+            assertEquals("one initial attempt plus one successful retry", 2, calls)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `normal saves replace an existing cache`() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "schedule-cache-test-${System.nanoTime()}")
+        dir.mkdirs()
+        try {
+            val file = File(dir, "cache.json")
+            saveScheduleSnapshotToFile(file, XmuScheduleSnapshot(termCode = "20261", updatedAtMillis = 111L))
+            saveScheduleSnapshotToFile(file, XmuScheduleSnapshot(termCode = "20261", updatedAtMillis = 222L))
+
+            assertEquals(222L, loadScheduleSnapshotFromFile(file).updatedAtMillis)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `corrupted file returns empty snapshot`() {
         val dir = File(System.getProperty("java.io.tmpdir"), "schedule-cache-test-${System.nanoTime()}")
         dir.mkdirs()

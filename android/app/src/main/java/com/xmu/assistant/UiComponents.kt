@@ -713,13 +713,6 @@ fun courseSemesterLabel(semesterCode: String, term: String): String {
     }
 }
 
-fun isDirectCoursewareUrl(url: String): Boolean {
-    val lowered = url.lowercase().substringBefore("?")
-    // 与下载侧（CoursewareClient）共用同一扩展名全集，防「可直下」计数与
-    // 实际下载行为漂移（此前 .7z/.mov/.m4v/.mp3/.m4a 下载按直链、计数算入口）
-    return DIRECT_COURSEWARE_EXTENSIONS.any { lowered.endsWith(it) }
-}
-
 /** 课件下载状态色：深色模式下用更亮的变体，保证深底上的可读性。 */
 @Composable
 fun coursewareStatusColor(status: String): Color = when {

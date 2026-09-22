@@ -44,6 +44,9 @@ from .core import current_academic_year_label
 from .icons import app_asset_path
 
 
+_DOWNLOAD_SOURCE_UNSET = object()
+
+
 class CoursewarePageMixin:
     REQUIRED_HOST_ATTRS: tuple[str, ...] = (
         "_academic_year_options",
@@ -234,10 +237,14 @@ class CoursewarePageMixin:
         worker_account_id = str((self.account or {}).get("id") or "")
         # 克隆会话：fetch_courseware 入口的活动列表/modules 请求不走其内部
         # 线程级 clone，在此隔离主 Session（同 _courseware_courses_worker 纪律）
-        worker_session = clone_session(self.session) if self.session is not None else None
+        worker_source_session = self.session
+        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
         if worker_session is None:
             self._emit(("courseware_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
             return
+        # Keep modules caching scoped to the stable GUI session while this
+        # worker uses a detached clone for network safety.
+        worker_session._xmu_modules_cache_scope = worker_source_session
         try:
             self._emit(("courseware", course, fetch_courseware(worker_session, course.course_id), worker_account_id))
         except Exception as exc:
@@ -320,6 +327,10 @@ class CoursewarePageMixin:
             QMessageBox.warning(self, "下载目录为空", "请先在上方填写下载目录。")
             return
         self.courseware_download_in_progress = True
+        batch_token = object()
+        worker_account_id = str((self.account or {}).get("id") or "")
+        worker_source_session = self.session
+        self.courseware_download_batch_token = batch_token
         for item in items:
             self.courseware_download_status[self._courseware_key(item)] = "下载中"
         self._refresh_courseware_table()
@@ -327,9 +338,23 @@ class CoursewarePageMixin:
         destination = Path(self.courseware_download_dir.text()) / sanitize_filename(course.title)
         self.courseware_summary.setText(f"准备处理 {len(items)} 个课件...")
         self._show_toast(f"开始处理 {len(items)} 个课件")
-        self._run_thread(self._courseware_download_worker, items, destination)
+        self._run_thread(
+            self._courseware_download_worker,
+            items,
+            destination,
+            batch_token,
+            worker_account_id,
+            worker_source_session,
+        )
 
-    def _courseware_download_worker(self, items: list[CoursewareItem], destination: Path):
+    def _courseware_download_worker(
+        self,
+        items: list[CoursewareItem],
+        destination: Path,
+        batch_token=None,
+        worker_account_id: str | None = None,
+        worker_source_session=_DOWNLOAD_SOURCE_UNSET,
+    ):
         downloaded = []
         entries = []
         errors = []
@@ -341,21 +366,57 @@ class CoursewarePageMixin:
         # 账号 id 必须先于 clone 读取（clone_session 在锁内复制 cookiejar，是毫秒级
         # 窗口）：倒序时换号插在中间会得到「旧账号会话 + 新账号 id」，逐项守卫放行 →
         # 用旧账号会话续下旧账号课件并把旧 cookie merge 进新账号主会话（跨账号污染）。
-        worker_account_id = str((self.account or {}).get("id") or "")
-        worker_session = clone_session(self.session) if self.session is not None else None
+        if worker_account_id is None:
+            worker_account_id = str((self.account or {}).get("id") or "")
+        if worker_source_session is _DOWNLOAD_SOURCE_UNSET:
+            worker_source_session = self.session
+        worker_session = None
+        clone_error = None
+        try:
+            # Explicit None means this batch has no source session; never fall
+            # back to a newer self.session after account switching.
+            worker_session = (
+                clone_session(worker_source_session)
+                if worker_source_session is not None
+                else None
+            )
+        except Exception as exc:
+            clone_error = exc
+            name = "课件下载初始化"
+            errors.append(f"{name}：{friendly_error_message(exc, 'courseware')}")
+            raw_errors.append(f"{name}：{exc}")
+        if clone_error is not None:
+            # Do not enter the item loop with an uninitialized worker session;
+            # the batch still closes through the same events as normal failure.
+            self._emit((
+                "merge_session_cookies", worker_session, worker_account_id, batch_token,
+            ))
+            self._emit((
+                "courseware_download_done", batch_token, worker_account_id,
+                downloaded, entries, errors, destination, raw_errors,
+            ))
+            return
         try:
             for index, item in enumerate(items, start=1):
                 key = self._courseware_key(item)
-                self._emit(("courseware_download_progress", index, len(items), item.filename or item.activity_title, key))
+                self._emit((
+                    "courseware_download_progress", batch_token, worker_account_id,
+                    index, len(items), item.filename or item.activity_title, key,
+                ))
                 # 逐项校验登录状态：网络提交不可中断，只能在每项开始前拦截。
                 if (
                     worker_session is None
                     or self.session is None
+                    or self.session is not worker_source_session
+                    or batch_token is not getattr(self, "courseware_download_batch_token", None)
                     or str((self.account or {}).get("id") or "") != worker_account_id
                 ):
                     name = item.filename or item.activity_title
                     errors.append(f"{name}：已取消（登录状态已变更）")
-                    self._emit(("courseware_download_item_done", key, "已取消（登录状态已变更）"))
+                    self._emit((
+                        "courseware_download_item_done", batch_token, worker_account_id,
+                        key, "已取消（登录状态已变更）",
+                    ))
                     continue
                 try:
                     target = download_courseware(worker_session, item, destination)
@@ -363,18 +424,29 @@ class CoursewarePageMixin:
                         entries.append(target)
                     else:
                         downloaded.append(target)
-                    self._emit(("courseware_download_item_done", key, "下载成功"))
+                    self._emit((
+                        "courseware_download_item_done", batch_token, worker_account_id,
+                        key, "下载成功",
+                    ))
                 except Exception as exc:
                     name = item.filename or item.activity_title
                     errors.append(f"{name}：{friendly_error_message(exc, 'courseware')}")
                     raw_errors.append(f"{name}：{exc}")
-                    self._emit(("courseware_download_item_done", key, f"下载失败：{self._short_courseware_error(exc)}"))
+                    self._emit((
+                        "courseware_download_item_done", batch_token, worker_account_id,
+                        key, f"下载失败：{self._short_courseware_error(exc)}",
+                    ))
         finally:
             # M4：无论成功还是中途异常都必须发出完成事件（GUI 据此复位
             # courseware_download_in_progress），否则异常逃逸会让后续下载永久被拦。
             # 先合并克隆内新增/旋转的 cookie 回主会话（GUI 单点写），再发完成事件。
-            self._emit(("merge_session_cookies", worker_session, worker_account_id))
-            self._emit(("courseware_download_done", downloaded, entries, errors, destination, raw_errors))
+            self._emit((
+                "merge_session_cookies", worker_session, worker_account_id, batch_token,
+            ))
+            self._emit((
+                "courseware_download_done", batch_token, worker_account_id,
+                downloaded, entries, errors, destination, raw_errors,
+            ))
 
     def _show_courseware_download_result(self, downloaded, entries, errors, destination):
         title = "部分下载失败" if errors else "下载完成"

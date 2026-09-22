@@ -26,5 +26,10 @@ xmu-dashboard = "xmu_rollcall.desktop_qt.app:main"
 # ModuleNotFoundError（开发一直走 PYTHONPATH 从未暴露）。
 include = ["xmu_rollcall*"]
 
+[tool.setuptools.package-data]
+# The wheel must retain the icon fallback used when the repository-level
+# assets directory is absent after installation.
+xmu_rollcall = ["assets/*.ico", "assets/*.png"]
+
 [tool.setuptools.dynamic]
 version = {attr = "xmu_rollcall.__version__"}

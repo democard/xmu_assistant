@@ -112,6 +112,126 @@ class FileDownloadTransportTest {
     }
 
     @Test
+    fun `206 from zero works with a long target name`() {
+        val expected = "complete".toByteArray()
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 0-7/8")
+                .setBody(Buffer().write(expected)),
+        )
+        val target = File(temporaryFolder.root, "a".repeat(235) + ".pdf")
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+
+        assertArrayEquals(expected, target.readBytes())
+        assertEquals(0, temporaryFolder.root.listFiles().orEmpty().count { it.name.endsWith(".download-chunk") })
+    }
+
+    @Test
+    fun `206 with content encoding keeps the partial untouched`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Encoding", "br")
+                .addHeader("Content-Range", "bytes 8-15/16")
+                .setBody("compressed"),
+        )
+        val target = File(temporaryFolder.root, "encoded.pdf")
+        target.writeBytes("part-one".toByteArray())
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+        }
+        assertArrayEquals("part-one".toByteArray(), target.readBytes())
+        assertEquals(0, temporaryFolder.root.listFiles().orEmpty().count { it.name.endsWith(".download-chunk") })
+    }
+
+    @Test
+    fun `206 missing or malformed range leaves the partial untouched`() {
+        listOf(null, "bytes 9-15/16", "bytes 8-15/*").forEachIndexed { index, range ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(206)
+                    .addHeader("Content-Type", "application/pdf")
+                    .apply { if (range != null) addHeader("Content-Range", range) }
+                    .setBody("eightbyt"),
+            )
+            val target = File(temporaryFolder.root, "bad-range-$index.pdf")
+            target.writeBytes("part-one".toByteArray())
+            val transport = OkHttpFileDownloadTransport(OkHttpClient())
+            org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+                transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+            }
+            assertArrayEquals("part-one".toByteArray(), target.readBytes())
+            assertEquals(0, temporaryFolder.root.listFiles().orEmpty().count { it.name.endsWith(".download-chunk") })
+        }
+    }
+
+    @Test
+    fun `206 with a range starting before the partial leaves it untouched`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 0-7/16")
+                .setBody("wrong-chunk"),
+        )
+        val target = File(temporaryFolder.root, "range-start.pdf")
+        target.writeBytes("part-one".toByteArray())
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+        }
+        assertArrayEquals("part-one".toByteArray(), target.readBytes())
+    }
+
+    @Test
+    fun `206 with a short final chunk leaves the partial untouched`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 8-15/16")
+                .addHeader("Content-Length", "8")
+                .setBody("short"),
+        )
+        val target = File(temporaryFolder.root, "range-short.pdf")
+        target.writeBytes("part-one".toByteArray())
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+        }
+        assertArrayEquals("part-one".toByteArray(), target.readBytes())
+    }
+
+    @Test
+    fun `206 with a complete but non-final range leaves the partial untouched`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 8-11/16")
+                .addHeader("Content-Length", "4")
+                .setBody("tail"),
+        )
+        val target = File(temporaryFolder.root, "range-non-final.pdf")
+        target.writeBytes("part-one".toByteArray())
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            transport.download(FileDownloadRequest(server.url("/file").toString()), target)
+        }
+        assertArrayEquals("part-one".toByteArray(), target.readBytes())
+    }
+
+    @Test
     fun `server ignoring range returns 200 and overwrites instead of appending`() {
         // 服务端忽略 Range 返回 200 全量：必须覆盖重写，不得把旧 .part 字节重复拼接
         server.enqueue(

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import gzip
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+
+import requests
+from urllib3.response import HTTPResponse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -436,14 +441,29 @@ class ModulesCacheTests(unittest.TestCase):
         _get_modules_cached(sess, "course-2")
         self.assertEqual(2, sess.module_calls)
 
+    def test_different_sessions_do_not_share_same_course_entry(self):
+        first = self._CountingSession()
+        second = self._CountingSession()
+        _get_modules_cached(first, "course-1")
+        _get_modules_cached(second, "course-1")
+        self.assertEqual(1, first.module_calls)
+        self.assertEqual(1, second.module_calls)
+
+    def test_direct_url_uses_url_path_when_query_or_fragment_is_present(self):
+        from xmu_rollcall.courseware import _looks_direct_url
+
+        self.assertTrue(_looks_direct_url("https://cdn.invalid/lecture.pdf?download=1#page=1"))
+        self.assertTrue(_looks_direct_url("https://cdn.invalid/lecture.PDF#page=1"))
+
 
 class ResumeDownloadTests(unittest.TestCase):
     """断点续传：.part 已有字节时带 Range 续传（206 追加）；服务端忽略 Range 返回 200 时全量覆盖。"""
 
     class _BodyResponse:
-        def __init__(self, status_code, body):
+        def __init__(self, status_code, body, extra_headers=None):
             self.status_code = status_code
             self.headers = {"Content-Type": "application/pdf"}
+            self.headers.update(extra_headers or {})
             self._body = body
 
         def raise_for_status(self):
@@ -463,7 +483,9 @@ class ResumeDownloadTests(unittest.TestCase):
             self.range_header = (kwargs.get("headers") or {}).get("Range")
             if self.range_header:
                 # 服务端支持 Range：返回剩余部分
-                return ResumeDownloadTests._BodyResponse(206, b"+resumed")
+                return ResumeDownloadTests._BodyResponse(
+                    206, b"+resumed", {"Content-Range": "bytes 8-15/16", "Content-Length": "8"},
+                )
             return ResumeDownloadTests._BodyResponse(200, b"part-onepart-two")
 
     class _RangeIgnoringSession:
@@ -550,6 +572,134 @@ class ResumeDownloadTests(unittest.TestCase):
             self.assertEqual(b"part-onepart-two", target.read_bytes())
             self.assertIsNotNone(sess.range_header)
             self.assertFalse(partial.exists())
+
+    def test_206_wrong_content_range_preserves_partial(self):
+        class WrongRangeResponse(ResumeDownloadTests._BodyResponse):
+            def __init__(self):
+                super().__init__(206, b"+resumed", {"Content-Range": "bytes 0-7/16", "Content-Length": "8"})
+
+        class WrongRangeSession:
+            def get(self, url, **kwargs):
+                return WrongRangeResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            partial = Path(temp_dir) / "file.pdf.part"
+            partial.write_bytes(b"part-one")
+            with self.assertRaisesRegex(RuntimeError, "下载范围无效"):
+                download_courseware(WrongRangeSession(), self._direct_item(), temp_dir)
+            self.assertEqual(partial.read_bytes(), b"part-one")
+            self.assertFalse((Path(temp_dir) / "file.pdf").exists())
+
+    def test_206_non_final_range_preserves_partial(self):
+        class NonFinalResponse(ResumeDownloadTests._BodyResponse):
+            def __init__(self):
+                super().__init__(206, b"middle", {"Content-Range": "bytes 8-13/16", "Content-Length": "6"})
+
+        class NonFinalSession:
+            def get(self, url, **kwargs):
+                return NonFinalResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            partial = Path(temp_dir) / "file.pdf.part"
+            partial.write_bytes(b"part-one")
+            with self.assertRaisesRegex(RuntimeError, "未覆盖文件末尾"):
+                download_courseware(NonFinalSession(), self._direct_item(), temp_dir)
+            self.assertEqual(partial.read_bytes(), b"part-one")
+
+    def test_206_invalid_ranges_and_short_body_preserve_partial(self):
+        cases = (
+            ("missing", {}, "下载范围无效"),
+            ("malformed", {"Content-Range": "bytes nope"}, "下载范围无效"),
+            ("wrong-start", {"Content-Range": "bytes 0-15/16"}, "下载范围无效"),
+            ("out-of-bounds", {"Content-Range": "bytes 8-20/16"}, "下载范围无效"),
+            ("non-final", {"Content-Range": "bytes 8-11/16"}, "未覆盖文件末尾"),
+            ("short-body", {"Content-Range": "bytes 8-15/16", "Content-Length": "8"}, "下载不完整"),
+        )
+        for label, extra_headers, message in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                partial = Path(temp_dir) / "file.pdf.part"
+                partial.write_bytes(b"part-one")
+
+                class InvalidResponse(ResumeDownloadTests._BodyResponse):
+                    def __init__(self):
+                        body = b"+resumed" if label != "short-body" else b"short"
+                        super().__init__(206, body, extra_headers)
+
+                class InvalidSession:
+                    def get(self, url, **kwargs):
+                        return InvalidResponse()
+
+                with self.assertRaisesRegex(RuntimeError, message):
+                    download_courseware(InvalidSession(), self._direct_item(), temp_dir)
+                self.assertEqual(partial.read_bytes(), b"part-one")
+                self.assertFalse(list(Path(temp_dir).glob(".xmu-download-*.chunk")))
+
+    def test_206_compressed_response_does_not_touch_partial(self):
+        class CompressedResponse(ResumeDownloadTests._BodyResponse):
+            def __init__(self):
+                super().__init__(
+                    206,
+                    b"+resumed",
+                    {"Content-Range": "bytes 8-15/16", "Content-Length": "8", "Content-Encoding": "gzip"},
+                )
+
+        class CompressedSession:
+            def get(self, url, **kwargs):
+                return CompressedResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            partial = Path(temp_dir) / "file.pdf.part"
+            partial.write_bytes(b"part-one")
+            with self.assertRaisesRegex(RuntimeError, "压缩的断点续传"):
+                download_courseware(CompressedSession(), self._direct_item(), temp_dir)
+            self.assertEqual(partial.read_bytes(), b"part-one")
+            self.assertFalse(list(Path(temp_dir).glob(".xmu-download-*.chunk")))
+
+    def test_gzip_full_response_skips_encoded_content_length_check(self):
+        payload = b"decompressed"
+        encoded = gzip.compress(payload)
+
+        class GzipResponse(requests.Response):
+            def __init__(self):
+                super().__init__()
+                self.status_code = 200
+                self.url = "https://storage.example.test/file.pdf"
+                self.headers = {
+                    "Content-Type": "application/pdf",
+                    "Content-Encoding": "gzip",
+                    "Content-Length": str(len(encoded)),
+                }
+                self.raw = HTTPResponse(
+                    body=BytesIO(encoded), headers=self.headers, status=200, preload_content=False,
+                )
+
+        class GzipSession:
+            def get(self, url, **kwargs):
+                return GzipResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = download_courseware(GzipSession(), self._direct_item(), temp_dir)
+            self.assertEqual(target.read_bytes(), payload)
+
+    def test_206_long_filename_uses_short_temp_prefix_and_cleans_chunk(self):
+        filename = "a" * 240 + ".pdf"
+        item = self._direct_item()
+        item = CoursewareItem(**{**item.__dict__, "filename": filename})
+
+        class RangeResponse(ResumeDownloadTests._BodyResponse):
+            def __init__(self):
+                super().__init__(206, b"+resumed", {"Content-Range": "bytes 8-15/16", "Content-Length": "8"})
+
+        class RangeSession:
+            def get(self, url, **kwargs):
+                return RangeResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / ("a" * 240 + ".part")
+            target.write_bytes(b"part-one")
+            final = download_courseware(RangeSession(), item, temp_dir)
+            self.assertEqual(final.read_bytes(), b"part-one+resumed")
+            self.assertFalse(list(Path(temp_dir).glob(".xmu-download-*.chunk")))
 
 
     def test_fetch_courses_session_expired_short_circuits(self):

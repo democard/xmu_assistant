@@ -196,6 +196,9 @@ class DashboardWindow(
         self.courseware_courses_refresh_in_progress = False
         self.courseware_refresh_in_progress = False
         self.courseware_download_in_progress = False
+        # Identity of the currently visible download batch.  Worker events carry
+        # this opaque token so late results cannot affect a later login/batch.
+        self.courseware_download_batch_token = None
         # UI 快照归属的账号 id：启动恢复时记录，登录成功时校验防跨账号串号
         self._snapshot_account_id = ""
         # 当前生效主题（resolved 后的 light/dark），动态取色的依据
@@ -841,6 +844,12 @@ class DashboardWindow(
         self.stop_monitor()
         # 登录代数 +1：在途 login/restore worker 的晚到成功结果据此被丢弃
         self._login_epoch += 1
+        # Any in-flight download belongs to the previous login generation,
+        # including same-account re-login.  Clear its visible state before the
+        # new session starts accepting worker results.
+        self.courseware_download_batch_token = None
+        self.courseware_download_in_progress = False
+        self.courseware_download_status = {}
         account = self.account
         self.session = None
         self.account = None
@@ -1248,6 +1257,12 @@ class DashboardWindow(
                 self._ev_login_failed(("login_failed", str(exc)))
                 return
         self._login_epoch += 1
+        # A successful login always creates a new session generation, including
+        # same-account re-login.  Invalidate every old download event before the
+        # new session becomes visible.
+        self.courseware_download_batch_token = None
+        self.courseware_download_in_progress = False
+        self.courseware_download_status = {}
         # 换号/重登：旧监控线程绑定的是旧账号的 clone 会话，若不停止会继续按旧
         # 账号轮询并触发自动应答（GUI 已切到新账号，用新会话提交旧签到 = 跨账号
         # 污染）。先停旧监控（stop_monitor 幂等，安全）。
@@ -1559,6 +1574,15 @@ class DashboardWindow(
         # GUI 线程单点写：worker 克隆会话的 cookie 回写主会话（含登出/换号守卫）
         worker_session = event[1]
         worker_account_id = event[2] if len(event) > 2 else ""
+        batch_token = event[3] if len(event) > 3 else None
+        current_account = getattr(self, "account", None)
+        current_account_id = str(current_account.get("id") or "") if isinstance(current_account, dict) else ""
+        if batch_token is not None and (
+            batch_token is not getattr(self, "courseware_download_batch_token", None)
+            or str(worker_account_id) != current_account_id
+        ):
+            self.log("忽略旧课件下载批次的会话回写。")
+            return
         self._merge_worker_session(worker_session, worker_account_id)
 
     def _ev_course_rollcalls(self, event):
@@ -1697,10 +1721,18 @@ class DashboardWindow(
             # 登出后在途批次的进度事件：状态表/摘要已随登出清空，不得重建
             #「下载中」孤儿键、重绘表格或改写导航徽标（item_done 与 done 同款守卫）
             return
-        index = event[1]
-        total = event[2]
-        filename = event[3]
-        key = event[4]
+        if len(event) >= 7:
+            batch_token = event[1]
+            current_account = getattr(self, "account", None)
+            current_account_id = str(current_account.get("id") or "") if isinstance(current_account, dict) else ""
+            if (
+                batch_token is not getattr(self, "courseware_download_batch_token", None)
+                or str(event[2]) != current_account_id
+            ):
+                return
+            index, total, filename, key = event[3:7]
+        else:
+            index, total, filename, key = event[1:5]
         self.courseware_download_status[key] = "下载中"
         self._refresh_courseware_table()
         self._update_nav_badges()
@@ -1710,23 +1742,42 @@ class DashboardWindow(
         if self.session is None:
             # 登出后晚到的逐项结果：状态表已清空，不得写入孤儿键
             return
-        key = event[1]
-        status = event[2]
+        if len(event) >= 5:
+            current_account = getattr(self, "account", None)
+            current_account_id = str(current_account.get("id") or "") if isinstance(current_account, dict) else ""
+            if (
+                event[1] is not getattr(self, "courseware_download_batch_token", None)
+                or str(event[2]) != current_account_id
+            ):
+                return
+            key, status = event[3:5]
+        else:
+            key, status = event[1:3]
         self.courseware_download_status[key] = status
         self._refresh_courseware_table()
         self._update_nav_badges()
 
     def _ev_courseware_download_done(self, event):
-        # 互斥旗标复位无条件（新批次可能已合法占用登出后的空闲态）；
-        # 展示面（摘要/弹窗/通知）在登出后丢弃——晚到的旧批次结果不得改写
-        # 已清空的摘要、弹登出后模态框。换号场景的旗标解锁绕过需事件携带
-        # worker 账号快照（签名变更，在案待拍板），本守卫先堵登出场景。
+        # 只有当前批次、当前账号的完成事件才能复位互斥旗标和更新展示面；
+        # 登出后的旧批次仍保留旧版兼容分支，但新 worker 事件始终带 token。
+        if len(event) >= 8:
+            current_account = getattr(self, "account", None)
+            current_account_id = str(current_account.get("id") or "") if isinstance(current_account, dict) else ""
+            if (
+                event[1] is not getattr(self, "courseware_download_batch_token", None)
+                or str(event[2]) != current_account_id
+            ):
+                self.log("忽略旧课件下载批次的完成事件。")
+                return
+            _, _, downloaded, entries, errors, destination, raw_errors = event[1:8]
+        else:
+            _, downloaded, entries, errors, destination = event[:5]
+            raw_errors = event[5] if len(event) > 5 else errors
         self.courseware_download_in_progress = False
+        self.courseware_download_batch_token = None
         if self.session is None:
             self.log("忽略登出后迟到的课件下载完成事件。")
             return
-        _, downloaded, entries, errors, destination = event[:5]
-        raw_errors = event[5] if len(event) > 5 else errors
         self.courseware_summary.setText(
             f"下载完成 {len(downloaded)} 个；保存入口 {len(entries)} 个；失败 {len(errors)} 个"
         )
