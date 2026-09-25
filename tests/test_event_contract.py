@@ -144,7 +144,6 @@ class EventRegistryFreezeTests(unittest.TestCase):
         "login_failed": 2,
         "restore_failed": 3,
         "answer_result": 4,
-        "number_code": 3,
         "merge_session_cookies": 3,
         "notification_result": 3,
         "course_rollcalls": 4,

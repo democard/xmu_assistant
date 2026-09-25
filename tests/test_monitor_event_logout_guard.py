@@ -298,6 +298,8 @@ class DownloadLoginGenerationGuardTest(unittest.TestCase):
         host._update_nav_badges = lambda: None
         host.merges = []
         host._merge_worker_session = lambda *a: host.merges.append(a)
+        host.cancelled_answers = []
+        host._cancel_all_pending_answers = lambda: host.cancelled_answers.append(True)
         host.courseware_summary = types.SimpleNamespace(setText=lambda *_: None)
         host.courseware_combo = types.SimpleNamespace(blockSignals=lambda *_: None, clear=lambda: None)
         for name in ("metric_last_result", "metric_rollcall_count", "metric_last_check", "metric_runtime"):
@@ -367,6 +369,25 @@ class DownloadLoginGenerationGuardTest(unittest.TestCase):
         self.assertIsNone(host.courseware_download_batch_token)
         self._assert_old_events_dropped(host, old_token, "A")
 
+    def test_same_account_relogin_rejects_old_answer_cookie_merge(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        host = self._host("A")
+        old_source_session = host.session
+        new_session = self._login_success(host, "A")
+        DW._ev_merge_session_cookies(
+            host, ("merge_session_cookies", object(), "A", None, old_source_session)
+        )
+        self.assertIs(host.session, new_session)
+        self.assertEqual(host.merges, [])
+        self.assertEqual(host.cancelled_answers, [True])
+
+        worker_session = object()
+        DW._ev_merge_session_cookies(
+            host, ("merge_session_cookies", worker_session, "A", None, new_session)
+        )
+        self.assertEqual(host.merges, [(worker_session, "A")])
+
     def test_current_batch_done_releases_lock(self):
         from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
 
@@ -376,6 +397,116 @@ class DownloadLoginGenerationGuardTest(unittest.TestCase):
         DW._ev_courseware_download_done(host, ("courseware_download_done", token, "B", ["a"], [], [], "D:/a", []))
         self.assertFalse(host.courseware_download_in_progress)
         self.assertIsNone(host.courseware_download_batch_token)
+
+
+class AnswerCookieGenerationGuardTest(unittest.TestCase):
+    def test_answer_dispatch_captures_source_session_before_worker_starts(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        source_session = object()
+        launched = []
+        host = types.SimpleNamespace(
+            session=source_session,
+            account={"id": "A"},
+            monitor_stop_event=None,
+            _cancel_pending_answer=lambda *_: None,
+            _update_event_result=lambda *_: None,
+            _auto_answer_delay=lambda *_: 0,
+            _answer_worker=lambda *_: None,
+            _run_thread=lambda *args: launched.append(args),
+        )
+        event = types.SimpleNamespace(rollcall_type="数字签到")
+
+        DW._answer_event(host, "event-1", event)
+
+        self.assertEqual(len(launched), 1)
+        self.assertIs(launched[0][5], source_session)
+        self.assertEqual(launched[0][6], "A")
+
+    def test_relogin_before_worker_submission_cancels_old_source(self):
+        from unittest.mock import patch
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        old_source = object()
+        emitted = []
+        host = types.SimpleNamespace(session=object(), account={"id": "A"}, _emit=emitted.append)
+        with patch("xmu_rollcall.desktop_qt.app.clone_session", return_value=object()):
+            DW._answer_worker(host, "event-1", object(), 0, None, old_source, "A")
+
+        self.assertTrue(any(item[0] == "answer_result" and "已取消" in item[3] for item in emitted))
+        merge = next(item for item in emitted if item[0] == "merge_session_cookies")
+        self.assertIs(merge[4], old_source)
+
+
+class LateRefreshFlagGuardTest(unittest.TestCase):
+    def test_old_account_results_do_not_unlock_current_refreshes(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        cases = (
+            ("_ev_course_rollcalls", ("course_rollcalls", [], "manual", "A"), "course_refresh_in_progress"),
+            ("_ev_course_rollcalls_error", ("course_rollcalls_error", "error", True, "A"), "course_refresh_in_progress"),
+            ("_ev_course_records_verified", ("course_records_verified", [], "A", "manual"), "course_verify_in_progress"),
+            ("_ev_course_records_verify_error", ("course_records_verify_error", "error", "A"), "course_verify_in_progress"),
+            ("_ev_courseware_courses", ("courseware_courses", [], "manual", "A"), "courseware_courses_refresh_in_progress"),
+            ("_ev_courseware_courses_error", ("courseware_courses_error", "error", True, "A"), "courseware_courses_refresh_in_progress"),
+            ("_ev_courseware", ("courseware", [], "manual", "A"), "courseware_refresh_in_progress"),
+            ("_ev_courseware_error", ("courseware_error", "error", True, "A"), "courseware_refresh_in_progress"),
+        )
+        for handler, event, flag in cases:
+            with self.subTest(handler=handler):
+                host = types.SimpleNamespace(account={"id": "B"}, logs=[])
+                host.log = host.logs.append
+                host._update_verify_button_state = lambda: None
+                setattr(host, flag, True)
+
+                getattr(DW, handler)(host, event)
+
+                self.assertTrue(getattr(host, flag))
+
+
+class MonitorRestartBudgetTest(unittest.TestCase):
+    def test_restart_waits_for_longer_than_one_network_timeout(self):
+        from unittest.mock import patch
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        checks = []
+        launches = []
+        worker = types.SimpleNamespace(is_alive=lambda: checks.append(True) or len(checks) <= 10)
+        host = types.SimpleNamespace(
+            account={"id": "A"}, session=object(), _monitor_restart_epoch=7,
+            monitor_worker=worker, log=lambda *_: None,
+            metric_monitor=types.SimpleNamespace(setText=lambda *_: None),
+            _show_toast=lambda *args, **kwargs: None,
+            start_monitor=lambda: launches.append(True),
+        )
+        host._restart_monitor_later = lambda attempts_left: DW._restart_monitor_later(host, attempts_left)
+        host._continue_monitor_restart = lambda attempts_left, epoch: DW._continue_monitor_restart(
+            host, attempts_left, epoch
+        )
+        with patch("xmu_rollcall.desktop_qt.app.QTimer.singleShot") as single_shot:
+            single_shot.side_effect = lambda delay, callback: callback()
+            DW._restart_monitor_later(host)
+
+        self.assertEqual(launches, [True])
+        self.assertEqual(len(checks), 11)
+        self.assertTrue(all(call.args[0] == 2000 for call in single_shot.call_args_list))
+
+    def test_exhausted_restart_is_visible(self):
+        from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
+
+        statuses = []
+        toasts = []
+        host = types.SimpleNamespace(
+            log=lambda *_: None,
+            metric_monitor=types.SimpleNamespace(setText=statuses.append),
+            _show_toast=lambda *args, **kwargs: toasts.append((args, kwargs)),
+        )
+
+        DW._restart_monitor_later(host, attempts_left=0)
+
+        self.assertEqual(statuses, ["重启失败"])
+        self.assertTrue(toasts)
+        self.assertFalse(toasts[0][1]["ok"])
 
 
 class ErrorEventLogoutGuardTest(unittest.TestCase):

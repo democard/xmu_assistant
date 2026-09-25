@@ -144,8 +144,10 @@ class NotificationsPageMixin:
         return page
 
     def _load_notification_settings(self):
+        self._notification_settings_cache = get_notification_settings({})
         try:
             settings = get_notification_settings(load_config())
+            self._notification_settings_cache = settings
             self.notify_system_check.setChecked(settings["system"]["enabled"])
             self.notify_pushplus_check.setChecked(settings["pushplus"]["enabled"])
             self.notify_pushplus_token.setText(settings["pushplus"]["token"])
@@ -212,6 +214,7 @@ class NotificationsPageMixin:
                 set_notification_settings(config, self._notification_settings_from_ui())
                 save_config(config)
             settings = get_notification_settings(config)
+            self._notification_settings_cache = settings
             self._refresh_notification_metric(settings)
             self.notification_summary.setText("通知设置已保存。")
             self.log("通知设置已保存。")
@@ -223,7 +226,9 @@ class NotificationsPageMixin:
 
     def test_notifications(self):
         self.save_notification_settings()
-        settings = get_notification_settings(load_config())
+        settings = getattr(self, "_notification_settings_cache", None) or get_notification_settings(
+            load_config()
+        )
         external_enabled = settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]
         if not (settings["system"]["enabled"] or external_enabled):
             self.notification_summary.setText("未开启任何通知，请先开启本机、微信或 QQ 邮箱通知。")

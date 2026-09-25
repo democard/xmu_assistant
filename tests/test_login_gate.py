@@ -247,6 +247,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         host._load_rollcall_settings = lambda *_: None
         host._show_toast = lambda *a, **k: None
         host._refresh_after_login = lambda: None
+        host._cancel_all_pending_answers = lambda: None
 
         with mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
              mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \

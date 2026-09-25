@@ -194,6 +194,21 @@ class StartupRegistryMixinTests(unittest.TestCase):
             self.assertFalse(self.mixin._launch_on_startup_enabled())
             self.mixin._set_launch_on_startup(True)  # 不抛异常即通过
 
+    def test_stale_run_entry_is_repaired_to_saved_preference(self):
+        old_command = '"D:/old/xmu助手.exe" --startup'
+        for preferred in (True, False):
+            with self.subTest(preferred=preferred), \
+                 mock.patch.object(self.mixin, "_startup_registered_command", return_value=old_command), \
+                 mock.patch.object(self.mixin, "_set_launch_on_startup") as set_startup:
+                self.assertEqual(self.mixin._reconcile_startup_registration(preferred), preferred)
+                set_startup.assert_called_once_with(preferred)
+
+    def test_current_run_entry_is_left_intact(self):
+        with mock.patch.object(self.mixin, "_startup_registered_command", return_value=self.mixin._startup_command()), \
+             mock.patch.object(self.mixin, "_set_launch_on_startup") as set_startup:
+            self.assertTrue(self.mixin._reconcile_startup_registration(False))
+            set_startup.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

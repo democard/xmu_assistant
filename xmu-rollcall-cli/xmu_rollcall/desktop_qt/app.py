@@ -100,7 +100,6 @@ from .core import (
     MonitorWorker,
     RollcallEvent,
     current_academic_year_label,
-    fetch_number_code,
     fetch_student_rollcall_detail,
     classify_rollcall_status,
     format_duration,
@@ -565,39 +564,13 @@ class DashboardWindow(
             self.log(f"保存监控策略失败：{exc}")
             self._show_toast("监控策略保存失败", ok=False)
 
-    def _save_poll_interval_setting(self, *_args):
-        if not hasattr(self, "poll_interval_spin"):
-            return
-        try:
-            # 读-改-写复合操作整体持 CONFIG_LOCK：与登录写回（后台线程）并发时
-            # 不加锁会丢失更新（最坏把刚登录新增的账号整条写丢）
-            with CONFIG_LOCK:
-                config = load_config()
-                account = get_current_account(config)
-                if not account:
-                    return
-                settings = get_rollcall_settings(account)
-                settings["poll_interval_seconds"] = self.poll_interval_spin.value()
-                set_rollcall_settings(account, settings)
-                save_config(config)
-            if self.account and str(self.account.get("id")) == str(account.get("id")):
-                self.account["rollcall_settings"] = get_rollcall_settings(account)
-            if hasattr(self, "poll_interval_status"):
-                self.poll_interval_status.setText("更改成功")
-            self._show_toast(f"轮询间隔已改为 {self.poll_interval_spin.value()} 秒")
-        except Exception as exc:
-            if hasattr(self, "poll_interval_status"):
-                self.poll_interval_status.setText("更改失败")
-            self.log(f"保存轮询间隔失败：{exc}")
-            self._show_toast("轮询间隔保存失败", ok=False)
-
     def _load_app_settings(self):
         if not hasattr(self, "launch_on_startup_check"):
             return
         try:
             config = load_config()
             settings = get_app_settings(config)
-            actual_enabled = self._launch_on_startup_enabled()
+            actual_enabled = self._reconcile_startup_registration(settings["launch_on_startup"])
             if settings["launch_on_startup"] != actual_enabled:
                 # 读-改-写整体持锁：与登录写回并发时不丢更新
                 with CONFIG_LOCK:
@@ -950,6 +923,9 @@ class DashboardWindow(
                 return
             QMessageBox.warning(self, "尚未登录", "请先登录。")
             return
+        # 从 GUI 发起时固定会话代际；worker 真正启动前也可能发生同账号重登。
+        source_session = self.session
+        source_account_id = str((self.account or {}).get("id") or "")
         if auto and self.monitor_stop_event is not None and self.monitor_stop_event.is_set():
             # 监控已暂停/停止后才送到的在途事件：用户已停监控，不应再自动提交签到。
             # （stop_monitor 只能取消已注册的延迟应答，晚到的信号在这里兜底拦截。）
@@ -985,7 +961,10 @@ class DashboardWindow(
                 "current_event": (auto_snapshot or {}).get("current_event", event),
                 "task_token": (auto_snapshot or {}).get("task_token"),
             }
-        self._run_thread(self._answer_worker, event_id, event, delay, auto_context)
+        self._run_thread(
+            self._answer_worker, event_id, event, delay, auto_context,
+            source_session, source_account_id,
+        )
 
     def _auto_answer_delay(self, event: RollcallEvent, auto: bool) -> float:
         """自动应答的拟人化延迟（秒）。0 = 立即提交。
@@ -1026,6 +1005,8 @@ class DashboardWindow(
         event: RollcallEvent,
         delay: float = 0.0,
         auto_context: dict | None = None,
+        source_session=None,
+        worker_account_id: str | None = None,
     ):
         # A2 二期（H3）：应答是唯一写 cookie 的并发路径（PUT Set-Cookie）。克隆会话隔离
         # 写入口，避免与其余只读 worker / GUI 读共享 cookiejar 发生跨线程竞争写；
@@ -1035,8 +1016,11 @@ class DashboardWindow(
         # 新账号 id」，逐项守卫因两者相等而放行 → 用旧账号会话提交并把旧 cookie merge
         # 进新账号主会话（跨账号污染）。先读 id 则失败朝安全侧（守卫判账号已变即取消），
         # 与 courses_page._courseware_courses_worker 的既有顺序一致。
-        worker_account_id = str((self.account or {}).get("id") or "")
-        session = clone_session(self.session) if self.session is not None else None
+        if worker_account_id is None:
+            worker_account_id = str((self.account or {}).get("id") or "")
+        if source_session is None:
+            source_session = self.session
+        session = clone_session(source_session) if source_session is not None else None
         if session is None:
             self._emit((
                 "answer_result", event_id, False, "已退出登录",
@@ -1069,7 +1053,10 @@ class DashboardWindow(
             # 二次校验（提交前）：delay 唤醒后/立即提交前，登出或换号在途则放弃。
             # 网络提交不可中断，只能在此拦截（worker_account_id 为入口时的账号快照，
             # 换号后 id 不同、登出后 session 为 None 均命中）。
-            if self.session is None or str((self.account or {}).get("id") or "") != worker_account_id:
+            if (
+                self.session is not source_session
+                or str((self.account or {}).get("id") or "") != worker_account_id
+            ):
                 self._emit((
                     "answer_result", event_id, False, "已取消（登录状态已变更）",
                     False, False, (auto_context or {}).get("task_token"),
@@ -1100,7 +1087,7 @@ class DashboardWindow(
                 self._emit(("error", "应答失败：登录已过期，请重新登录"))
         finally:
             # 把 worker 克隆内新增/旋转的 cookie 合并回主会话（GUI 线程收到后单点写）
-            self._emit(("merge_session_cookies", session, worker_account_id))
+            self._emit(("merge_session_cookies", session, worker_account_id, None, source_session))
         self._emit((
             "answer_result", event_id, ok, detail, True, True,
             (auto_context or {}).get("task_token"),
@@ -1266,7 +1253,9 @@ class DashboardWindow(
         # 换号/重登：旧监控线程绑定的是旧账号的 clone 会话，若不停止会继续按旧
         # 账号轮询并触发自动应答（GUI 已切到新账号，用新会话提交旧签到 = 跨账号
         # 污染）。先停旧监控（stop_monitor 幂等，安全）。
-        if self.monitor_worker is not None and self.monitor_worker.is_alive():
+        # 成功登录必然换一代会话：延迟应答与已结束的监控线程也要失效。
+        self._cancel_all_pending_answers()
+        if self.monitor_worker is not None:
             self.stop_monitor()
         self.session = tune_session(session)
         self.account = account
@@ -1564,17 +1553,12 @@ class DashboardWindow(
         if rollcall:
             self._notify_rollcall(event_id, rollcall)
 
-    def _ev_number_code(self, event):
-        event_id = event[1]
-        code = event[2]
-        detail = event[3] if len(event) > 3 else ""
-        self._update_event_code(event_id, code, detail)
-
     def _ev_merge_session_cookies(self, event):
         # GUI 线程单点写：worker 克隆会话的 cookie 回写主会话（含登出/换号守卫）
         worker_session = event[1]
         worker_account_id = event[2] if len(event) > 2 else ""
         batch_token = event[3] if len(event) > 3 else None
+        answer_source_session = event[4] if len(event) > 4 else None
         current_account = getattr(self, "account", None)
         current_account_id = str(current_account.get("id") or "") if isinstance(current_account, dict) else ""
         if batch_token is not None and (
@@ -1583,14 +1567,17 @@ class DashboardWindow(
         ):
             self.log("忽略旧课件下载批次的会话回写。")
             return
+        if answer_source_session is not None and self.session is not answer_source_session:
+            self.log("忽略旧会话应答任务的 cookie 回写。")
+            return
         self._merge_worker_session(worker_session, worker_account_id)
 
     def _ev_course_rollcalls(self, event):
         _, records, source = event[:3]
-        # P1-2：登出/换号后晚到的结果只清状态旗标，不回填旧账号数据
+        # 迟到结果既不能回填数据，也不能解锁当前账号的新刷新任务。
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.course_refresh_in_progress = False
         if late_worker_result_accepted(self.account, worker_account_id):
+            self.course_refresh_in_progress = False
             self.course_records = records
             self._refresh_course_table()
             self._update_nav_badges()
@@ -1605,8 +1592,8 @@ class DashboardWindow(
 
     def _ev_course_rollcalls_error(self, event):
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.course_refresh_in_progress = False
         if late_worker_result_accepted(self.account, worker_account_id):
+            self.course_refresh_in_progress = False
             self.course_summary.setText("刷新失败")
             self.log(f"签到情况刷新失败：{event[1]}")
             if not event[2]:
@@ -1622,13 +1609,12 @@ class DashboardWindow(
         records = event[1] if len(event) > 1 else []
         worker_account_id = event[2] if len(event) > 2 else ""
         origin = event[3] if len(event) > 3 else "auto"
-        if origin == "manual":
-            # 旗标无条件清、数据仅在守卫通过时落地（P1-2 同款姿势）
-            self.course_verify_in_progress = False
-            self._update_verify_button_state()
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的签到核实结果（账号已切换或已登出）。")
             return
+        if origin == "manual":
+            self.course_verify_in_progress = False
+            self._update_verify_button_state()
         applied = self._apply_verified_records(records)
         if origin == "manual":
             for record in records or []:
@@ -1647,11 +1633,11 @@ class DashboardWindow(
 
     def _ev_course_records_verify_error(self, event):
         worker_account_id = event[2] if len(event) > 2 else ""
-        self.course_verify_in_progress = False
-        self._update_verify_button_state()
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的签到核实失败（账号已切换或已登出）。")
             return
+        self.course_verify_in_progress = False
+        self._update_verify_button_state()
         self.course_summary.setText("核实所选失败")
         self.log(f"核实所选签到失败：{event[1]}")
         self._show_retry_error(
@@ -1663,8 +1649,8 @@ class DashboardWindow(
     def _ev_courseware_courses(self, event):
         # P1-2：与 course_rollcalls 同款账号守卫
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.courseware_courses_refresh_in_progress = False
         if late_worker_result_accepted(self.account, worker_account_id):
+            self.courseware_courses_refresh_in_progress = False
             self._set_courseware_courses(event[1], event[2])
             self._update_nav_badges()
             self._save_ui_snapshot()
@@ -1673,10 +1659,10 @@ class DashboardWindow(
 
     def _ev_courseware_courses_error(self, event):
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.courseware_courses_refresh_in_progress = False
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的课件课程列表读取失败（账号已切换或已登出）。")
             return
+        self.courseware_courses_refresh_in_progress = False
         self.courseware_summary.setText("课程列表读取失败")
         self._refresh_courseware_empty_state()
         self._show_toast("课程列表读取失败", ok=False)
@@ -1692,19 +1678,19 @@ class DashboardWindow(
         # P1-2：与 courseware_courses 同款账号守卫——课件详情是 8 线程池
         # 逐活动抓取，登出/换号后晚到的结果不得回填界面
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.courseware_refresh_in_progress = False
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的课件列表结果（账号已切换或已登出）。")
             return
+        self.courseware_refresh_in_progress = False
         self._set_courseware_items(event[1], event[2])
         self._update_nav_badges()
 
     def _ev_courseware_error(self, event):
         worker_account_id = event[3] if len(event) > 3 else ""
-        self.courseware_refresh_in_progress = False
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的课件读取失败（账号已切换或已登出）。")
             return
+        self.courseware_refresh_in_progress = False
         self.courseware_summary.setText("课件读取失败")
         self._refresh_courseware_empty_state()
         self._show_toast("课件读取失败", ok=False)
@@ -1835,7 +1821,6 @@ class DashboardWindow(
         "rollcall": _ev_rollcall,
         "rollcall_progress": _ev_rollcall_progress,
         "answer_result": _ev_answer_result,
-        "number_code": _ev_number_code,
         # 会话合并（worker 克隆会话回写主会话的内部事件）
         "merge_session_cookies": _ev_merge_session_cookies,
         # 签到情况页
@@ -1902,7 +1887,9 @@ class DashboardWindow(
         self.background_error_notified = True
         message = NotificationMessage("xmu助手 监控异常", friendly)
         try:
-            settings = get_notification_settings(load_config())
+            settings = getattr(self, "_notification_settings_cache", None) or get_notification_settings(
+                load_config()
+            )
             if settings["system"]["enabled"]:
                 self._show_system_notification(message.title, message.body)
             if settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]:
@@ -1930,30 +1917,15 @@ class DashboardWindow(
     def _notify_rollcall(self, event_id: str, event: RollcallEvent):
         message = build_rollcall_notification(event, f"xmurollcall://rollcall/{event_id}")
         try:
-            settings = get_notification_settings(load_config())
+            settings = getattr(self, "_notification_settings_cache", None) or get_notification_settings(
+                load_config()
+            )
             if settings["system"]["enabled"]:
                 self._show_system_notification(message.title, message.body)
             if settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]:
                 self._send_external_notification(message)
         except Exception as exc:
             self.log(f"通知准备失败：{exc}")
-
-    def _number_code_worker(self, event_id: str, event: RollcallEvent):
-        # 克隆会话：与监控/其他 worker 并发时的 cookiejar 隔离（同 _answer_worker 纪律）
-        worker_session = clone_session(self.session) if self.session is not None else None
-        if worker_session is None:
-            self._emit(("number_code", event_id, "", "登录状态已变更，请重新登录。"))
-            return
-        try:
-            self._emit(("number_code", event_id, fetch_number_code(worker_session, event.rollcall_id)))
-        except Exception as exc:
-            detail, session_expired = answer_failure_detail(exc)
-            if session_expired:
-                # 会话过期是终态：与 _answer_worker 过期分支一致，走后台错误
-                # 计数/通知引导重新登录（线程安全：仅 emit）——不再把过期吞成
-                # 单格文案；后台错误计数有 3 次阈值+一次通知去重，不制造噪音。
-                self._emit(("error", f"签到码获取失败：{detail}"))
-            self._emit(("number_code", event_id, "", detail))
 
     def _event_values(self, event: RollcallEvent):
         if event.attendance_total is None or event.attendance_present is None:
@@ -2019,23 +1991,6 @@ class DashboardWindow(
         event.detail = detail
         self._refresh_event_tables()
 
-    def _update_event_code(self, event_id: str, code: str, detail: str = ""):
-        event = self.events_by_id.get(event_id)
-        if not event:
-            return
-        if code:
-            event.number_code = code
-            if not event.detail:
-                event.detail = "已获取签到码"
-            self.log(f"数字签到码已获取：{event.course_title} / {code}")
-        elif detail:
-            event.detail = f"签到码获取失败：{detail}"
-            self.log(event.detail)
-        else:
-            event.detail = "未获取到签到码"
-            self.log(f"未获取到数字签到码：{event.course_title}")
-        self._refresh_event_tables()
-
     def _set_table_empty_state(self, table: QTableWidget, message: str) -> None:
         table.setRowCount(0)
         table.insertRow(0)
@@ -2094,14 +2049,16 @@ class DashboardWindow(
         self.log("\u76d1\u63a7\u5df2\u542f\u52a8\u3002")
         self._show_toast("监控已启动")
 
-    def _restart_monitor_later(self, attempts_left: int = 3):
+    def _restart_monitor_later(self, attempts_left: int = 60):
         """旧监控线程（在途网络请求不可中断）退出后再自动拉起新监控（M3）。
 
-        有界重试：避免无限轮询；登出/无会话时直接放弃；排队期间用户又点启动/暂
-        停（代数变化）则放弃本次拉起。
+        最多等待约两分钟，覆盖旧线程仍在网络超时/重试中的常见情况；登出或
+        用户再次暂停会使代际校验失败并取消本次拉起。
         """
         if attempts_left <= 0:
             self.log("监控线程未能及时退出，请稍后手动重新启动。")
+            self.metric_monitor.setText("重启失败")
+            self._show_toast("监控未能自动重启，请手动启动", ok=False)
             return
         if not (self.account and self.session):
             return

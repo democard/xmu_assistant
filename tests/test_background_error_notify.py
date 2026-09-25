@@ -102,6 +102,13 @@ class BackgroundErrorNotifyTest(unittest.TestCase):
         self.assertEqual(host.system_notifications, [])
         self.assertEqual(len(host.external_notifications), 1)
 
+    def test_cached_settings_avoid_disk_read_on_gui_error_event(self):
+        host = self._host()
+        host._notification_settings_cache = _settings()
+        with mock.patch("xmu_rollcall.desktop_qt.app.load_config", side_effect=AssertionError("GUI disk read")):
+            DashboardWindow._record_background_error(host, "轮询失败：登录已过期", immediate=True)
+        self.assertEqual(len(host.system_notifications), 1)
+
     def test_ev_error_marks_session_expired_detail_as_immediate(self):
         host = self._host()
         captured = []

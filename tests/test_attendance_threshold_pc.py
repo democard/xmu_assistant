@@ -395,7 +395,7 @@ class ThresholdDispatchTests(unittest.TestCase):
         )
         DashboardWindow._answer_event(host, "event-1", _event(), auto=False)
         self.assertEqual(len(calls), 1)
-        self.assertIsNone(calls[0][-1])
+        self.assertIsNone(calls[0][4])
 
 class SubmissionGuardTests(unittest.TestCase):
     def _host(self, *, mode="percent"):

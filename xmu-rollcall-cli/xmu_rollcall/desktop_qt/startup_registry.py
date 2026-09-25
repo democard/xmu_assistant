@@ -45,17 +45,31 @@ class StartupRegistryMixin:
             if path.exists():
                 path.unlink()
 
-    def _launch_on_startup_enabled(self) -> bool:
+    def _startup_registered_command(self) -> str | None:
         if os.name != "nt":
-            return False
+            return None
         # winreg 仅 Windows 可用：延迟导入，避免非 Windows 平台 import 本模块即崩溃
         import winreg
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY, 0, winreg.KEY_READ) as key:
                 command, _value_type = winreg.QueryValueEx(key, STARTUP_VALUE_NAME)
-            return str(command).strip() == self._startup_command()
+            return str(command).strip()
         except FileNotFoundError:
+            return None
+
+    def _launch_on_startup_enabled(self) -> bool:
+        registered = self._startup_registered_command()
+        return registered is not None and registered == self._startup_command()
+
+    def _reconcile_startup_registration(self, preferred_enabled: bool) -> bool:
+        """清理或更新仍指向旧程序路径的 Run 项，返回最终开机自启状态。"""
+        registered = self._startup_registered_command()
+        if registered is None:
             return False
+        if registered == self._startup_command():
+            return True
+        self._set_launch_on_startup(preferred_enabled)
+        return preferred_enabled
 
     def _set_launch_on_startup(self, enabled: bool):
         if os.name != "nt":

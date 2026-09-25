@@ -168,18 +168,22 @@ class DownloadWorkerSnapshotOrderTest(unittest.TestCase):
             "批次必须以完成事件收尾（旗标复位）",
         )
 
-    def test_answer_worker_reads_the_account_before_cloning_too(self):
-        # 同一范式：_answer_worker 也必须在 clone 之前取账号快照（源码顺序守护，
-        # 其行为链路含网络提交，改动顺序是这里唯一需要锁定的不变量）。
-        import inspect
+    def test_answer_worker_rejects_relogin_during_clone(self):
+        old_session = object()
+        host = types.SimpleNamespace(session=old_session, account={"id": "A"}, events=[])
+        host._emit = host.events.append
 
-        source = inspect.getsource(DashboardWindow._answer_worker)
-        id_pos = source.find('worker_account_id = str((self.account or {}).get("id") or "")')
-        clone_pos = source.find("clone_session(self.session)")
-        # 用 find(-1) 而非 index()：锚被重命名/改写时给出可读信息，而不是抛 ValueError
-        self.assertGreaterEqual(id_pos, 0, "锚丢失：_answer_worker 的账号快照语句未找到")
-        self.assertGreaterEqual(clone_pos, 0, "锚丢失：_answer_worker 的会话克隆语句未找到")
-        self.assertLess(id_pos, clone_pos, "_answer_worker 必须先读账号 id 再克隆会话")
+        def racing_clone(session):
+            self.assertIs(session, old_session)
+            host.session = object()  # 同账号重登恰在克隆期间完成
+            return "OLD_SESSION_COPY"
+
+        with patch("xmu_rollcall.desktop_qt.app.clone_session", side_effect=racing_clone), \
+             patch("xmu_rollcall.desktop_qt.app.RollcallEngine") as engine:
+            DashboardWindow._answer_worker(host, "event-1", object(), 0, None, old_session, "A")
+
+        engine.assert_not_called()
+        self.assertTrue(any(event[0] == "answer_result" and "已取消" in event[3] for event in host.events))
 
 
 if __name__ == "__main__":
