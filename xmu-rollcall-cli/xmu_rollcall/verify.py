@@ -3,6 +3,7 @@ import uuid
 
 import requests
 
+from .request_probe import classify_status
 from .utils import (
     API_TIMEOUT,
     SessionExpiredError,
@@ -20,6 +21,9 @@ def _raise_if_session_expired(response):
     SessionExpiredError 透传契约（见各 docstring 与 send_radar 网络层注释）
     由上游 answer_failure_detail 分流，此处让契约在过期页场景真正生效。
     """
+    # 401 是确定失效；403 的资源权限语义仍由调用方按原有 bool 契约处理。
+    if response.status_code == 401:
+        raise classify_status(response.status_code, "签到应答")
     if response_session_expired(response):
         raise SessionExpiredError("登录已过期，请重新登录")
 

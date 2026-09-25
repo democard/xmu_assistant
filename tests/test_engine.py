@@ -5,33 +5,49 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
 from xmu_rollcall.engine import RollcallEngine  # noqa: E402
+from xmu_rollcall.utils import SessionExpiredError  # noqa: E402
 
 
 class JsonResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
+        self.url = "https://lnt.xmu.edu.cn/api/radar/rollcalls"
+        self.headers = {"Content-Type": "application/json"}
+        self.history = []
+        self.text = ""
 
     def raise_for_status(self):
-        return None
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} response")
 
     def json(self):
         return self.payload
 
 
 class FakeSession:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
 
     def get(self, url, **kwargs):
-        return JsonResponse(self.payload)
+        return JsonResponse(self.payload, self.status_code)
 
 
 class RollcallEngineTests(unittest.TestCase):
+    def test_poll_payload_401_raises_session_expired(self):
+        engine = RollcallEngine(FakeSession({"error": "unauthorized"}, status_code=401))
+
+        with self.assertRaises(SessionExpiredError):
+            engine.poll_payload()
+
     def test_poll_payload_returns_raw_dict(self):
         engine = RollcallEngine(FakeSession({"rollcalls": [{"rollcall_id": "1"}]}))
 

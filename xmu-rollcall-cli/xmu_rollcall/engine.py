@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .rollcall_models import ROLLCALLS_URL, RollcallEvent, build_rollcall_event
+from .request_probe import classify_status
 from .utils import API_TIMEOUT, SessionExpiredError, headers, response_session_expired
 from .verify import send_code, send_radar
 
@@ -21,6 +22,10 @@ class RollcallEngine:
         # 轮询挂满 30s（叠加应用层重试 ≈100s 发现不了新签到）。统一口径后故障场景
         # 下的检测延迟大幅缩短。
         response = self.session.get(ROLLCALLS_URL, headers=headers, timeout=API_TIMEOUT)
+        # 此端点的 401 与会话探活共用“登录已过期”语义；必须在
+        # raise_for_status() 将它变成普通 HTTPError 之前类型化。
+        if response.status_code == 401:
+            raise classify_status(response.status_code, "签到轮询")
         response.raise_for_status()
         # 会话过期时平台返回 302 跳身份域（requests 自动跟随成 200 登录页）：
         # 显式判定并抛类型化异常，与 Android 端对齐，避免 JSON 解析错误掩盖真实原因

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
 from xmu_rollcall.verify import send_code, send_radar  # noqa: E402
+from xmu_rollcall.utils import SessionExpiredError  # noqa: E402
 
 
 class ScriptedResponse:
@@ -56,6 +57,18 @@ class ScriptedSession:
 
 
 class SendCodePathTests(unittest.TestCase):
+    def test_code_fetch_401_raises_session_expired_without_submitting(self):
+        session = ScriptedSession(get_responses=[ScriptedResponse(401)])
+        with self.assertRaises(SessionExpiredError):
+            send_code(session, "r1")
+        self.assertEqual(session.puts, [])
+
+    def test_code_submit_401_raises_session_expired(self):
+        session = ScriptedSession(put_responses=[ScriptedResponse(401)])
+        with self.assertRaises(SessionExpiredError):
+            send_code(session, "r1", "2468")
+        self.assertEqual(len(session.puts), 1)
+
     def test_happy_path_submits_extracted_code(self):
         session = ScriptedSession(
             get_responses=[ScriptedResponse(200, {"data": {"number_code": "486"}})],
@@ -89,6 +102,12 @@ class SendCodePathTests(unittest.TestCase):
 
 
 class SendRadarPathTests(unittest.TestCase):
+    def test_first_radar_put_401_stops_before_more_writes(self):
+        session = ScriptedSession(put_responses=[ScriptedResponse(401)])
+        with self.assertRaises(SessionExpiredError):
+            send_radar(session, "r1")
+        self.assertEqual(len(session.puts), 1)
+
     def test_first_put_success_short_circuits(self):
         session = ScriptedSession(put_responses=[ScriptedResponse(200)])
         self.assertTrue(send_radar(session, "r1"))
