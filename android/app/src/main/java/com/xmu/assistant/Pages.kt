@@ -83,7 +83,9 @@ fun RollcallStatusPage(
                 if (updatedAtMillis > 0L) {
                     Text("上次更新 ${formatMonitorTime(updatedAtMillis)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (openedEventId.isNotBlank()) Text("从通知打开：$openedEventId", color = MaterialTheme.colorScheme.primary)
+                notificationEventLabel(openedEventId, events, historyItems)?.let { label ->
+                    Text(label, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                }
             }
         }
         // 卡片二：正在进行
@@ -573,6 +575,18 @@ internal fun rememberSyncedBoolean(saved: Boolean): MutableState<Boolean> {
     val state = rememberSaveable { mutableStateOf(saved) }
     LaunchedEffect(saved) { state.value = saved }
     return state
+}
+
+internal fun notificationEventLabel(
+    openedEventId: String,
+    events: List<RollcallEvent>,
+    historyItems: List<RollcallHistoryItem>,
+): String? {
+    if (openedEventId.isBlank()) return null
+    val known = events.any { it.id == openedEventId } || historyItems.any { it.rollcallId == openedEventId }
+    if (!known) return "从通知打开的签到未在当前记录中"
+    val safeId = openedEventId.filterNot { it == '\r' || it == '\n' || it.isISOControl() }.take(64)
+    return "从通知打开：$safeId"
 }
 
 @Composable
