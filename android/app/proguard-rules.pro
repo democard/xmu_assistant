@@ -14,6 +14,11 @@
 -dontwarn javax.mail.**
 -dontwarn com.sun.mail.**
 
+# JavaMail 通过 META-INF/javamail.providers 和 mailcap 中的类名反射加载这些实现。
+# 仅 -dontwarn 不会阻止 R8 剔除它们；smtp（包括 465 + SSL）使用 SMTPTransport。
+-keep class com.sun.mail.smtp.SMTPTransport { *; }
+-keep class com.sun.mail.handlers.** { *; }
+
 # Robolectric/测试类不进 release，防误报
 -dontwarn org.robolectric.**
 -dontwarn org.junit.**
