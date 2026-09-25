@@ -2,6 +2,7 @@ package com.xmu.assistant
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -292,6 +293,63 @@ class MonitorRunGateTest {
         assertEquals(1, notifications)
         assertEquals(1, answers)
         assertEquals(setOf("r1"), completed)
+    }
+
+    @Test
+    fun `second notification is delivered while first answer is blocked`() {
+        val events = listOf(
+            RollcallEvent("a", "课程 A", "老师", "雷达签到", "未签"),
+            RollcallEvent("b", "课程 B", "老师", "雷达签到", "未签"),
+        )
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        val notifications = mutableListOf<String>()
+        val answers = mutableListOf<String>()
+        val firstAnswerStarted = CountDownLatch(1)
+        val releaseFirstAnswer = CountDownLatch(1)
+        val workerError = AtomicReference<Throwable?>()
+        val worker = Thread {
+            try {
+                processRollcallMonitorPoll(
+                    events, RollcallSettings(autoAnswerRadar = true), notified, completed, attempts,
+                    { action -> action(); true },
+                    { notifications += it.id },
+                    {
+                        answers += it.id
+                        if (it.id == "a") {
+                            firstAnswerStarted.countDown()
+                            check(releaseFirstAnswer.await(5, TimeUnit.SECONDS))
+                        }
+                        true
+                    },
+                    {},
+                )
+            } catch (error: Throwable) {
+                workerError.set(error)
+            }
+        }
+
+        worker.start()
+        try {
+            assertTrue("first answer did not start", firstAnswerStarted.await(5, TimeUnit.SECONDS))
+            assertEquals(listOf("a", "b"), notifications)
+            assertEquals(listOf("a"), answers)
+        } finally {
+            releaseFirstAnswer.countDown()
+            worker.join(5_000)
+        }
+        assertFalse("poll worker did not finish", worker.isAlive)
+        workerError.get()?.let { throw AssertionError("poll worker failed", it) }
+        assertEquals(listOf("a", "b"), answers)
+        assertEquals(setOf("a", "b"), completed)
+
+        processRollcallMonitorPoll(
+            events, RollcallSettings(autoAnswerRadar = true), notified, completed, attempts,
+            { action -> action(); true }, { notifications += it.id }, { answers += it.id; true }, {},
+        )
+        assertEquals(listOf("a", "b"), notifications)
+        assertEquals(listOf("a", "b"), answers)
     }
 
     @Test

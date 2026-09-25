@@ -149,6 +149,9 @@ internal fun processRollcallMonitorPoll(
     maxAnswerAttempts: Int = 3,
 ) {
     var hasUnresolvedAnswerFailure = false
+    val pendingEvents = mutableListOf<RollcallEvent>()
+
+    // 同轮先发出所有新事件的本地通知，再执行可能长时间阻塞的网络应答。
     for (event in events) {
         if (event.id in completedIds) continue
         if (event.id !in notifiedIds) {
@@ -158,7 +161,11 @@ internal fun processRollcallMonitorPoll(
                 }
             ) return
         }
+        pendingEvents += event
+    }
 
+    for (event in pendingEvents) {
+        if (event.id in completedIds) continue
         val autoEnabled = when (event.type) {
             "数字签到" -> settings.autoAnswerNumber
             "雷达签到" -> settings.autoAnswerRadar
