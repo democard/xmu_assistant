@@ -310,6 +310,8 @@ private fun xyToLatLon(x: Double, y: Double, lat0: Double, lon0: Double): Pair<D
 fun firstString(json: JSONObject, vararg keys: String): String =
     keys.firstNotNullOfOrNull { key -> json.optRealString(key).takeIf { it.isNotBlank() } } ?: ""
 
+private val numberCodeKeys = arrayOf("number_code", "numberCode", "rollcall_number_code", "rollcallNumberCode")
+
 fun findNumberCode(value: Any?, depth: Int = 0): String? {
     if (depth > 10 || value == null) return null
     return when (value) {
@@ -317,7 +319,7 @@ fun findNumberCode(value: Any?, depth: Int = 0): String? {
             // optRealString：显式 null 会被 optString 读成 "null" 字面量，穿透
             // isNotBlank 守卫→提交 numberCode="null" 且被标记已处理（同文件
             // rollcall_id 同款陷阱，firstNotNullOfOrNull 系列均已迁移唯此处漏改）
-            value.optRealString("number_code").takeIf { it.isNotBlank() }
+            firstString(value, *numberCodeKeys).takeIf { it.isNotBlank() }
                 ?: value.keys().asSequence().firstNotNullOfOrNull { findNumberCode(value.opt(it), depth + 1) }
         }
         is JSONArray -> (0 until value.length()).asSequence().firstNotNullOfOrNull { findNumberCode(value.opt(it), depth + 1) }

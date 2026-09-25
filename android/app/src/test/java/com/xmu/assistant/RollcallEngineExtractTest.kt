@@ -35,6 +35,24 @@ class RollcallEngineExtractTest {
     }
 
     @Test
+    fun `findNumberCode accepts known field aliases at nested levels`() {
+        listOf("numberCode", "rollcall_number_code", "rollcallNumberCode").forEach { alias ->
+            val root = JSONObject().put("data", JSONObject().put(alias, "0042"))
+            assertEquals(alias, "0042", findNumberCode(root))
+        }
+    }
+
+    @Test
+    fun `findNumberCode skips null aliases and prefers canonical field`() {
+        val root = JSONObject()
+            .put("number_code", "1234")
+            .put("numberCode", "5678")
+        assertEquals("1234", findNumberCode(root))
+        assertEquals("5678", findNumberCode(JSONObject().put("number_code", JSONObject.NULL).put("numberCode", "5678")))
+        assertNull(findNumberCode(JSONObject().put("code", 200)))
+    }
+
+    @Test
     fun `findNumberCode extracts from nested object`() {
         val root = JSONObject().put("data", JSONObject().put("rollcall", JSONObject().put("number_code", "8888")))
         assertEquals("8888", findNumberCode(root))
