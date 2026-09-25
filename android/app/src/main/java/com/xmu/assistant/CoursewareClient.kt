@@ -367,6 +367,7 @@ class CoursewareClient private constructor(
             throw MainSessionExpiredException()
         }
         if (response.code !in 200..299) error("网络失败")
+        if (isKnownLoginForm(response.body)) throw MainSessionExpiredException()
         // 2xx 但非 JSON（空 body/HTML 错误页）：解析异常统一归为「网络失败」，
         // 否则 JSONException 会从 download() 等无兜底调用点逃逸
         return runCatching {

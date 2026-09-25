@@ -24,6 +24,17 @@ internal fun isIdentityRedirect(requestUrl: String, location: String?): Boolean 
     return host in KNOWN_IDENTITY_HOSTS
 }
 
+/** Only the login form already recognized by the health probe proves an expired session. */
+internal fun isKnownLoginForm(body: String): Boolean {
+    val page = body.lowercase(Locale.US)
+    val hasIdentityMarker = listOf(
+        "c-identity.xmu.edu.cn", "ids.xmu.edu.cn", "/auth/realms/xmu/", "pwdencryptsalt",
+    ).any(page::contains)
+    val hasLoginFormAction = "<form" in page && "action=" in page &&
+        listOf("login", "authenticate").any(page::contains)
+    return hasIdentityMarker && hasLoginFormAction
+}
+
 internal class SessionHealthProbe(
     private val transport: QueryHttpTransport = OkHttpQueryTransport(),
     private val url: String = "https://lnt.xmu.edu.cn/api/radar/rollcalls",
@@ -63,14 +74,6 @@ internal class SessionHealthProbe(
     private fun isKnownIdentityRedirect(response: QueryHttpResponse): Boolean =
         isIdentityRedirect(response.url.ifBlank { url }, response.location)
 
-    private fun isKnownLoginForm(body: String): Boolean {
-        val page = body.lowercase(Locale.US)
-        val hasIdentityMarker = IDENTITY_MARKERS.any(page::contains)
-        val hasLoginFormAction = "<form" in page && "action=" in page &&
-            LOGIN_ACTION_MARKERS.any(page::contains)
-        return hasIdentityMarker && hasLoginFormAction
-    }
-
     /**
      * 判定是否为「签到列表」的正常响应：必须能解析为 JSON 且包含 rollcalls 数组。
      * 仅凭「能解析成 JSON」不足以免签：网关/服务端错误页也可能是 JSON
@@ -80,8 +83,4 @@ internal class SessionHealthProbe(
         JSONObject(body).optJSONArray("rollcalls") != null
     }.getOrDefault(false)
 
-    private companion object {
-        val IDENTITY_MARKERS = listOf("c-identity.xmu.edu.cn", "ids.xmu.edu.cn", "/auth/realms/xmu/", "pwdencryptsalt")
-        val LOGIN_ACTION_MARKERS = listOf("login", "authenticate")
-    }
 }

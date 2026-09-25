@@ -269,6 +269,30 @@ class RollcallHistoryClientTest {
     }
 
     @Test
+    fun `profile query treats known 200 login form as expired session`() {
+        val html = """<html><form action="https://c-identity.xmu.edu.cn/auth/realms/xmu/login-actions/authenticate"><input id="pwdEncryptSalt"></form></html>"""
+        val transport = QueryHttpTransport { request ->
+            QueryHttpResponse(request.url, 200, null, html, emptyMap())
+        }
+
+        assertThrows(MainSessionExpiredException::class.java) {
+            client(transport).selectRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
+        }
+    }
+
+    @Test
+    fun `profile query keeps unrelated 200 HTML as network failure`() {
+        val transport = QueryHttpTransport { request ->
+            QueryHttpResponse(request.url, 200, null, "<html><h1>Gateway error</h1></html>", emptyMap())
+        }
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            client(transport).selectRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
+        }
+        assertTrue(error.message.orEmpty().contains("网络失败"))
+    }
+
+    @Test
     fun `course and detail forbidden remain local failures`() {
         val forbiddenCourse = FakeHistoryTransport(
             courses = listOf(course("c1", "课程一", "2026-1")),

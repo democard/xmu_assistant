@@ -222,6 +222,7 @@ internal class RollcallHistoryClient internal constructor(
             throw MainSessionExpiredException()
         }
         if (response.code !in 200..299) error("网络失败")
+        if (isKnownLoginForm(response.body)) throw MainSessionExpiredException()
         return runCatching {
             if (response.body.trimStart().startsWith("[")) JSONArray(response.body) else JSONObject(response.body)
         }.getOrElse { error("网络失败") }
