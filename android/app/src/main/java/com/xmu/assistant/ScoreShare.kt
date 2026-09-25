@@ -39,9 +39,8 @@ fun renderScoreLongImage(
 
     val fixedLines = 6
     val termLines = recordsByTerm.sumOf { (_, termRecords) -> 2 + termRecords.size }
-    val height = (PADDING * 2 + (fixedLines + termLines) * LINE_HEIGHT)
-        .toInt()
-        .coerceIn(480, MAX_BITMAP_HEIGHT)
+    val requestedHeight = (PADDING * 2 + (fixedLines + termLines) * LINE_HEIGHT).toInt()
+    val height = requestedHeight.coerceIn(480, MAX_BITMAP_HEIGHT)
 
     val bitmap = Bitmap.createBitmap(IMAGE_WIDTH, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
@@ -85,7 +84,9 @@ fun renderScoreLongImage(
     y += LINE_HEIGHT
 
     // 行数预算：超出位图高度（极端课程数）时截断并显式提示，禁止静默丢数据
-    var lineBudget = ((height - y) / LINE_HEIGHT).toInt() - 1 // 预留提示行
+    // 正常高度已经容纳所有学期；仅触及上限时才为截断提示预留一行。
+    var lineBudget = ((height - y) / LINE_HEIGHT).toInt() -
+        if (requestedHeight > MAX_BITMAP_HEIGHT) 1 else 0
     var truncated = false
     for ((term, termRecords) in recordsByTerm) {
         val needed = 2 + termRecords.size

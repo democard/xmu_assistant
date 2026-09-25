@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import androidx.core.content.FileProvider
 import java.io.File
@@ -52,6 +53,18 @@ class ScoreShareTest {
         val bitmap = renderScoreLongImage(listOf(record("2025-2026-1")), summary())
         assertEquals(1080, bitmap.width)
         assertEquals(630, bitmap.height)
+        assertTrue("the only course must be visible", hasInk(bitmap, 72, 520, 440, 553, Color.rgb(51, 51, 51)))
+    }
+
+    @Test
+    fun `render includes the last course of the last term`() {
+        val bitmap = renderScoreLongImage(
+            listOf(record("2025-2026-2", "课程甲"), record("2025-2026-1", "课程乙")),
+            summary(),
+        )
+        assertEquals(792, bitmap.height)
+        // 第二学期的课程基线在约 690px；旧预算在进入该学期前就截断。
+        assertTrue("the last term's course must be visible", hasInk(bitmap, 72, 660, 440, 695, Color.rgb(51, 51, 51)))
     }
 
     @Test
@@ -69,6 +82,7 @@ class ScoreShareTest {
         val bitmap = renderScoreLongImage(records, summary())
         assertEquals(1080, bitmap.width)
         assertEquals(12000, bitmap.height)
+        assertTrue("capped image must show the truncation notice", hasInk(bitmap, 72, 11885, 800, 11930, Color.rgb(138, 143, 142)))
     }
 
     @Test
@@ -176,5 +190,8 @@ class ScoreShareTest {
 
     private fun scoreShareErrors(): String = ShadowLog.getLogsForTag("ScoreShare")
         .joinToString("\n") { log -> "${log.msg}: ${log.throwable?.stackTraceToString().orEmpty()}" }
+
+    private fun hasInk(bitmap: Bitmap, left: Int, top: Int, right: Int, bottom: Int, color: Int): Boolean =
+        (top until bottom).any { y -> (left until right).any { x -> bitmap.getPixel(x, y) == color } }
 
 }
