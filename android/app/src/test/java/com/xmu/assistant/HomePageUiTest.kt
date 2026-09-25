@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -72,6 +73,24 @@ class HomePageUiTest {
         composeRule.onNodeWithText("登录").performScrollTo().assertIsNotEnabled()
         composeRule.onNodeWithText("启动监控").assertDoesNotExist()
         composeRule.onNodeWithText("暂停监控").assertDoesNotExist()
+    }
+
+    @Test fun `logout confirmation survives state restoration`() {
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent { HomeFixture() }
+        composeRule.onNodeWithText("退出登录").performClick()
+        composeRule.onNodeWithText("确认退出").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithText("确认退出").assertExists()
+    }
+
+    @Test fun `password visibility survives state restoration`() {
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent { HomeFixture(loggedIn = false) }
+        composeRule.onNodeWithText("显示").performScrollTo().performClick()
+        composeRule.onNodeWithText("隐藏").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithText("隐藏").assertExists()
     }
 
     @Test fun `auto shortcut shows saved types threshold and inactive warning`() {

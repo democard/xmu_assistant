@@ -23,7 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,8 +62,8 @@ fun HomePage(
     onNavigate: (String) -> Unit,
 ) {
     val focus = LocalFocusManager.current
-    var passwordVisible by remember { mutableStateOf(false) }
-    var confirmLogout by remember { mutableStateOf(false) }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var confirmLogout by rememberSaveable { mutableStateOf(false) }
     val canLogin = username.isNotBlank() && password.isNotBlank() && !accountTransitionInProgress
     val autoEnabled = rollcallSettings.autoAnswerNumber || rollcallSettings.autoAnswerRadar
     fun submitLogin() {
