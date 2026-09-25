@@ -23,15 +23,25 @@ def get_config_dir() -> Path:
     if env_path := os.environ.get("XMU_ROLLCALL_CONFIG_DIR"):
         return Path(env_path)
 
+    candidates = []
     try:
-        home_config_dir = Path.home() / ".xmu_rollcall"
-        home_config_dir.mkdir(parents=True, exist_ok=True)
-        test_file = home_config_dir / ".test_write"
-        test_file.touch()
-        test_file.unlink()
-        return home_config_dir
-    except (OSError, PermissionError, RuntimeError):
-        return Path.cwd() / ".xmu_rollcall"
+        candidates.append(Path.home() / ".xmu_rollcall")
+    except (OSError, RuntimeError):
+        pass
+    # 计划任务的 cwd 可能是 System32；使用用户配置目录作为稳定兜底。
+    for variable in ("LOCALAPPDATA", "APPDATA"):
+        if base := os.environ.get(variable):
+            candidates.append(Path(base) / "xmu_rollcall")
+    for directory in candidates:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            test_file = directory / ".test_write"
+            test_file.touch()
+            test_file.unlink()
+            return directory
+        except (OSError, RuntimeError):
+            continue
+    raise OSError("无法找到可写的用户配置目录，请设置 XMU_ROLLCALL_CONFIG_DIR")
 
 
 CONFIG_DIR = get_config_dir()
@@ -273,19 +283,19 @@ def _load_config_locked() -> dict:
 
 def save_config(config: dict) -> None:
     ensure_config_dir()
-    # 写一份加密副本到磁盘：内存中的 config 仍保留明文（调用方继续使用），
-    # 落盘一律密文（首次保存即把旧明文配置迁移为密文）
-    snapshot = copy.deepcopy(config)
-    for account in snapshot.get("accounts", []):
-        if isinstance(account, dict):
-            account["password"] = secrets.protect(str(account.get("password", "")))
-    notif = snapshot.get("notification_settings")
-    if isinstance(notif, dict):
-        if isinstance(notif.get("pushplus"), dict):
-            notif["pushplus"]["token"] = secrets.protect(str(notif["pushplus"].get("token", "")))
-        if isinstance(notif.get("qq_mail"), dict):
-            notif["qq_mail"]["password"] = secrets.protect(str(notif["qq_mail"].get("password", "")))
     with _CONFIG_LOCK:
+        # 与持 CONFIG_LOCK 的读-改-写调用方互斥，避免复制期间配置被改动。
+        # 写一份加密副本到磁盘；内存中的 config 仍保留明文。
+        snapshot = copy.deepcopy(config)
+        for account in snapshot.get("accounts", []):
+            if isinstance(account, dict):
+                account["password"] = secrets.protect(str(account.get("password", "")))
+        notif = snapshot.get("notification_settings")
+        if isinstance(notif, dict):
+            if isinstance(notif.get("pushplus"), dict):
+                notif["pushplus"]["token"] = secrets.protect(str(notif["pushplus"].get("token", "")))
+            if isinstance(notif.get("qq_mail"), dict):
+                notif["qq_mail"]["password"] = secrets.protect(str(notif["qq_mail"].get("password", "")))
         tmp_file = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
         try:
             with open(tmp_file, "w", encoding="utf-8") as file:

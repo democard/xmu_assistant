@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,55 @@ from xmu_rollcall.config import (  # noqa: E402
     normalize_notification_settings,
     normalize_rollcall_settings,
 )
+
+
+class ConfigSnapshotLockTests(unittest.TestCase):
+    def test_save_takes_snapshot_while_config_lock_is_held(self):
+        """A concurrent read-modify-write must not mutate config during deepcopy."""
+        from xmu_rollcall import config
+
+        original_deepcopy = config.copy.deepcopy
+
+        def inspect_lock(value):
+            self.assertTrue(config.CONFIG_LOCK._is_owned())
+            return original_deepcopy(value)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with patch.object(config, "CONFIG_DIR", path), patch.object(
+                config, "CONFIG_FILE", path / "config.json"
+            ), patch.object(config.copy, "deepcopy", side_effect=inspect_lock):
+                config.save_config({"accounts": [], "notification_settings": {}})
+            self.assertTrue((path / "config.json").exists())
+
+
+class ConfigDirectoryFallbackTests(unittest.TestCase):
+    def test_unwritable_home_uses_stable_local_app_data(self):
+        from xmu_rollcall import config
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocked_home = root / "blocked-home"
+            blocked_home.write_text("file, not a directory", encoding="utf-8")
+            local_app_data = root / "local-app-data"
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data)}, clear=True), patch.object(
+                config.Path, "home", return_value=blocked_home
+            ), patch.object(config.Path, "cwd", side_effect=AssertionError("cwd must not be used")):
+                result = config.get_config_dir()
+            self.assertEqual(result, local_app_data / "xmu_rollcall")
+            self.assertTrue(result.is_dir())
+
+    def test_no_writable_user_location_raises_instead_of_using_cwd(self):
+        from xmu_rollcall import config
+
+        with tempfile.TemporaryDirectory() as directory:
+            blocked_home = Path(directory) / "blocked-home"
+            blocked_home.write_text("file, not a directory", encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                config.Path, "home", return_value=blocked_home
+            ), patch.object(config.Path, "cwd", side_effect=AssertionError("cwd must not be used")):
+                with self.assertRaisesRegex(OSError, "用户配置目录"):
+                    config.get_config_dir()
 
 
 class RollcallSettingsTests(unittest.TestCase):
