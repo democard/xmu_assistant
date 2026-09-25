@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -247,6 +248,8 @@ internal fun MainScreen(
     val setMonitorRunning = monitorWrites.setMonitorRunning
     val (courses, selectedCourse, coursesLoading, coursesRefreshError) = courseState
     val (toast, toastSeverity, busy, downloadingCount) = status
+    // 设置页写入的是 prefs，不是 Compose State；递增此值让课表页重读校准周次。
+    val manualWeekRevision = remember { mutableIntStateOf(0) }
 
     // 桌面小卡片 pin 结果延时校验（批次四·两段重复 postDelayed 合并 + 可取消化）：
     // 3 秒后 widget 实例数未增加即判定失败并触发对应回退引导。
@@ -386,9 +389,10 @@ internal fun MainScreen(
                                             loggedIn = loggedIn,
                                             onRefresh = { schedule.refresh() },
                                             inferredCalendar = schedule.cache.inferredCalendars[schedule.termCode],
-                                            // 手动周次快照化：manualAcademicWeek 读加密 prefs + 解析 JSON，组合期
-                                            // 每次重组重复读会拖帧——按学期键 remember 只在切换时读一次
-                                            manualWeek = remember(schedule.termCode) { settings.manualAcademicWeek(schedule.termCode) },
+                                            // 学期切换或设置页校准后重读，避免课表继续显示旧周次。
+                                            manualWeek = remember(schedule.termCode, manualWeekRevision.intValue) {
+                                                settings.manualAcademicWeek(schedule.termCode)
+                                            },
                                         )
                                         "通知" -> NotificationSettingsPage(settings, notificationSettings, testNotifications) {
                                             onNotificationSettingsSaved(it)
@@ -455,6 +459,7 @@ internal fun MainScreen(
                                             },
                                             onManualWeekSet = { week ->
                                                 settings.setManualAcademicWeek(schedule.termCode, week)
+                                                manualWeekRevision.intValue++
                                                 // 手动指定周次时，用「手动周次 + 当天日期」反推开学日并缓存。
                                                 // 手动路径不受 60 天窗口限制（用户显式指定第几周即权威）；
                                                 // 但仍校验开学日落在合理月份窗口，防暑假把日期反推到假期里。
