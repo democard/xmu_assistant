@@ -23,9 +23,48 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
 from xmu_rollcall.desktop_qt.app import DashboardWindow  # noqa: E402
+from xmu_rollcall.desktop_qt.theme import resolve_theme  # noqa: E402
 
 
 class ThemeFollowSystemTest(unittest.TestCase):
+    def _with_qt_scheme(self, scheme):
+        dark = object()
+        hints = types.SimpleNamespace(colorScheme=mock.Mock(return_value=scheme))
+        qt_core = types.ModuleType("PySide6.QtCore")
+        qt_core.Qt = types.SimpleNamespace(ColorScheme=types.SimpleNamespace(Dark=dark))
+        qt_gui = types.ModuleType("PySide6.QtGui")
+        qt_gui.QGuiApplication = types.SimpleNamespace(
+            styleHints=mock.Mock(return_value=hints)
+        )
+        pyside = types.ModuleType("PySide6")
+        pyside.__path__ = []
+        return dark, hints, mock.patch.dict(
+            sys.modules,
+            {"PySide6": pyside, "PySide6.QtCore": qt_core, "PySide6.QtGui": qt_gui},
+        )
+
+    def test_system_theme_calls_color_scheme_and_resolves_dark_enum(self):
+        dark, hints, modules = self._with_qt_scheme(None)
+        with modules:
+            hints.colorScheme.return_value = dark
+            self.assertEqual(resolve_theme("system"), "dark")
+        hints.colorScheme.assert_called_once_with()
+
+    def test_system_theme_resolves_non_dark_enum_to_light(self):
+        _, hints, modules = self._with_qt_scheme(object())
+        with modules:
+            self.assertEqual(resolve_theme("system"), "light")
+        hints.colorScheme.assert_called_once_with()
+
+    def test_system_theme_safely_falls_back_when_qt_is_unavailable(self):
+        unavailable_qt = {
+            "PySide6": None,
+            "PySide6.QtCore": None,
+            "PySide6.QtGui": None,
+        }
+        with mock.patch.dict(sys.modules, unavailable_qt):
+            self.assertEqual(resolve_theme("system"), "light")
+
     def _host(self) -> types.SimpleNamespace:
         # 若套件中其他测试已创建 QApplication，_apply_theme 会继续走样式表应用
         # 与 _refresh_tutorial_html——补 no-op 让宿主在两种环境下都可直调

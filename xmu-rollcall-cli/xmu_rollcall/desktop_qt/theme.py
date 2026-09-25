@@ -739,14 +739,14 @@ def resolve_theme(theme_mode: str) -> str:
         return "light"
     # system：跟随系统色彩方案
     try:
+        from PySide6.QtCore import Qt
         from PySide6.QtGui import QGuiApplication
 
         hints = QGuiApplication.styleHints()
         # Qt 6.5+ 才有 colorScheme
-        scheme = getattr(hints, "colorScheme", None)
-        if scheme is not None:
-            # Qt.ColorScheme.Dark
-            return "dark" if str(scheme).endswith("Dark") else "light"
+        color_scheme = getattr(hints, "colorScheme", None)
+        if callable(color_scheme):
+            return "dark" if color_scheme() == Qt.ColorScheme.Dark else "light"
     except Exception:
         pass
     return "light"
