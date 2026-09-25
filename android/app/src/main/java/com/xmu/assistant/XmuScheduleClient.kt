@@ -163,6 +163,7 @@ internal class XmuScheduleClient(
                         put("Accept", "application/json, text/plain, */*")
                         put("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
                         put("Referer", "https://jw.xmu.edu.cn/new/index.html")
+                        put("User-Agent", JwSessionMarkers.USER_AGENT)
                         if (cookieHeader.isNotBlank()) put("Cookie", cookieHeader)
                     },
                     contentType = "application/x-www-form-urlencoded; charset=UTF-8",

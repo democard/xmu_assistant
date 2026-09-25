@@ -29,6 +29,7 @@ class XmuScheduleModelsTest {
         assertEquals(2, requests.size)
         assertEquals(null, result.currentWeek)
         assertTrue(requests.all { it.headers["Cookie"] == "JSESSIONID=fixture" })
+        assertTrue(requests.all { it.headers["User-Agent"] == JwSessionMarkers.USER_AGENT })
         assertEquals(NetworkOperation.SCHEDULE, requests.first().operation)
         assertTrue(requests.none { it.url.endsWith("getZcxx.do") })
         assertTrue(requests.any { it.body.contains("XNXQDM=20261") && it.body.contains("XH=123456") })
