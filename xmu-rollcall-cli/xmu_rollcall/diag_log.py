@@ -12,10 +12,16 @@ no-op——诊断手段本身绝不允许影响主流程。
 """
 
 import datetime
+import os
+import threading
 
 from . import config
 
 DIAG_LOG_NAME = "diag.log"
+DIAG_LOG_MAX_BYTES = 1024 * 1024
+DIAG_LOG_BACKUP_NAME = "diag.log.1"
+
+_WRITE_LOCK = threading.Lock()
 
 
 def log(message: str) -> None:
@@ -24,7 +30,23 @@ def log(message: str) -> None:
         line = "{} {}\n".format(
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message
         )
-        with open(config.CONFIG_DIR / DIAG_LOG_NAME, "a", encoding="utf-8") as file:
-            file.write(line)
+        path = config.CONFIG_DIR / DIAG_LOG_NAME
+        # 同一进程中的线程共用一把锁，覆盖尺寸检查、轮转与追加的整个过程。
+        # 文件句柄在轮转前关闭，避免 Windows 拒绝重命名正在打开的日志。
+        with _WRITE_LOCK:
+            try:
+                current_size = path.stat().st_size
+            except FileNotFoundError:
+                current_size = 0
+            incoming_size = len(line.encode("utf-8"))
+            if current_size and current_size + incoming_size > DIAG_LOG_MAX_BYTES:
+                backup = config.CONFIG_DIR / DIAG_LOG_BACKUP_NAME
+                try:
+                    os.replace(path, backup)
+                except OSError:
+                    # 轮转失败时仍尽量保住日志，继续追加主文件。
+                    pass
+            with open(path, "a", encoding="utf-8") as file:
+                file.write(line)
     except Exception:
         pass

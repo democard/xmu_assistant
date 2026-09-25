@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,28 @@ class DiagLogTests(unittest.TestCase):
         stamp = datetime.datetime.strptime(first_field, "%Y-%m-%d")
         self.assertGreaterEqual(stamp.date(), before.date())
         self.assertLessEqual(stamp.date(), after.date())
+
+    def test_concurrent_writes_keep_each_entry_intact(self):
+        total = 240
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            list(pool.map(lambda index: diag_log.log(f"parallel-entry-{index}"), range(total)))
+
+        lines = (self.config_dir / diag_log.DIAG_LOG_NAME).read_text(
+            encoding="utf-8"
+        ).splitlines()
+        self.assertEqual(len(lines), total)
+        messages = [line.split(" ", 2)[2] for line in lines]
+        self.assertEqual(set(messages), {f"parallel-entry-{index}" for index in range(total)})
+
+    def test_rotates_existing_log_before_it_exceeds_limit(self):
+        path = self.config_dir / diag_log.DIAG_LOG_NAME
+        path.write_text("old diagnostic line\n", encoding="utf-8")
+        with mock.patch.object(diag_log, "DIAG_LOG_MAX_BYTES", 32):
+            diag_log.log("new diagnostic line")
+
+        backup = self.config_dir / diag_log.DIAG_LOG_BACKUP_NAME
+        self.assertEqual(backup.read_text(encoding="utf-8"), "old diagnostic line\n")
+        self.assertIn("new diagnostic line", path.read_text(encoding="utf-8"))
 
 
 class SecretsWarnChannelTests(unittest.TestCase):
