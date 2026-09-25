@@ -170,6 +170,49 @@ class TuneSessionTests(unittest.TestCase):
 
 
 class SaveSessionTests(unittest.TestCase):
+    def test_save_reads_cookiejar_under_session_lock(self):
+        import tempfile
+        import requests
+        from xmu_rollcall import utils
+
+        original = requests.utils.dict_from_cookiejar
+
+        def inspect_lock(jar):
+            self.assertTrue(utils.SESSION_COOKIE_LOCK._is_owned())
+            return original(jar)
+
+        session = requests.Session()
+        session.cookies.set("session_token", "abc123")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            requests.utils, "dict_from_cookiejar", side_effect=inspect_lock
+        ):
+            utils.save_session(session, str(Path(directory) / "cookies.json"))
+
+    def test_load_replaces_cookiejar_under_session_lock(self):
+        import tempfile
+        import requests
+        from xmu_rollcall import utils
+
+        class TrackedSession(requests.Session):
+            @property
+            def cookies(self):
+                return self._cookies
+
+            @cookies.setter
+            def cookies(self, value):
+                if getattr(self, "check_cookie_lock", False):
+                    self_test.assertTrue(utils.SESSION_COOKIE_LOCK._is_owned())
+                self._cookies = value
+
+        self_test = self
+        session = TrackedSession()
+        session.check_cookie_lock = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cookies.json"
+            path.write_text('{"session_token": "abc123"}', encoding="utf-8")
+            self.assertTrue(utils.load_session(session, str(path)))
+        self.assertEqual(session.cookies.get("session_token"), "abc123")
+
     def test_save_and_load_roundtrip_leaves_no_tmp(self):
         """原子写盘：save 后无 .tmp 残留，load 能还原 cookie（DPAPI 加密往返兼容）。"""
         import os
@@ -189,6 +232,28 @@ class SaveSessionTests(unittest.TestCase):
             restored = requests.Session()
             self.assertTrue(load_session(restored, path))
             self.assertEqual(restored.cookies.get("session_token"), "abc123")
+
+
+class VerifySessionErrorTests(unittest.TestCase):
+    def test_request_error_is_unknown_network_status(self):
+        import requests
+        from xmu_rollcall.utils import verify_session
+
+        class FailedSession:
+            def get(self, *_args, **_kwargs):
+                raise requests.ConnectionError("offline")
+
+        self.assertIsNone(verify_session(FailedSession()))
+
+    def test_programming_error_propagates_to_restore_worker(self):
+        from xmu_rollcall.utils import verify_session
+
+        class BrokenSession:
+            def get(self, *_args, **_kwargs):
+                raise RuntimeError("session bug")
+
+        with self.assertRaisesRegex(RuntimeError, "session bug"):
+            verify_session(BrokenSession())
 
 
 class ResponseSessionExpiredTests(unittest.TestCase):

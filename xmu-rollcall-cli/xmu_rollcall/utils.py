@@ -322,7 +322,9 @@ def save_session(sess: requests.Session, path: str):
     # cookie 不得被并发孤儿清理误删（写路径与清理路径共用 CONFIG_LOCK）
     with CONFIG_LOCK:
         try:
-            cookie_dict = requests.utils.dict_from_cookiejar(sess.cookies)
+            # 固定锁顺序：CONFIG_LOCK → SESSION_COOKIE_LOCK；仅快照主 jar 时持 cookie 锁。
+            with SESSION_COOKIE_LOCK:
+                cookie_dict = requests.utils.dict_from_cookiejar(sess.cookies)
             # cookie 等同于登录态：整个 JSON 内容加密落盘（与凭据字段同安全级别）
             plaintext = json.dumps(cookie_dict)
             protected = secrets.protect(plaintext)
@@ -354,7 +356,9 @@ def load_session(sess: requests.Session, path: str):
         # 兼容旧明文：无 dpapi: 前缀直接按 JSON 解析；有前缀先解密
         plaintext = secrets.unprotect(raw) if raw.startswith(secrets.DPAPI_PREFIX) else raw
         cookie_dict = json.loads(plaintext)
-        sess.cookies = requests.utils.cookiejar_from_dict(cookie_dict)
+        restored = requests.utils.cookiejar_from_dict(cookie_dict)
+        with SESSION_COOKIE_LOCK:
+            sess.cookies = restored
         return True
     except Exception as exc:
         # 与 save_session 的失败日志对称：恢复失败原因不能零日志吞掉，
@@ -375,8 +379,6 @@ def verify_session(sess: requests.Session) -> dict | None:
     try:
         response = sess.get(f"{base_url}/api/profile", headers=headers, timeout=API_TIMEOUT)
     except requests.RequestException:
-        return None
-    except Exception:
         return None
     if response.status_code == 200:
         try:
