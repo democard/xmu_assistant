@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
@@ -101,8 +102,8 @@ class RollcallMonitorService : Service() {
      * 而不是等满整个轮询间隔（最长 300s）。等待本身不发起任何网络请求。
      */
     private fun awaitInterruptible(token: Long, settings: AssistantSettings, totalMillis: Long) {
-        val deadline = System.currentTimeMillis() + totalMillis
-        while (System.currentTimeMillis() < deadline) {
+        val deadline = SystemClock.elapsedRealtime() + totalMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
             if (!isMonitorRunActive(token, settings)) return
             try {
                 Thread.sleep(500)
@@ -321,7 +322,7 @@ class RollcallMonitorService : Service() {
     private fun mainPendingIntent(): PendingIntent {
         return PendingIntent.getActivity(
             this,
-            0,
+            2104,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

@@ -42,7 +42,7 @@ internal fun buildScheduleWidgetViews(
         addCategory(Intent.CATEGORY_LAUNCHER)
         putExtra("open_page", "课表")
     }
-    val pending = PendingIntent.getActivity(context, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val pending = PendingIntent.getActivity(context, 2101, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     views.setOnClickPendingIntent(R.id.widget_root, pending)
     views.setTextViewText(R.id.widget_title, "今日课程")
     views.setTextViewText(R.id.widget_week, "${today.monthValue}/${today.dayOfMonth} 周${xmuWeekdayShort(today.dayOfWeek.value)}")

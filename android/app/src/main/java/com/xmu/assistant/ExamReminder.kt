@@ -218,7 +218,7 @@ internal class ExamReminderReceiver : android.content.BroadcastReceiver() {
         if (settings.fullScreenEnabled && ExamReminder.canUseFullScreenIntent(context)) {
             val fullScreenIntent = PendingIntent.getActivity(
                 context,
-                0,
+                2103,
                 Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
