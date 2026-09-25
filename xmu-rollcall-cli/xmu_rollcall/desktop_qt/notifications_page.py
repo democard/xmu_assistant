@@ -205,30 +205,53 @@ class NotificationsPageMixin:
             + ';font-weight:700;">约3.5元实名费用</span>；QQ 邮箱免费使用。'
         )
 
-    def save_notification_settings(self):
+    def save_notification_settings(self, _checked=False, *, test_after=False):
+        # Read widgets on the GUI thread, then serialize writes in click order.
+        # The worker must never inspect Qt widgets.
+        settings = self._notification_settings_from_ui()
+        pending = getattr(self, "_notification_save_pending", None)
+        if pending is None:
+            pending = []
+            self._notification_save_pending = pending
+        pending.append((settings, test_after))
+        if len(pending) == 1:
+            self._run_thread(self._notification_settings_worker, settings, test_after)
+        self.notification_summary.setText("正在保存通知设置…")
+
+    def _notification_settings_worker(self, settings: dict, test_after: bool):
         try:
-            # 读-改-写整体持锁：与登录写回（_login_worker，后台线程）并发时
-            # 不加锁会互相覆盖丢失修改
             with CONFIG_LOCK:
                 config = load_config()
-                set_notification_settings(config, self._notification_settings_from_ui())
+                set_notification_settings(config, settings)
                 save_config(config)
-            settings = get_notification_settings(config)
-            self._notification_settings_cache = settings
-            self._refresh_notification_metric(settings)
+            self._emit(("notification_settings_saved", True, get_notification_settings(config), test_after))
+        except Exception as exc:
+            self._emit(("notification_settings_saved", False, exc, test_after))
+
+    def _ev_notification_settings_saved(self, event):
+        ok, result, test_after = event[1], event[2], event[3]
+        pending = self._notification_save_pending
+        pending.pop(0)
+        if pending:
+            next_settings, next_test_after = pending[0]
+            self._run_thread(self._notification_settings_worker, next_settings, next_test_after)
+        if ok:
+            self._notification_settings_cache = result
+            self._refresh_notification_metric(result)
             self.notification_summary.setText("通知设置已保存。")
             self.log("通知设置已保存。")
             self._show_toast("通知设置已保存")
-        except Exception as exc:
-            self.log(f"保存通知设置失败：{exc}")
+            if test_after:
+                self._send_test_notification(result)
+        else:
+            self.log(f"保存通知设置失败：{result}")
             self._show_toast("通知设置保存失败", ok=False)
-            QMessageBox.critical(self, "保存失败", friendly_error_message(exc, "settings"))
+            QMessageBox.critical(self, "保存失败", friendly_error_message(result, "settings"))
 
     def test_notifications(self):
-        self.save_notification_settings()
-        settings = getattr(self, "_notification_settings_cache", None) or get_notification_settings(
-            load_config()
-        )
+        self.save_notification_settings(test_after=True)
+
+    def _send_test_notification(self, settings: dict):
         external_enabled = settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]
         if not (settings["system"]["enabled"] or external_enabled):
             self.notification_summary.setText("未开启任何通知，请先开启本机、微信或 QQ 邮箱通知。")
@@ -246,10 +269,10 @@ class NotificationsPageMixin:
             ),
             "xmurollcall://rollcall/test",
         )
-        if self.notify_system_check.isChecked():
+        if settings["system"]["enabled"]:
             self._show_system_notification(message.title, message.body)
         if external_enabled:
-            self._send_external_notification(message, "测试通知已发送")
+            self._send_external_notification(message, "测试通知已发送", settings=settings)
         else:
             self.notification_summary.setText("测试通知已发送")
             self._show_toast("测试通知已发送")
@@ -274,12 +297,12 @@ class NotificationsPageMixin:
         if self.tray_icon:
             self.tray_icon.showMessage(title, body)
 
-    def _send_external_notification(self, message, success_text: str = "通知已发送"):
-        self._run_thread(self._notification_worker, message, success_text)
+    def _send_external_notification(self, message, success_text: str = "通知已发送", *, settings=None):
+        self._run_thread(self._notification_worker, message, success_text, settings)
 
-    def _notification_worker(self, message, success_text: str):
+    def _notification_worker(self, message, success_text: str, settings=None):
         try:
-            settings = get_notification_settings(load_config())
+            settings = settings if settings is not None else get_notification_settings(load_config())
             errors = send_with_settings(settings, message)
             if errors:
                 self._emit(("notification_result", False, "；".join(errors)))

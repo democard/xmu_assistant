@@ -30,11 +30,14 @@ EVENT_CONTRACTS: dict[str, tuple[int, str]] = {
     "error": (2, "后台错误文案"),
     # ---- 登录/恢复/应答 worker 发射 ----
     "login_success": (4, "登录或恢复成功(session, account, login_epoch)"),
+    "login_persisted": (6, "后台保存登录结果(session, account, login_epoch, error, undo)"),
+    "login_persist_discarded": (2, "已取消登录的 Cookie 清理结果(error)"),
     "login_failed": (2, "登录失败原因"),
     "restore_failed": (3, "自动恢复失败(原因, silent[, login_epoch])"),
     "answer_result": (4, "签到应答结果(event_id, ok, detail)"),
     "merge_session_cookies": (3, "worker 克隆会话回写(session, worker_account_id[, batch_token])"),
     "notification_result": (3, "通知发送结果(ok, detail)"),
+    "notification_settings_saved": (4, "通知设置保存结果(ok, settings_or_error, test_after)"),
     # ---- 签到情况 / 课件刷新 worker 发射 ----
     "course_rollcalls": (4, "签到情况结果(records, source, worker_account_id)"),
     "course_rollcalls_error": (4, "签到情况失败(message, silent, worker_account_id)"),

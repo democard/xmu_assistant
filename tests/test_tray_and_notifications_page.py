@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from PySide6.QtWidgets import QSystemTrayIcon
 
@@ -234,6 +235,38 @@ class TestNotificationsPageLogic(unittest.TestCase):
     def test_blank_qq_port_falls_back_to_default(self):
         settings = self._settings_host(port_text="   ")._notification_settings_from_ui()
         self.assertEqual(settings["qq_mail"]["smtp_port"], "465,587")
+
+    def test_saves_queue_in_click_order_and_test_waits_for_save(self):
+        host = self._settings_host()
+        scheduled = []
+        events = []
+        sent = []
+        host._run_thread = lambda target, *args: scheduled.append((target, args))
+        host._emit = events.append
+        host.notification_summary = StubAction()
+        host._refresh_notification_metric = lambda settings: None
+        host._show_toast = lambda *a, **k: None
+        host.log = lambda text: None
+        host._send_test_notification = sent.append
+
+        host.save_notification_settings()
+        host.notify_pushplus_token._value = "new-token"
+        host.test_notifications()
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(sent, [])
+
+        config = {"accounts": []}
+        with mock.patch("xmu_rollcall.desktop_qt.notifications_page.load_config", return_value=config), \
+             mock.patch("xmu_rollcall.desktop_qt.notifications_page.save_config") as save:
+            scheduled[0][0](*scheduled[0][1])
+            host._ev_notification_settings_saved(events.pop())
+            self.assertEqual(len(scheduled), 2)
+            self.assertEqual(sent, [])
+            scheduled[1][0](*scheduled[1][1])
+            host._ev_notification_settings_saved(events.pop())
+
+        self.assertEqual(save.call_count, 2)
+        self.assertEqual(sent[0]["pushplus"]["token"], "new-token")
 
     def test_metric_aggregates_configured_channels(self):
         host = NotificationsHost(

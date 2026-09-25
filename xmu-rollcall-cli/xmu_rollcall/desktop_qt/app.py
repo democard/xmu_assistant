@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import sys
 import threading
@@ -179,6 +180,8 @@ class DashboardWindow(
         # 登录在途门：login() 可被连点/换号直登并发触发，双 worker 写盘顺序与
         # emit 顺序相反时会造成 UI 账号与磁盘当前账号漂移（见 login() 注释）
         self._login_in_progress = False
+        self._login_persisting = False
+        self._login_persist_cancel_remove_cookie = False
 
         self.event_sequence = 0
         self.events_by_id: dict[str, RollcallEvent] = {}
@@ -798,7 +801,11 @@ class DashboardWindow(
                 # 初次登录在途时尚无 account/session：此时点退出应取消
                 # 这次转换，不能直接 return 后让迟到结果把用户重新登录。
                 self._login_epoch += 1
-                self._login_in_progress = False
+                # A persistence worker may already be writing credentials. Keep
+                # the gate until its result has been discarded and its Cookie
+                # rolled back, so a new login cannot overtake the cleanup.
+                if not getattr(self, "_login_persisting", False):
+                    self._login_in_progress = False
                 self.password_input.clear()
                 self.log("已取消正在进行的登录。")
                 self._show_toast("已取消登录")
@@ -817,6 +824,10 @@ class DashboardWindow(
         self.stop_monitor()
         # 登录代数 +1：在途 login/restore worker 的晚到成功结果据此被丢弃
         self._login_epoch += 1
+        if getattr(self, "_login_persisting", False):
+            self._login_persist_cancel_remove_cookie = True
+        if not getattr(self, "_login_persisting", False):
+            self._login_in_progress = False
         # Any in-flight download belongs to the previous login generation,
         # including same-account re-login.  Clear its visible state before the
         # new session starts accepting worker results.
@@ -1212,37 +1223,16 @@ class DashboardWindow(
             return
         # 只有当前代的结果才能释放登录门：旧 worker 迟到期间用户
         # 可能已发起新登录，先清门会让新请求被第三次点击并发穿透。
-        self._login_in_progress = False
         if account is None and len(event) >= 7:
             # 手动登录的持久化必须在 epoch 校验之后执行；自动恢复仍传
             # 现有 account，不走此分支。
             username, password, name = event[4:7]
-            try:
-                with CONFIG_LOCK:
-                    config = load_config()
-                    account = next(
-                        (item for item in get_all_accounts(config) if item.get("username") == username),
-                        None,
-                    )
-                    if account is None:
-                        account_id = add_account(config, username, password, name)
-                        account = next(
-                            item for item in get_all_accounts(config) if item.get("id") == account_id
-                        )
-                    else:
-                        account["password"] = password
-                        account["name"] = name
-                    set_current_account(config, account["id"])
-                    set_rollcall_settings(account, get_rollcall_settings(account))
-                    save_config(config)
-                    save_session(session, get_cookies_path(account["id"]))
-            except Exception as exc:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-                self._ev_login_failed(("login_failed", str(exc)))
-                return
+            self._login_persisting = True
+            self._login_persist_cancel_remove_cookie = False
+            self._run_thread(self._persist_login_worker, session, username, password, name, worker_epoch)
+            return
+        self._login_persisting = False
+        self._login_in_progress = False
         self._login_epoch += 1
         # A successful login always creates a new session generation, including
         # same-account re-login.  Invalidate every old download event before the
@@ -1312,6 +1302,126 @@ class DashboardWindow(
         self.log(f"登录成功：{display}")
         self._show_toast(f"{display} 已登录")
         self._refresh_after_login()
+
+    def _persist_login_worker(self, session, username, password, name, login_epoch):
+        account = None
+        undo = None
+        try:
+            with CONFIG_LOCK:
+                config = load_config()
+                account = next(
+                    (item for item in get_all_accounts(config) if item.get("username") == username),
+                    None,
+                )
+                undo = {
+                    "current_account_id": config.get("current_account_id"),
+                    "account": copy.deepcopy(account),
+                }
+                if account is None:
+                    account_id = add_account(config, username, password, name)
+                    account = next(item for item in get_all_accounts(config) if item.get("id") == account_id)
+                else:
+                    account["password"] = password
+                    account["name"] = name
+                set_current_account(config, account["id"])
+                set_rollcall_settings(account, get_rollcall_settings(account))
+                cookie_path = get_cookies_path(account["id"])
+                undo["cookie"] = Path(cookie_path).read_bytes() if os.path.exists(cookie_path) else None
+                undo["account_id"] = account["id"]
+                undo["written_account"] = copy.deepcopy(account)
+                save_config(config)
+                save_session(session, cookie_path)
+            self._emit(("login_persisted", session, account, login_epoch, "", undo))
+        except Exception as exc:
+            self._emit(("login_persisted", session, account, login_epoch, str(exc), undo))
+
+    def _ev_login_persisted(self, event):
+        session, account, login_epoch, error = event[1:5]
+        undo = event[5] if len(event) > 5 else None
+        if login_epoch != self._login_epoch:
+            # logout() keeps the login gate occupied until this cleanup finishes.
+            self._run_thread(
+                self._discard_persisted_login_worker,
+                session,
+                undo,
+                self._login_persist_cancel_remove_cookie,
+            )
+            return
+        if error:
+            self._login_persisting = False
+            try:
+                session.close()
+            except Exception:
+                pass
+            self._ev_login_failed(("login_failed", error, login_epoch))
+            return
+        self._ev_login_success(("login_success", session, account, login_epoch))
+
+    def _discard_persisted_login_worker(self, session, undo, remove_cookie):
+        errors = []
+        try:
+            if undo and "account_id" in undo:
+                with CONFIG_LOCK:
+                    try:
+                        config = load_config()
+                        account_id = undo["account_id"]
+                        account = next(
+                            (item for item in get_all_accounts(config) if str(item.get("id")) == str(account_id)),
+                            None,
+                        )
+                        prior = undo["account"]
+                        written = undo["written_account"]
+                        if prior is None:
+                            if account == written:
+                                config["accounts"] = [
+                                    item for item in config["accounts"]
+                                    if str(item.get("id")) != str(account_id)
+                                ]
+                        elif account:
+                            for key in ("password", "name", "rollcall_settings"):
+                                if account.get(key) == written.get(key):
+                                    if key in prior:
+                                        account[key] = prior[key]
+                                    else:
+                                        account.pop(key, None)
+                        if str(config.get("current_account_id")) == str(account_id):
+                            config["current_account_id"] = undo["current_account_id"]
+                        save_config(config)
+                    except Exception as exc:
+                        errors.append(f"配置回滚失败：{exc}")
+                    try:
+                        path = get_cookies_path(undo["account_id"])
+                        prior_cookie = None if remove_cookie else undo.get("cookie")
+                        if prior_cookie is None:
+                            if os.path.exists(path):
+                                os.remove(path)
+                        else:
+                            tmp_path = f"{path}.tmp"
+                            try:
+                                Path(tmp_path).write_bytes(prior_cookie)
+                                os.replace(tmp_path, path)
+                            finally:
+                                if os.path.exists(tmp_path):
+                                    os.remove(tmp_path)
+                    except Exception as exc:
+                        errors.append(f"Cookie 回滚失败：{exc}")
+        except Exception as exc:
+            errors.append(str(exc))
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
+            self._emit(("login_persist_discarded", "；".join(errors)))
+
+    def _ev_login_persist_discarded(self, event):
+        self._login_persisting = False
+        self._login_in_progress = False
+        self._login_persist_cancel_remove_cookie = False
+        if event[1]:
+            self.log(f"回滚已取消的登录失败：{event[1]}")
+        else:
+            self.log("已回滚取消登录期间写入的账号与 Cookie。")
 
     def _ev_login_failed(self, event):
         worker_epoch = event[2] if len(event) > 2 else None
@@ -1807,12 +1917,16 @@ class DashboardWindow(
         self.log(("通知发送成功：" if ok else "通知发送失败：") + detail)
         self._show_toast(detail, ok=ok)
 
+    _ev_notification_settings_saved = NotificationsPageMixin._ev_notification_settings_saved
+
     # ---- 事件分发表：kind → 处理器 -------------------------------------------
     # 键集合与 events.EVENT_CONTRACTS 及全部发射点由 tests/test_event_contract.py
     # 做三方一致性校验；分组键序同上注。
     _EVENT_HANDLERS = {
         # 登录与会话（首页登录面板）
         "login_success": _ev_login_success,
+        "login_persisted": _ev_login_persisted,
+        "login_persist_discarded": _ev_login_persist_discarded,
         "login_failed": _ev_login_failed,
         "restore_failed": _ev_restore_failed,
         # 首页监控概览（指标行/事件流/通知弹窗）
@@ -1840,6 +1954,7 @@ class DashboardWindow(
         "error": _ev_error,
         # 通知页
         "notification_result": _ev_notification_result,
+        "notification_settings_saved": _ev_notification_settings_saved,
     }
 
     def _handle_event(self, event):

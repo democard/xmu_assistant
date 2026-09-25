@@ -248,6 +248,12 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         host._show_toast = lambda *a, **k: None
         host._refresh_after_login = lambda: None
         host._cancel_all_pending_answers = lambda: None
+        scheduled = []
+        host._persist_login_worker = lambda *args: DashboardWindow._persist_login_worker(host, *args)
+        host._ev_login_success = lambda event: DashboardWindow._ev_login_success(host, event)
+        host._run_thread = lambda target, *args: scheduled.append((target, args))
+        host.events = []
+        host._emit = host.events.append
 
         with mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
              mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
@@ -258,12 +264,106 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
                 ("login_success", session, None, 7, "1001", "secret", "Alice"),
             )
 
+            save_config_mock.assert_not_called()
+            save_session_mock.assert_not_called()
+            self.assertIsNone(host.session)
+            self.assertTrue(host._login_in_progress)
+            scheduled[0][0](*scheduled[0][1])
+            DashboardWindow._ev_login_persisted(host, host.events.pop())
+
         save_config_mock.assert_called_once_with(config)
         save_session_mock.assert_called_once_with(session, "cookies.json")
         self.assertIs(host.session, session)
         self.assertEqual(host.account["username"], "1001")
         self.assertEqual(config["current_account_id"], host.account["id"])
         self.assertEqual(host._login_epoch, 8)
+
+    def test_cancel_during_persistence_holds_gate_until_cookie_cleanup(self):
+        import tempfile
+        from pathlib import Path
+
+        session = types.SimpleNamespace(close=mock.Mock())
+        scheduled = []
+        host = types.SimpleNamespace(
+            _login_epoch=8,
+            _login_in_progress=True,
+            _login_persisting=True,
+            _login_persist_cancel_remove_cookie=True,
+            logs=[],
+            events=[],
+        )
+        host.log = host.logs.append
+        host._emit = host.events.append
+        host._discard_persisted_login_worker = lambda *args: DashboardWindow._discard_persisted_login_worker(host, *args)
+        host._run_thread = lambda target, *args: scheduled.append((target, args))
+
+        with tempfile.TemporaryDirectory() as directory:
+            cookie_path = Path(directory) / "cookie.json"
+            cookie_path.write_text("encrypted", encoding="utf-8")
+            config = {
+                "accounts": [{"id": 1, "username": "1001", "password": "new", "name": "Alice"}],
+                "current_account_id": 1,
+                "notification_settings": {"untouched": True},
+            }
+            undo = {
+                "account_id": 1,
+                "account": None,
+                "current_account_id": None,
+                "written_account": dict(config["accounts"][0]),
+                "cookie": None,
+            }
+            with mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value=str(cookie_path)), \
+                 mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
+                 mock.patch("xmu_rollcall.desktop_qt.app.save_config") as saved:
+                DashboardWindow._ev_login_persisted(
+                    host, ("login_persisted", session, {"id": 1}, 7, "", undo)
+                )
+                self.assertTrue(host._login_in_progress)
+                host.username_input = types.SimpleNamespace(text=lambda: "1001")
+                host.password_input = types.SimpleNamespace(text=lambda: "new")
+                DashboardWindow.login(host)
+                self.assertEqual(len(scheduled), 1, "清理完成前不得启动同账号的新登录")
+                self.assertTrue(cookie_path.exists())
+                scheduled[0][0](*scheduled[0][1])
+                self.assertFalse(cookie_path.exists())
+                self.assertEqual(config["accounts"], [])
+                self.assertIsNone(config["current_account_id"])
+                self.assertEqual(config["notification_settings"], {"untouched": True})
+                saved.assert_called_once_with(config)
+                DashboardWindow._ev_login_persist_discarded(host, host.events.pop())
+
+        self.assertFalse(host._login_in_progress)
+        self.assertFalse(host._login_persisting)
+        session.close.assert_called_once_with()
+
+    def test_cancel_initial_login_restores_existing_credentials_and_cookie(self):
+        import tempfile
+        from pathlib import Path
+
+        prior = {"id": 2, "username": "1002", "password": "old", "name": "Old"}
+        written = {**prior, "password": "new", "name": "New"}
+        config = {"accounts": [dict(written)], "current_account_id": 2}
+        host = types.SimpleNamespace(events=[])
+        host._emit = host.events.append
+        session = types.SimpleNamespace(close=mock.Mock())
+        with tempfile.TemporaryDirectory() as directory:
+            cookie_path = Path(directory) / "cookie.json"
+            cookie_path.write_bytes(b"new-cookie")
+            undo = {
+                "account_id": 2,
+                "account": prior,
+                "current_account_id": 1,
+                "written_account": written,
+                "cookie": b"old-cookie",
+            }
+            with mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value=str(cookie_path)), \
+                 mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
+                 mock.patch("xmu_rollcall.desktop_qt.app.save_config"):
+                DashboardWindow._discard_persisted_login_worker(host, session, undo, False)
+            self.assertEqual(cookie_path.read_bytes(), b"old-cookie")
+        self.assertEqual(config["accounts"], [prior])
+        self.assertEqual(config["current_account_id"], 1)
+        self.assertEqual(host.events[-1], ("login_persist_discarded", ""))
 
     def test_failed_login_does_not_persist(self):
         host = types.SimpleNamespace(events=[])
