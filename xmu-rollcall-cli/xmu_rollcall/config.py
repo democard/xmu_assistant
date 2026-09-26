@@ -166,6 +166,12 @@ def normalize_rollcall_settings(settings: dict | None) -> dict:
     return merged
 
 
+def _config_text(value, default: str = "") -> str:
+    # Damaged JSON values must not become apparent credentials such as "None"
+    # or "{}". Real strings, including a literal "None" password, are retained.
+    return value if isinstance(value, str) else default
+
+
 def normalize_notification_settings(settings: dict | None) -> dict:
     # 手编/外部写入可能给出合法 JSON 但错误类型（数组/字符串）：非 dict 直接
     # 回退默认（与 load 的 accounts 非 dict 滤除同族防御），不再穿透 .items() 崩
@@ -183,9 +189,11 @@ def normalize_notification_settings(settings: dict | None) -> dict:
         merged[section]["enabled"] = _coerce_bool(merged[section].get("enabled", False))
 
     for key in ("token",):
-        merged["pushplus"][key] = str(merged["pushplus"].get(key, "")).strip()
+        merged["pushplus"][key] = _config_text(merged["pushplus"].get(key)).strip()
     for key in ("sender", "password", "recipient", "smtp_host"):
-        merged["qq_mail"][key] = str(merged["qq_mail"].get(key, "")).strip()
+        merged["qq_mail"][key] = _config_text(
+            merged["qq_mail"].get(key), DEFAULT_NOTIFICATION_SETTINGS["qq_mail"][key],
+        ).strip()
     smtp_port = merged["qq_mail"].get("smtp_port", "465,587")
     if isinstance(smtp_port, (list, tuple)):
         smtp_port = ",".join(str(port).strip() for port in smtp_port)
@@ -271,13 +279,13 @@ def _load_config_locked() -> dict:
         if isinstance(account, dict):
             account["rollcall_settings"] = normalize_rollcall_settings(account.get("rollcall_settings"))
             # 解密敏感字段：旧明文（无 dpapi: 前缀）原样返回，向后兼容
-            account["password"] = secrets.unprotect(str(account.get("password", "")))
+            account["password"] = secrets.unprotect(_config_text(account.get("password")))
     notif = config.get("notification_settings")
     if isinstance(notif, dict):
         if isinstance(notif.get("pushplus"), dict):
-            notif["pushplus"]["token"] = secrets.unprotect(str(notif["pushplus"].get("token", "")))
+            notif["pushplus"]["token"] = secrets.unprotect(_config_text(notif["pushplus"].get("token")))
         if isinstance(notif.get("qq_mail"), dict):
-            notif["qq_mail"]["password"] = secrets.unprotect(str(notif["qq_mail"].get("password", "")))
+            notif["qq_mail"]["password"] = secrets.unprotect(_config_text(notif["qq_mail"].get("password")))
     return config
 
 
@@ -289,13 +297,13 @@ def save_config(config: dict) -> None:
         snapshot = copy.deepcopy(config)
         for account in snapshot.get("accounts", []):
             if isinstance(account, dict):
-                account["password"] = secrets.protect(str(account.get("password", "")))
+                account["password"] = secrets.protect(_config_text(account.get("password")))
         notif = snapshot.get("notification_settings")
         if isinstance(notif, dict):
             if isinstance(notif.get("pushplus"), dict):
-                notif["pushplus"]["token"] = secrets.protect(str(notif["pushplus"].get("token", "")))
+                notif["pushplus"]["token"] = secrets.protect(_config_text(notif["pushplus"].get("token")))
             if isinstance(notif.get("qq_mail"), dict):
-                notif["qq_mail"]["password"] = secrets.protect(str(notif["qq_mail"].get("password", "")))
+                notif["qq_mail"]["password"] = secrets.protect(_config_text(notif["qq_mail"].get("password")))
         tmp_file = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
         try:
             with open(tmp_file, "w", encoding="utf-8") as file:

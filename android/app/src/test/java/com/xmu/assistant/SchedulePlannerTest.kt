@@ -68,11 +68,53 @@ class SchedulePlannerTest {
     fun `single week forms are bounded by the teaching week cap`() {
         assertEquals(setOf(3), parseXmuWeekExpression("第3周").weeks)
         assertEquals(setOf(1, 24), parseXmuWeekExpression("第1周,第24周").weeks)
-        // 越界单周不再产出天文数字周次（ICS 会写成数千万年后的日程）；空结果
-        // 与越界区间同口径（parseable=false）
+        // 语法有效但越界的周次保持可解析空集，不能被下游误扩为全学期。
         assertEquals(emptySet<Int>(), parseXmuWeekExpression("第2147483647周").weeks)
-        assertFalse(parseXmuWeekExpression("第2147483647周").parseable)
+        assertTrue(parseXmuWeekExpression("第2147483647周").parseable)
         assertEquals(emptySet<Int>(), parseXmuWeekExpression("100-200周").weeks)
+    }
+
+    @Test
+    fun `attached parity does not filter unrelated week tokens`() {
+        val expected = (1..8).toSet() + setOf(11, 13, 15)
+        assertEquals(expected, parseXmuWeekExpression("1-8周,10-16周(单周)").weeks)
+        assertEquals(expected, parseXmuWeekExpression("10-16周(单周),1-8周").weeks)
+        assertEquals(setOf(1, 2, 4, 6), parseXmuWeekExpression("1-2周,4-6双周").weeks)
+        assertEquals(setOf(1, 3, 5, 7, 11, 13, 15), parseXmuWeekExpression("1-8周,10-16周,单周").weeks)
+    }
+
+    @Test
+    fun `parenthesized abbreviated parity is recognized in attached and standalone forms`() {
+        listOf("1-6周(单)", "1-6周（单）", "1-6周,(单)", "1-6周,（单）").forEach { expression ->
+            assertEquals(expression, setOf(1, 3, 5), parseXmuWeekExpression(expression).weeks)
+        }
+        listOf("1-6周(双)", "1-6周（双）", "1-6周,(双)", "1-6周,（双）").forEach { expression ->
+            assertEquals(expression, setOf(2, 4, 6), parseXmuWeekExpression(expression).weeks)
+        }
+        assertEquals((1..6).toSet(), parseXmuWeekExpression("1-6周（单双）").weeks)
+    }
+
+    @Test
+    fun `valid empty week selection stays empty in filters and week index`() {
+        listOf("2-2单周", "1-1双周", "26-30周", "第2147483647周").forEach { expression ->
+            val parsed = parseXmuWeekExpression(expression)
+            assertTrue(expression, parsed.parseable)
+            assertTrue(expression, parsed.weeks.isEmpty())
+            val entry = fixtureEntry(weeks = expression)
+            assertTrue(expression, (1..25).all { listOf(entry).forWeek(it).isEmpty() })
+            assertTrue(expression, indexXmuScheduleByWeek(listOf(entry)).values.all { it.isEmpty() })
+        }
+    }
+
+    @Test
+    fun `mixed parity remains consistent across direct filtering and week index`() {
+        val entry = fixtureEntry(weeks = "1-8周,10-16周(单周)")
+        val expected = (1..8).toSet() + setOf(11, 13, 15)
+        val index = indexXmuScheduleByWeek(listOf(entry))
+        for (week in 1..25) {
+            assertEquals(week in expected, listOf(entry).forWeek(week).isNotEmpty())
+            assertEquals(week in expected, index[week].orEmpty().isNotEmpty())
+        }
     }
 
     private fun measureMillis(block: () -> Unit): Long {

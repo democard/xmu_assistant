@@ -279,16 +279,16 @@ class MonitorRunGateTest {
         repeat(2) {
             processRollcallMonitorPoll(
                 listOf(event(4)), settings, notified, completed, attempts, { action -> action(); true },
-                { notifications++ }, { answers++; true }, {},
+                { notifications++; true }, { answers++; true }, {},
             )
         }
         processRollcallMonitorPoll(
             listOf(event(5)), settings, notified, completed, attempts, { action -> action(); true },
-            { notifications++ }, { answers++; true }, {},
+            { notifications++; true }, { answers++; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(event(8)), settings, notified, completed, attempts, { action -> action(); true },
-            { notifications++ }, { answers++; true }, {},
+            { notifications++; true }, { answers++; true }, {},
         )
         assertEquals(1, notifications)
         assertEquals(1, answers)
@@ -314,7 +314,7 @@ class MonitorRunGateTest {
                 processRollcallMonitorPoll(
                     events, RollcallSettings(autoAnswerRadar = true), notified, completed, attempts,
                     { action -> action(); true },
-                    { notifications += it.id },
+                    { notifications += it.id; true },
                     {
                         answers += it.id
                         if (it.id == "a") {
@@ -346,7 +346,7 @@ class MonitorRunGateTest {
 
         processRollcallMonitorPoll(
             events, RollcallSettings(autoAnswerRadar = true), notified, completed, attempts,
-            { action -> action(); true }, { notifications += it.id }, { answers += it.id; true }, {},
+            { action -> action(); true }, { notifications += it.id; true }, { answers += it.id; true }, {},
         )
         assertEquals(listOf("a", "b"), notifications)
         assertEquals(listOf("a", "b"), answers)
@@ -365,16 +365,16 @@ class MonitorRunGateTest {
         )
         val base = RollcallEvent("n1", "课程", "老师", "数字签到", "未签", progress = progress(5, 10))
         processRollcallMonitorPoll(
-            listOf(base), settings, notified, completed, attempts, { action -> action(); true }, {},
+            listOf(base), settings, notified, completed, attempts, { action -> action(); true }, { true },
             { submittedCodes += it.numberCode; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(base.copy(numberCode = "0042")), settings, notified, completed, attempts,
-            { action -> action(); true }, {}, { submittedCodes += it.numberCode; true }, {},
+            { action -> action(); true }, { true }, { submittedCodes += it.numberCode; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(base.copy(numberCode = "0042")), settings, notified, completed, attempts,
-            { action -> action(); true }, {}, { submittedCodes += it.numberCode; true }, {},
+            { action -> action(); true }, { true }, { submittedCodes += it.numberCode; true }, {},
         )
         assertEquals(listOf("0042"), submittedCodes)
     }
@@ -390,7 +390,7 @@ class MonitorRunGateTest {
         runCatching {
             processRollcallMonitorPoll(
                 listOf(numberEvent("1111")), settings, notified, completed, attempts,
-                { action -> action(); true }, {},
+                { action -> action(); true }, { true },
                 {
                     submittedCodes += it.numberCode
                     throw RollcallAnswerRejectedException(400)
@@ -401,12 +401,12 @@ class MonitorRunGateTest {
 
         processRollcallMonitorPoll(
             listOf(numberEvent("2222")), settings, notified, completed, attempts,
-            { action -> action(); true }, {},
+            { action -> action(); true }, { true },
             { submittedCodes += it.numberCode; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(numberEvent("2222")), settings, notified, completed, attempts,
-            { action -> action(); true }, {},
+            { action -> action(); true }, { true },
             { submittedCodes += it.numberCode; true }, {},
         )
 
@@ -423,7 +423,7 @@ class MonitorRunGateTest {
         repeat(4) {
             processRollcallMonitorPoll(
                 listOf(numberEvent("1111")), RollcallSettings(autoAnswerNumber = true),
-                mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+                mutableSetOf(), completed, attempts, { action -> action(); true }, { true },
                 { writes++; false }, {}, maxAnswerAttempts = 3,
             )
         }
@@ -442,16 +442,16 @@ class MonitorRunGateTest {
         runCatching {
             processRollcallMonitorPoll(
                 listOf(numberEvent("1111")), settings, mutableSetOf(), completed, attempts,
-                { action -> action(); true }, {}, { writes++; error("timeout") }, {},
+                { action -> action(); true }, { true }, { writes++; error("timeout") }, {},
             )
         }
         processRollcallMonitorPoll(
             listOf(numberEvent("1111", ownStatus = null)), settings, mutableSetOf(), completed, attempts,
-            { action -> action(); true }, {}, { writes++; true }, {},
+            { action -> action(); true }, { true }, { writes++; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(numberEvent("1111", ownStatus = STATUS_SIGNED)), settings,
-            mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+            mutableSetOf(), completed, attempts, { action -> action(); true }, { true },
             { writes++; true }, {},
         )
 
@@ -469,16 +469,16 @@ class MonitorRunGateTest {
         runCatching {
             processRollcallMonitorPoll(
                 listOf(numberEvent("1111")), settings, mutableSetOf(), completed, attempts,
-                { action -> action(); true }, {}, { writes++; error("timeout") }, {},
+                { action -> action(); true }, { true }, { writes++; error("timeout") }, {},
             )
         }
         processRollcallMonitorPoll(
             listOf(numberEvent("1111", ownStatus = null)), settings, mutableSetOf(), completed, attempts,
-            { action -> action(); true }, {}, { writes++; true }, {},
+            { action -> action(); true }, { true }, { writes++; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(numberEvent("2222", ownStatus = "未签")), settings,
-            mutableSetOf(), completed, attempts, { action -> action(); true }, {},
+            mutableSetOf(), completed, attempts, { action -> action(); true }, { true },
             { writes++; true }, {},
         )
 
@@ -497,7 +497,7 @@ class MonitorRunGateTest {
             listOf(numberEvent("2222", ownStatus = STATUS_LEAVE)),
             RollcallSettings(autoAnswerNumber = true),
             mutableSetOf(), completed, attempts,
-            { action -> action(); true }, {}, { writes++; true }, {},
+            { action -> action(); true }, { true }, { writes++; true }, {},
         )
 
         assertEquals(0, writes)
@@ -512,7 +512,7 @@ class MonitorRunGateTest {
 
         processRollcallMonitorPoll(
             listOf(numberEvent("", ownStatus = null)), RollcallSettings(autoAnswerNumber = true),
-            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, {},
+            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, { true },
             { true }, { healthSuccesses++ },
         )
         processRollcallMonitorPoll(
@@ -522,7 +522,7 @@ class MonitorRunGateTest {
                 waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_COUNT,
                 waitBeforeAnswerCount = 5,
             ),
-            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, {},
+            mutableSetOf(), mutableSetOf(), attempts, { action -> action(); true }, { true },
             { true }, { healthSuccesses++ },
         )
 
@@ -548,12 +548,12 @@ class MonitorRunGateTest {
         var answers = 0
         processRollcallMonitorPoll(
             candidates, settings, mutableSetOf(), mutableSetOf(), mutableMapOf(),
-            { action -> action(); true }, {}, { answers++; true }, {},
+            { action -> action(); true }, { true }, { answers++; true }, {},
         )
         processRollcallMonitorPoll(
             listOf(RollcallEvent("stopped", "课", "师", "雷达签到", "未签")),
             settings, mutableSetOf(), mutableSetOf(), mutableMapOf(),
-            { false }, {}, { answers++; true }, {},
+            { false }, { true }, { answers++; true }, {},
         )
         assertEquals(0, answers)
     }
@@ -575,7 +575,7 @@ class MonitorRunGateTest {
                 ),
             ),
             settings, notified, completed, attempts,
-            { action -> action(); true }, {}, { writes++; true }, { healthSuccesses++ },
+            { action -> action(); true }, { true }, { writes++; true }, { healthSuccesses++ },
         )
 
         assertEquals(0, writes)
@@ -591,7 +591,7 @@ class MonitorRunGateTest {
                 ),
             ),
             settings, notified, completed, attempts,
-            { action -> action(); true }, {}, { writes++; true }, { healthSuccesses++ },
+            { action -> action(); true }, { true }, { writes++; true }, { healthSuccesses++ },
         )
 
         assertEquals(1, writes)
@@ -607,7 +607,7 @@ class MonitorRunGateTest {
         processRollcallMonitorPoll(
             listOf(RollcallEvent("summary", "课", "师", "雷达签到", STATUS_SIGNED, ownStatus = null)),
             RollcallSettings(autoAnswerRadar = true), mutableSetOf(), completed, mutableMapOf(),
-            { action -> action(); true }, {}, { writes++; true }, {},
+            { action -> action(); true }, { true }, { writes++; true }, {},
         )
 
         assertEquals(0, writes)
@@ -627,7 +627,7 @@ class MonitorRunGateTest {
         repeat(4) {
             processRollcallMonitorPoll(
                 listOf(event), settings, notified, completed, attempts,
-                { action -> action(); true }, {}, { writes++; false }, { healthSuccesses++ },
+                { action -> action(); true }, { true }, { writes++; false }, { healthSuccesses++ },
                 maxAnswerAttempts = 3,
             )
         }
@@ -649,7 +649,7 @@ class MonitorRunGateTest {
                 processRollcallMonitorPoll(
                     listOf(event.copy(ownStatus = if (index == 0) null else "未签")),
                     RollcallSettings(autoAnswerRadar = true), mutableSetOf(), completed,
-                    attempts, { action -> action(); true }, {}, { writes++; error("timeout") }, {}, maxAnswerAttempts = 3,
+                    attempts, { action -> action(); true }, { true }, { writes++; error("timeout") }, {}, maxAnswerAttempts = 3,
                 )
             }
         }
@@ -665,10 +665,51 @@ class MonitorRunGateTest {
             listOf(RollcallEvent("r", "课", "师", "雷达签到", "未签")),
             RollcallSettings(autoAnswerRadar = true),
             mutableSetOf(), mutableSetOf(), mutableMapOf(),
-            { action -> action(); true }, {}, { writes++; true }, {},
+            { action -> action(); true }, { true }, { writes++; true }, {},
             settingsStillCurrent = { false },
         )
         assertEquals(0, writes)
+    }
+
+    @Test
+    fun `unavailable notification does not prevent automatic answering or mark notified`() {
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        var answers = 0
+        processRollcallMonitorPoll(
+            listOf(numberEvent("1234")), RollcallSettings(autoAnswerNumber = true),
+            notified, completed, mutableMapOf(), { action -> action(); true },
+            { false }, { answers++; true }, {},
+        )
+
+        assertEquals(1, answers)
+        assertTrue(notified.isEmpty())
+        assertEquals(setOf("n1"), completed)
+    }
+
+    @Test
+    fun `notification only rollcall remains pending until a channel accepts it`() {
+        val event = RollcallEvent("qr", "课程", "老师", "二维码签到", "未签")
+        val notified = mutableSetOf<String>()
+        val completed = mutableSetOf<String>()
+        var accepted = false
+        var notificationAttempts = 0
+        fun poll() = processRollcallMonitorPoll(
+            listOf(event), RollcallSettings(), notified, completed, mutableMapOf(),
+            { action -> action(); true }, { notificationAttempts++; accepted },
+            { error("QR rollcall cannot be answered automatically") }, {},
+        )
+
+        poll()
+        assertTrue(notified.isEmpty())
+        assertTrue(completed.isEmpty())
+        accepted = true
+        poll()
+        poll()
+
+        assertEquals(2, notificationAttempts)
+        assertEquals(setOf("qr"), notified)
+        assertEquals(setOf("qr"), completed)
     }
 
     private fun progress(present: Int, total: Int) = StudentRollcallProgress(

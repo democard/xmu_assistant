@@ -8,6 +8,8 @@ DashboardWindow 通过继承本混入获得通知设置页能力；方法体逐�
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -53,6 +55,7 @@ class NotificationsPageMixin:
         "_update_nav_badges",
         "log",
         "metric_notifications",
+        "session",
         "tray_icon",
     )
 
@@ -272,7 +275,8 @@ class NotificationsPageMixin:
         if settings["system"]["enabled"]:
             self._show_system_notification(message.title, message.body)
         if external_enabled:
-            self._send_external_notification(message, "测试通知已发送", settings=settings)
+            # 通知设置不依赖教务登录；显式测试的回执也应在未登录时可见。
+            self._send_external_notification(message, "测试通知已发送", settings=settings, session_bound=False)
         else:
             self.notification_summary.setText("测试通知已发送")
             self._show_toast("测试通知已发送")
@@ -297,16 +301,23 @@ class NotificationsPageMixin:
         if self.tray_icon:
             self.tray_icon.showMessage(title, body)
 
-    def _send_external_notification(self, message, success_text: str = "通知已发送", *, settings=None):
-        self._run_thread(self._notification_worker, message, success_text, settings)
+    def _send_external_notification(self, message, success_text: str = "通知已发送", *, settings=None,
+                                    session_bound: bool = True):
+        source_session = self.session if session_bound else None
+        if session_bound and source_session is None:
+            return
+        # 固定事件产生时选择的收件渠道，后续保存设置不得把旧事件转发给新收件人。
+        self._run_thread(self._notification_worker, message, success_text, deepcopy(settings), source_session)
 
-    def _notification_worker(self, message, success_text: str, settings=None):
+    def _notification_worker(self, message, success_text: str, settings=None, source_session=None):
         try:
             settings = settings if settings is not None else get_notification_settings(load_config())
+            if source_session is not None and self.session is not source_session:
+                return
             errors = send_with_settings(settings, message)
             if errors:
-                self._emit(("notification_result", False, "；".join(errors)))
+                self._emit(("notification_result", False, "；".join(errors), source_session))
             else:
-                self._emit(("notification_result", True, success_text))
+                self._emit(("notification_result", True, success_text, source_session))
         except Exception as exc:
-            self._emit(("notification_result", False, friendly_error_message(exc, "notification")))
+            self._emit(("notification_result", False, friendly_error_message(exc, "notification"), source_session))

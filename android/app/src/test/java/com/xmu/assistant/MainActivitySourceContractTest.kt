@@ -57,7 +57,7 @@ class MainActivitySourceContractTest {
         assertTrue("schedule holder must exist", "internal class ScheduleSectionState(" in schedule)
         assertTrue("schedule refresh must snapshot the active session", "sessionEpoch.snapshot(sessionOwner, cookieHeader())" in refreshBlock)
         assertTrue("schedule refresh must reject stale completions", "sessionEpoch.accepts(session, cookieHeader(), loggedIn())" in refreshBlock)
-        assertTrue("schedule refresh must persist its cache", "saveScheduleSnapshotToFile(activity, persistSnapshot)" in refreshBlock)
+        assertTrue("schedule refresh must persist with its original session", "persistSnapshotAsync(snapshot, request = session, cookie = refreshResult.jwCookie)" in refreshBlock)
         assertTrue("logout must clear the schedule section", "schedule.clearAll()" in logoutBlock)
         val scheduleClear = schedule.substringAfter("fun clearAll()", missingDelimiterValue = "")
         assertTrue("schedule clear must reset rows", "entries = emptyList()" in scheduleClear)
@@ -187,7 +187,7 @@ class MainActivitySourceContractTest {
     }
 
     @Test
-    fun `startup recovery is a throttled daemon probe with no business refreshes`() {
+    fun `startup recovery is a throttled lifecycle probe with no business refreshes`() {
         val source = mainActivitySource()
         val startupBlock = source
             .substringAfter("fun startStartupSessionRecovery()", missingDelimiterValue = "")
@@ -198,7 +198,11 @@ class MainActivitySourceContractTest {
         assertTrue("startup must use elapsed realtime", "tryStartProbe(SystemClock.elapsedRealtime())" in startupBlock)
         assertTrue("startup must be triggered from ON_START only", "LaunchedEffect(startupStartGeneration)" in source)
         assertTrue("startup trigger must ignore its initial composition", "if (startupStartGeneration == 0) return@LaunchedEffect" in source)
-        assertTrue("probe must run on the composition work scope", "workScope.launch(Dispatchers.IO)" in startupBlock)
+        assertTrue("probe must use the cancellation-safe composition runner", "workScope.launchStartupSessionWork(" in startupBlock)
+        assertTrue("probe completion must release its own token", "onFinished = { recovery.cancelProbe(probeToken) }" in startupBlock)
+        val autoLoginBlock = source.substringAfter("fun startStartupAutoLogin(").substringBefore("fun startStartupSessionRecovery()")
+        assertTrue("auto login must use the same lifecycle runner", "workScope.launchStartupSessionWork(" in autoLoginBlock)
+        assertTrue("auto-login completion must release its own token", "onFinished = { recovery.finishAutoLogin(recoveryToken) }" in autoLoginBlock)
         assertTrue("blank cookies must bypass transport", "if (capturedCookie.isBlank())" in startupBlock)
         assertTrue("unknown result must not login", "StartupSessionAction.SHOW_UNKNOWN -> {" in startupBlock)
         listOf("refreshRollcalls(", "refreshScores(", "refreshCourses(", "loadCourseware(").forEach { forbidden ->
@@ -564,16 +568,15 @@ class MainActivitySourceContractTest {
             .substringBefore("fun clearLoadingState()")
 
         assertTrue("persistSnapshotAsync was not found", persist.isNotBlank())
-        // 手动校准/清除也会落盘：登出/换号后仍在途的 IO 会把刚删除的缓存文件重建出来，
-        // 下次冷启动被新账号读走。此处无法用 JVM 测试确定性复现交错（IO 调度不可控），
-        // 故锁定不可变量本身——快照 + 世代校验必须与 refresh 的落盘同款。
+        // 手动校准与刷新共享写入口：默认在切 IO 前捕获世代，刷新则保留原请求世代。
+        // ScheduleCacheTimelineTest 另以可控调度/阻塞写入验证倒序与跨 Activity 清空。
         assertTrue(
             "persist must snapshot the session before hopping to IO",
-            "val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())" in persist,
+            "val session = request ?: sessionEpoch.snapshot(sessionOwner, cookieHeader())" in persist,
         )
         assertTrue(
             "persist must skip the write once the generation moved on",
-            "if (sessionEpoch.isCurrent(session)) saveScheduleSnapshotToFile(context, snapshot)" in persist,
+            "if (sessionEpoch.isCurrent(session)) writeCacheSnapshot(context, snapshot)" in persist,
         )
     }
 

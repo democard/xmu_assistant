@@ -61,6 +61,7 @@ internal fun icsEscape(value: String): String =
         .replace(";", "\\;")
         .replace(",", "\\,")
         .replace("\r\n", "\\n")
+        .replace("\r", "\\n")
         .replace("\n", "\\n")
 
 private val ICS_BYDAY = listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU")
@@ -89,6 +90,8 @@ fun buildScheduleIcs(
         if (entry.weekday !in 1..7) return@forEach
         val startClock = formatXmuTimeOrNull(entry.startTime) ?: return@forEach
         val endClock = formatXmuTimeOrNull(entry.endTime) ?: return@forEach
+        // 课程应在同日结束；等长或逆序时段不能导出为零/负时长事件。
+        if (entry.endTime <= entry.startTime) return@forEach
         val parsed = parseXmuWeekExpression(entry.weeks)
         val weeks = if (parsed.parseable) parsed.weeks else (1..calendar.totalWeeks).toSet()
         splitIcsWeekRuns(weeks).forEach { run ->

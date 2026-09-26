@@ -68,6 +68,7 @@ internal object ExamReminder {
                     ?.takeIf { it > now }
                     ?.let { exam to it }
             }
+            .sortedBy { (_, triggerAt) -> triggerAt }
             .take(100)
         var requestCode = REQUEST_CODE_BASE
         futureExams.forEach { (exam, triggerAt) ->
@@ -122,8 +123,7 @@ internal object ExamReminder {
     /** 是否已授予全屏通知权限（Android 14+ 需要；低版本默认可用）。 */
     fun canUseFullScreenIntent(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.USE_FULL_SCREEN_INTENT) ==
-                PackageManager.PERMISSION_GRANTED
+            context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
         } else {
             true
         }
@@ -148,10 +148,16 @@ internal object ExamReminder {
     fun openExactAlarmSettings(context: Context): Boolean =
         runCatching { context.startActivity(exactAlarmSettingsIntent(context)) }.isSuccess
 
-    /** 生成"全屏通知"系统设置 Intent（Android 14+ 应用通知设置页）。 */
+    /** Android 14+ 使用全屏通知特殊访问页；旧版保留普通通知设置页。 */
     fun fullScreenSettingsIntent(context: Context): Intent =
-        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+            }
+        } else {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            }
         }
 
     private fun reminderPendingIntent(context: Context, requestCode: Int, exam: XmuExam): PendingIntent {
@@ -192,7 +198,9 @@ internal object ExamReminder {
 }
 
 /** 考试提醒广播接收器：收到闹钟后发高优先级通知（可选全屏）。点击只关闭。 */
-internal class ExamReminderReceiver : android.content.BroadcastReceiver() {
+internal class ExamReminderReceiver(
+    private val readSettings: (Context) -> ExamReminderSettings = ::loadReminderSettings,
+) : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val exam = XmuExam(
             id = intent.getStringExtra("exam_id").orEmpty(),
@@ -205,8 +213,16 @@ internal class ExamReminderReceiver : android.content.BroadcastReceiver() {
         )
         if (exam.courseName.isBlank()) return
 
+        val settings = readSettings(context)
+        // 已投递到队列的广播不一定能由 cancelAll 撤回；尊重接收时的最新开关和权限。
+        if (!settings.enabled) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (!manager.areNotificationsEnabled()) return
         ExamReminder.ensureChannel(context)
-        val settings = loadReminderSettings(context)
         val builder = Notification.Builder(context, ExamReminder.CHANNEL_ID)
             .setContentTitle("考试提醒：${exam.courseName}")
             .setContentText("${exam.date} ${exam.timeRange} · ${exam.room.ifBlank { "线上考试" }}")
@@ -225,7 +241,6 @@ internal class ExamReminderReceiver : android.content.BroadcastReceiver() {
             builder.setFullScreenIntent(fullScreenIntent, true)
         }
 
-        val manager = context.getSystemService(NotificationManager::class.java)
         // 通知 id 与 ExamCache 去重键同构：空 id（hashCode 恒为 0）会导致多场考试通知互相覆盖
         val notificationKey = exam.id.ifBlank { "${exam.courseName}|${exam.date}|${exam.timeRange}" }
         manager.notify(notificationKey.hashCode(), builder.build())

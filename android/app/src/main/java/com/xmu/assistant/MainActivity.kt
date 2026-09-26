@@ -466,6 +466,8 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         // worker 不得以残留凭据发起 CAS（登出后幽灵登录，见 AssistantSettings）
         settings.widgetWorkerLoggedIn = false
         schedule.clearAll()
+        // 已进入 setter 的课表后台任务也必须结束后，再最终清掉共享教务 cookie。
+        settings.scoreCookieHeader = ""
         // 退出登录：清理明文课缓存、桌面小卡片摘要和手动周次，避免排课信息残留
         deleteScheduleSnapshotFile(activity)
         // 最近十次签到缓存同样按账号绑定，登出一并删除（防串号/残留）
@@ -633,7 +635,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
             return false
         }
         accountTransitionInProgress = true
-        workScope.launch(Dispatchers.IO) {
+        workScope.launchStartupSessionWork(onFinished = { recovery.finishAutoLogin(recoveryToken) }) {
             runCatching { TronclassLogin().login(accountUsername, accountPassword) }
                 .onSuccess { result -> withContext(Dispatchers.Main) {
                     try {
@@ -758,7 +760,7 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
             } else recovery.cancelProbe(probeToken)
             return
         }
-        workScope.launch(Dispatchers.IO) {
+        workScope.launchStartupSessionWork(onFinished = { recovery.cancelProbe(probeToken) }) {
             val health = SessionHealthProbe().check(capturedCookie)
             withContext(Dispatchers.Main) {
                 if (complete(decideStartupSessionAction(health, capturedPolicy, credentialsPresent))) {

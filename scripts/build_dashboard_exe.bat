@@ -12,17 +12,31 @@ set "APP_NAME=xmu-assistant"
 cd /d "%~dp0\.."
 
 if exist "%CD%\.venv\Scripts\python.exe" (
-  set PYTHON_EXE=%CD%\.venv\Scripts\python.exe
-) else (
-  where conda >nul 2>nul
-  if errorlevel 1 goto missing_interpreter
-  set PYTHON_EXE=conda run -n xmu-rollcall-dashboard python
+  set PYTHON_EXE="%CD%\.venv\Scripts\python.exe"
+  goto build
 )
 
+REM 支持 README 中的普通 Python 安装；只选择具备打包工具的解释器。
+python -c "import sys, PyInstaller; assert sys.version_info >= (3, 11)" >nul 2>nul
+if not errorlevel 1 (
+  set "PYTHON_EXE=python"
+  goto build
+)
+py -3 -c "import sys, PyInstaller; assert sys.version_info >= (3, 11)" >nul 2>nul
+if not errorlevel 1 (
+  set "PYTHON_EXE=py -3"
+  goto build
+)
+where conda >nul 2>nul
+if errorlevel 1 goto missing_interpreter
+set "PYTHON_EXE=conda run -n xmu-rollcall-dashboard python"
+
+:build
 echo Building %APP_NAME%.exe with: %PYTHON_EXE%
 echo Project root: %CD%
 
-%PYTHON_EXE% -m PyInstaller --noconfirm --clean "%CD%\xmu-assistant.spec"
+REM call 也兼容作为批处理入口的 conda；否则不会返回检查构建退出码。
+call %PYTHON_EXE% -m PyInstaller --noconfirm --clean "%CD%\xmu-assistant.spec"
 
 if errorlevel 1 (
   echo Build failed.
@@ -37,7 +51,7 @@ exit /b 0
 :missing_interpreter
 echo [错误] 未找到可用的 Python 解释器，无法打包：
 echo   - 项目根不存在 .venv\Scripts\python.exe
+echo   - python / py -3 中没有同时可用的 Python 3.11+ 和 PyInstaller
 echo   - PATH 中也没有 conda（回退方案依赖 conda 环境 xmu-rollcall-dashboard）
-echo 请先完成环境准备：参见 README「快速开始」-「从源码运行（二次开发）」的环境准备小节，
-echo   或手动创建 .venv 后重跑本脚本。
+echo 请先完成 README「开发与验证」的环境准备，并在所选 Python 中安装 PyInstaller。
 exit /b 1

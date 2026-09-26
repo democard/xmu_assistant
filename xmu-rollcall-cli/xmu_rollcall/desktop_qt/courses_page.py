@@ -10,6 +10,7 @@ DashboardWindow 持有。事件处理器 _ev_course_* 与 _EVENT_HANDLERS 表仍
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 
@@ -316,6 +317,8 @@ class CoursesPageMixin:
             if column == 4:
                 self._style_status_item(item, status_text)
                 item.setToolTip(self._course_status_tooltip(record))
+            if column == 7:
+                item.setData(Qt.ItemDataRole.UserRole, (record.course_id, record.rollcall_id))
             self.course_table.setItem(row, column, item)
 
     def _refresh_course_table(self):
@@ -391,17 +394,16 @@ class CoursesPageMixin:
         return f"共 {len(self.course_records)} 条；已签 {signed}；未签 {unsigned}；未知 {unknown}；无记录 {no_rollcalls}"
 
     def _visible_course_records(self) -> list[CourseRollcallRecord]:
-        """当前筛选（时间范围 + 只看未签）下的可见记录——导出与统计共用同一口径，
-        保证「导出即所见、统计即所见」。"""
-        records = [
-            record for record in self.course_records
-            if self._course_record_in_time_range(record)
-        ]
-        if self.only_unsigned_check.isChecked():
-            records = [
-                record for record in records
-                if self._course_status_text(record.signed_status) == "未签"
-            ]
+        """按当前表格行序导出最新记录，包含筛选与原位核实后保留的行序。"""
+        by_key = defaultdict(deque)
+        for record in self.course_records:
+            by_key[(record.course_id, record.rollcall_id)].append(record)
+        records = []
+        for row in range(self.course_table.rowCount()):
+            item = self.course_table.item(row, 7)
+            key = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            if key is not None and by_key[tuple(key)]:
+                records.append(by_key[tuple(key)].popleft())
         return records
 
     def _export_course_csv(self):

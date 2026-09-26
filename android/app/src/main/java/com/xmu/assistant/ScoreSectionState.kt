@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,7 +55,10 @@ internal class ScoreSectionState(
         },
     scoreRecordsInitial: List<XmuScoreRecord> = emptyList(),
     scoreUpdatedAtMillisInitial: Long = 0L,
+    private val persistenceDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
+    private val persistenceGate = LatestSnapshotWriteGate()
+
     val ranking = RankSectionState(activity, requestGate, sessionEpoch, sessionOwner, scope,
         loggedIn, cookieHeader, username, password, accountTransitionInProgress,
         scoreCookieHeader, setScoreCookieHeader, readRankCache, writeRankCache, show,
@@ -123,16 +127,7 @@ internal class ScoreSectionState(
                     val updatedAt = System.currentTimeMillis()
                     // 加密 prefs 写大 JSON 挪到后台线程（与课表模块同一约定）：
                     // 主线程只做内存状态更新，避免刷新完成瞬间的加密/磁盘 IO 卡顿。
-                    // 写入前校验会话世代仍有效，防止登出后陈旧数据写回（登录态"复活"）。
-                    val persistCookie = client.cookieHeader()
-                    val persistJson = xmuScoreRecordsToJson(records)
-                    scope.launch(Dispatchers.IO) {
-                        if (sessionEpoch.isCurrent(session)) {
-                            setScoreCookieHeader(persistCookie)
-                            setScoreRecordsJson(persistJson)
-                            setScoreUpdatedAtMillisPref(updatedAt)
-                        }
-                    }
+                    persistSnapshot(session, client.cookieHeader(), records, updatedAt)
                     ranking.onScoresChanged(records, fetchResult.failedTermNames.isEmpty())
                     scoreRecords = records
                     updatedAtMillis = updatedAt
@@ -151,7 +146,10 @@ internal class ScoreSectionState(
                     // 登录被服务端拒绝/限流（AcademicLoginBlockedException）时
                     // cookie 是无效中间态：**不写回**（写回会让下次操作直接 landing 死循环）。
                     if (error !is AcademicLoginBlockedException && sessionEpoch.isCurrent(session)) {
-                        setScoreCookieHeader(client.cookieHeader())
+                        // 沿用最后有效成绩与其原时间，避免旧成功任务稍后覆盖新的 cookie；
+                        // 从未成功读取时仅保存 cookie，不把失败写成一次空成绩缓存。
+                        val validRecords = scoreRecords.takeIf { it.isNotEmpty() || updatedAtMillis > 0L }
+                        persistSnapshot(session, client.cookieHeader(), validRecords, updatedAtMillis)
                     }
                     Log.e("XmuScoreDebug", "score refresh failed: ${error.javaClass.name}: ${error.message}", error)
                     refreshError = refreshFailureMessage(error)
@@ -161,6 +159,30 @@ internal class ScoreSectionState(
             releaseLoading = { loading = false },
         )
         return true
+    }
+
+    private fun persistSnapshot(
+        session: SessionRequest,
+        cookie: String,
+        records: List<XmuScoreRecord>?,
+        updatedAt: Long,
+    ) {
+        val revision = persistenceGate.nextRevision()
+        // 下一次刷新会立即读取 cookie；小值同步回写，不能等大快照的后台队列。
+        // 与正在写的快照共用本地写锁，旧任务退出后才交接新的 cookie。
+        persistenceGate.persistIfLatest(revision) {
+            if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(cookie)
+        }
+        val json = records?.let(::xmuScoreRecordsToJson) ?: return
+        scope.launch(persistenceDispatcher) {
+            // 请求门已释放时下次刷新可能先完成；成功与失败共用整组快照的顺序门。
+            persistenceGate.persistIfLatest(revision) {
+                if (sessionEpoch.isCurrent(session)) {
+                    setScoreRecordsJson(json)
+                    setScoreUpdatedAtMillisPref(updatedAt)
+                }
+            }
+        }
     }
 
     /** 生成成绩长图并分享（后台生成位图，避免主线程卡顿；生成失败明确提示不崩溃）。 */
@@ -198,6 +220,8 @@ internal class ScoreSectionState(
 
     /** 登出/换号清理：清内存状态（持久化由调用方一并清理，与拆分前一致）。 */
     fun clearAll() {
+        // setter 只执行同步本地写入；返回后调用方才可清 prefs，防止旧写复活缓存。
+        persistenceGate.invalidateAndWait()
         ranking.clearAll()
         scoreRecords = emptyList()
         loading = false

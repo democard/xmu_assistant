@@ -1,11 +1,13 @@
 package com.xmu.assistant
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
@@ -27,10 +29,7 @@ class RollcallMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "xmu助手后台监控", NotificationManager.IMPORTANCE_LOW)
-        )
+        createNotificationChannels()
         // Android 14+ (targetSdk 34+) 系统要求：两参 startForeground 在某些 ROM
         // （实测 ColorOS/Android 16 的 ForegroundServiceTypeLoggerModule 报
         // "does not have any types"）不会向下游传 FGS 类型。改三参 + 显式类型，
@@ -157,7 +156,7 @@ class RollcallMonitorService : Service() {
                             runIfActive = { action ->
                                 monitorWorkerCoordinator.runIfCurrent(token, settings.monitorDesired, action)
                             },
-                            onNotify = ::notifyRollcall,
+                            onNotify = { notifyRollcall(it) },
                             onAnswer = engine::answer,
                             onSuccess = settings::recordMonitorSuccess,
                             settingsStillCurrent = {
@@ -236,8 +235,23 @@ class RollcallMonitorService : Service() {
         }
     }
 
-    private fun notifyRollcall(event: RollcallEvent) {
+    internal fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "xmu助手后台监控", NotificationManager.IMPORTANCE_LOW)
+        )
+        // 旧通道已创建为 LOW，Android 不允许应用直接提升其重要性。提醒使用独立 ID，
+        // 常驻服务仍保持安静；后续创建不会覆盖用户对提醒通道的静音/禁用选择。
+        manager.createNotificationChannel(
+            NotificationChannel(REMINDER_CHANNEL_ID, "xmu助手签到与监控提醒", NotificationManager.IMPORTANCE_DEFAULT)
+        )
+    }
+
+    /** true 表示本地已提交系统，或远程任务已接受；远程是否送达仍由异步发送结果决定。 */
+    internal fun notifyRollcall(
+        event: RollcallEvent,
+        notify: NotificationSettings = AssistantSettings(this).notifications(),
+    ): Boolean {
         val actionUrl = "xmurollcall://rollcall/${event.id}"
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -246,9 +260,8 @@ class RollcallMonitorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         // 本地通知（快速、无网络）：留在 gate 互斥区内，保证登出/暂停时不会漏发本地提醒
-        manager.notify(
-            event.id.hashCode(),
-            Notification.Builder(this, CHANNEL_ID)
+        val localPosted = postReminderNotification(event.id.hashCode(), notify.systemEnabled) {
+            Notification.Builder(this, REMINDER_CHANNEL_ID)
                 .setContentTitle("xmu助手 签到提醒")
                 .setContentText("${event.courseTitle} / ${event.type}")
                 .setStyle(Notification.BigTextStyle().bigText(rollcallNotificationBody(event, actionUrl)))
@@ -256,14 +269,14 @@ class RollcallMonitorService : Service() {
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .build()
-        )
+        }
 
         // 第三方推送（PushPlus/QQMail）网络发送较慢（各自 15s 超时），
         // 移出互斥区到独立线程：否则登出/暂停要等几十秒（观察记录②，自由区修复）。
-        val notify = AssistantSettings(this).notifications()
+        if (!notify.pushPlusEnabled && !notify.qqMailEnabled) return localPosted
         // onDestroy 后执行器已 shutdown，提交会被拒绝（与轮询线程存在短暂竞速）；
         // 此时服务已销毁、推送无意义，记日志兜住即可，不让异常冒泡成监控失败。
-        runCatching {
+        val remoteQueued = runCatching {
             thirdPartyPushExecutor.execute {
                 // 第三方推送失败不重试不阻断本地通知，但必须留下日志：
                 // token/授权码失效后该通道会长期静默死亡，无日志则完全无法察觉。
@@ -279,21 +292,46 @@ class RollcallMonitorService : Service() {
                     }.onFailure { Log.w(TAG, "QQ 邮箱推送失败：${it.message}", it) }
                 }
             }
-        }.onFailure { Log.w(TAG, "第三方推送任务提交失败（服务已销毁）：${it.message}") }
+        }.onFailure { Log.w(TAG, "第三方推送任务提交失败（服务已销毁）：${it.message}") }.isSuccess
+        // 远程渠道沿用每事件只尝试一次的策略，避免每次轮询都排队造成重复外发。
+        // 所有渠道均不可用时返回 false，权限/设置恢复后仍可提醒尚未完成的签到。
+        return localPosted || remoteQueued
     }
 
-    private fun notifyMonitorProblem(message: String) {
+    internal fun notifyMonitorProblem(
+        message: String,
+        systemEnabled: Boolean = AssistantSettings(this).notifications().systemEnabled,
+    ): Boolean = postReminderNotification(MONITOR_PROBLEM_NOTIFICATION_ID, systemEnabled) {
+        Notification.Builder(this, REMINDER_CHANNEL_ID)
+            .setContentTitle("xmu助手 后台监控异常")
+            .setContentText(message)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(mainPendingIntent())
+            .setAutoCancel(true)
+            .build()
+    }
+
+    private fun postReminderNotification(
+        id: Int,
+        systemEnabled: Boolean,
+        notification: () -> Notification,
+    ): Boolean {
+        if (!systemEnabled) return false
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(
-            MONITOR_PROBLEM_NOTIFICATION_ID,
-            Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("xmu助手 后台监控异常")
-                .setContentText(message)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentIntent(mainPendingIntent())
-                .setAutoCancel(true)
-                .build()
-        )
+        if (!manager.areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return false
+        val channel = manager.getNotificationChannel(REMINDER_CHANNEL_ID) ?: return false
+        if (channel.importance == NotificationManager.IMPORTANCE_NONE) return false
+        return try {
+            manager.notify(id, notification())
+            true
+        } catch (error: SecurityException) {
+            // 检查后用户仍可能收回权限；不把通知拒绝升级为签到监控失败。
+            Log.w(TAG, "系统通知未获授权：${error.message}")
+            false
+        }
     }
 
     private fun updateForegroundNotification(intervalSeconds: Int) {
@@ -348,6 +386,7 @@ class RollcallMonitorService : Service() {
         private const val ANSWER_ATTEMPTS_KEY = "answer_attempts"
         private const val TAG = "RollcallMonitorService"
         private const val CHANNEL_ID = "xmu_assistant_monitor"
+        private const val REMINDER_CHANNEL_ID = "xmu_assistant_rollcall_reminders"
         private const val FOREGROUND_NOTIFICATION_ID = 1001
         private const val MONITOR_PROBLEM_NOTIFICATION_ID = 1002
         private const val ERROR_NOTIFY_THRESHOLD = 3

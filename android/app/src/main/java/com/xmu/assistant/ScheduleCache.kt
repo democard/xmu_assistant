@@ -68,7 +68,9 @@ fun xmuScheduleSnapshotFromJson(value: String): XmuScheduleSnapshot = runCatchin
     val calendars = HashMap<String, XmuAcademicCalendar>()
     root.optJSONObject("inferredCalendars")?.let { calJson ->
         calJson.keys().forEach { key ->
-            calJson.optJSONObject(key)?.let { xmuCalendarFromJson(it)?.let { cal -> calendars[key] = cal } }
+            calJson.optJSONObject(key)?.let { value ->
+                xmuCalendarFromJson(value)?.takeIf { it.termCode == key }?.let { calendars[key] = it }
+            }
         }
     }
     XmuScheduleSnapshot(
@@ -206,12 +208,22 @@ internal fun xmuCalendarToJson(calendar: XmuAcademicCalendar): JSONObject =
         .put("totalWeeks", calendar.totalWeeks)
 
 internal fun xmuCalendarFromJson(value: JSONObject): XmuAcademicCalendar? = runCatching {
-    XmuAcademicCalendar(
-        termCode = value.getString("termCode"),
+    val termCode = value.getString("termCode")
+    if (!Regex("[0-9]{4}[123]").matches(termCode)) return@runCatching null
+    // 旧缓存未写总周数时保留原默认值；显式坏值不能被 optInt 截断/溢出后当作有效日历。
+    val totalWeeks = if (value.has("totalWeeks")) {
+        value.opt("totalWeeks")?.toString()?.toIntOrNull() ?: return@runCatching null
+    } else {
+        18
+    }
+    if (totalWeeks !in 1..MAX_XMU_WEEK) return@runCatching null
+    val calendar = XmuAcademicCalendar(
+        termCode = termCode,
         academicYearLabel = value.getString("academicYearLabel"),
         semesterLabel = value.getString("semesterLabel"),
         startDate = java.time.LocalDate.parse(value.getString("startDate")),
         endDate = java.time.LocalDate.parse(value.getString("endDate")),
-        totalWeeks = value.optInt("totalWeeks", 18),
+        totalWeeks = totalWeeks,
     )
+    calendar.takeIf { !it.endDate.isBefore(it.startDate) }
 }.getOrNull()

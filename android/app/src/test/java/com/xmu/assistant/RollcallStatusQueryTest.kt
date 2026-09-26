@@ -1,6 +1,7 @@
 package com.xmu.assistant
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -51,6 +52,84 @@ class RollcallStatusQueryTest {
 
         assertEquals("网络失败：500", error.message)
         assertEquals("网络连接失败，请稍后重试", friendlyMessage(error))
+    }
+
+    @Test
+    fun `pollOnce accepts a normal empty rollcalls array without interpreting business codes`() {
+        val transport = responseTransport(200, """{"rollcalls":[],"code":401}""")
+
+        assertTrue(RollcallEngine("session=fixture", transport).pollOnce().isEmpty())
+        assertEquals(1, transport.requests.size)
+    }
+
+    @Test
+    fun `pollOnce rejects missing null and wrong typed rollcalls instead of reporting empty success`() {
+        val bodies = listOf(
+            "{}",
+            """{"code":500,"message":"temporary upstream failure"}""",
+            """{"code":401,"message":"unknown business protocol"}""",
+            """{"rollcalls":null}""",
+            """{"rollcalls":{}}""",
+            """{"rollcalls":"[]"}""",
+        )
+        for (body in bodies) {
+            val transport = responseTransport(200, body)
+            val failure = assertThrows(IllegalStateException::class.java) {
+                RollcallEngine("session=fixture", transport).pollOnce()
+            }
+
+            assertFalse("unknown business codes must not imply session expiry", failure is MainSessionExpiredException)
+            assertTrue("schema failure should explain the invalid list", failure.message.orEmpty().contains("签到列表格式异常"))
+            assertEquals(1, transport.requests.size)
+        }
+    }
+
+    @Test
+    fun `pollOnce classifies a known login form returned with HTTP 200 as session expiry`() {
+        val transport = responseTransport(200, knownLoginPage)
+
+        assertThrows(MainSessionExpiredException::class.java) {
+            RollcallEngine("session=fixture", transport).pollOnce()
+        }
+        assertEquals(1, transport.requests.size)
+    }
+
+    @Test
+    fun `unknown HTML is a read failure rather than proof of session expiry`() {
+        val transport = responseTransport(200, "<html><h1>Upstream maintenance</h1></html>")
+        val failure = assertThrows(Exception::class.java) {
+            RollcallEngine("session=fixture", transport).pollOnce()
+        }
+
+        assertFalse(failure is MainSessionExpiredException)
+    }
+
+    @Test
+    fun `known login form in student detail propagates instead of falling back to summary`() {
+        val transport = RoutingTransport(
+            """{"rollcalls":[{"rollcall_id":"n1","is_number":true,"status":"unsigned"}]}""",
+            mapOf("n1" to Spec(200, knownLoginPage)),
+        )
+
+        assertThrows(MainSessionExpiredException::class.java) {
+            RollcallEngine("session=fixture", transport).pollWithDetails("me")
+        }
+        assertEquals(2, transport.requests.size)
+        assertTrue(transport.requests.all { it.method == "GET" })
+    }
+
+    @Test
+    fun `unknown HTML detail remains unavailable without falsely expiring the whole session`() {
+        val transport = RoutingTransport(
+            """{"rollcalls":[{"rollcall_id":"n1","is_number":true,"status":"unsigned"}]}""",
+            mapOf("n1" to Spec(200, "<html><h1>Upstream maintenance</h1></html>")),
+        )
+
+        val event = RollcallEngine("session=fixture", transport).pollWithDetails("me").single()
+
+        assertEquals("n1", event.id)
+        assertNull(event.ownStatus)
+        assertEquals("", event.numberCode)
     }
 
     @Test
@@ -131,6 +210,50 @@ class RollcallStatusQueryTest {
     }
 
     @Test
+    fun `number answer login form is session expiry and never completes the rollcall`() {
+        val transport = ScriptedAnswerTransport(mutableListOf(answerResponse(200).copy(body = knownLoginPage)))
+        val engine = RollcallEngine("session=fixture", answerTransport = transport)
+        val completed = mutableSetOf<String>()
+        val attempts = mutableMapOf<String, Int>()
+        var healthSuccesses = 0
+
+        assertThrows(MainSessionExpiredException::class.java) {
+            processRollcallMonitorPoll(
+                events = listOf(numberEvent("0042")),
+                settings = RollcallSettings(autoAnswerNumber = true),
+                notifiedIds = mutableSetOf(),
+                completedIds = completed,
+                answerAttempts = attempts,
+                runIfActive = { action -> action(); true },
+                onNotify = { true },
+                onAnswer = engine::answer,
+                onSuccess = { healthSuccesses++ },
+            )
+        }
+
+        assertTrue(completed.isEmpty())
+        assertTrue(attempts.isEmpty())
+        assertEquals(0, healthSuccesses)
+        assertEquals(1, transport.requests.size)
+        assertEquals("PUT", transport.requests.single().method)
+    }
+
+    @Test
+    fun `forbidden response semantics take precedence over login looking bodies`() {
+        val details = RoutingTransport(
+            """{"rollcalls":[{"rollcall_id":"n1","is_number":true}]}""",
+            mapOf("n1" to Spec(403, knownLoginPage)),
+        )
+        assertNull(RollcallEngine("session=fixture", details).pollWithDetails().single().ownStatus)
+
+        val answers = ScriptedAnswerTransport(mutableListOf(answerResponse(403).copy(body = knownLoginPage)))
+        val rejection = assertThrows(RollcallAnswerRejectedException::class.java) {
+            RollcallEngine("session=fixture", answerTransport = answers).answer(numberEvent("0042"))
+        }
+        assertEquals(403, rejection.responseCode)
+    }
+
+    @Test
     fun `number answer keeps resource forbidden separate from expired session`() {
         val forbidden = RollcallEngine(
             "session=x",
@@ -171,12 +294,18 @@ class RollcallStatusQueryTest {
         assertEquals(1, transport.requests.size)
     }
 
-    private fun responseTransport(code: Int) = RecordingQueryTransport(
+    private val knownLoginPage = """
+        <html><form action="https://c-identity.xmu.edu.cn/auth/realms/xmu/login-actions/authenticate">
+          <input name="username"><input name="password" type="password">
+        </form></html>
+    """.trimIndent()
+
+    private fun responseTransport(code: Int, body: String = "") = RecordingQueryTransport(
         QueryHttpResponse(
             url = "https://lnt.xmu.edu.cn/api/radar/rollcalls",
             code = code,
             location = null,
-            body = "",
+            body = body,
             headers = emptyMap(),
         ),
     )

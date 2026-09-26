@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ internal class ExamSectionState(
     // null = 未指定（首次创建）：取缓存学期列表的第一个；显式空串（Saver 恢复无选择）保持空
     selectedTermInitial: String? = null,
     manuallySelectedInitial: Boolean = false,
+    private val cacheDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /** 当前选中的学期（默认最近一个有效学期；进程重建由 Saver 恢复）。 */
     var selectedTerm by mutableStateOf(selectedTermInitial.orEmpty())
@@ -93,7 +95,7 @@ internal class ExamSectionState(
         // 「缓存先行」范式）。回填仅在字段仍为初始值时写入，避免晚到的缓存
         // 覆盖静默刷新已带回的新数据或用户已切换的选择。
         val generationAtStart = stateGeneration
-        scope.launch(Dispatchers.IO) {
+        scope.launch(cacheDispatcher) {
             val restoredTerms = ExamCache.loadTerms(activity)
             val restoredTerm = selectedTermInitial ?: restoredTerms.firstOrNull().orEmpty()
             val restoredSummary = ExamCache.loadTerm(activity, restoredTerm)
@@ -101,7 +103,7 @@ internal class ExamSectionState(
                 if (stateGeneration != generationAtStart) return@withContext
                 if (validTerms.isEmpty()) validTerms = restoredTerms
                 if (selectedTerm.isBlank()) selectedTerm = restoredTerm
-                if (summary == null) summary = restoredSummary
+                if (summary == null && selectedTerm == restoredTerm) summary = restoredSummary
             }
         }
     }

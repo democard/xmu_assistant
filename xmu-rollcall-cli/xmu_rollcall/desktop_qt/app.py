@@ -451,21 +451,101 @@ class DashboardWindow(
         centered_columns: tuple[int, ...] = (),
         status_column: int | None = None,
     ):
-        # O(n) 重建：一次 setRowCount 后直接 setItem，
-        # 避免 insertRow 循环触发 Qt 每行内部重排（O(n²)）。
-        # 列布局（居中列/状态列）由调用点显式传入——通用助手不内嵌特定表知识。
-        table.setRowCount(0)
-        table.setRowCount(len(rows))
-        for row_index, values in enumerate(rows):
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                if row_ids and column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, row_ids[row_index])
-                if column in centered_columns:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if status_column is not None and column == status_column:
-                    self._style_status_item(item, str(value))
-                table.setItem(row_index, column, item)
+        if row_ids is not None and (len(row_ids) != len(rows) or len(set(row_ids)) != len(row_ids)):
+            raise ValueError("表格行标识必须唯一且与数据行数一致")
+        old_ids = [
+            table.item(row, 0).data(Qt.ItemDataRole.UserRole) if table.item(row, 0) else None
+            for row in range(table.rowCount())
+        ]
+        current_row, current_column = table.currentRow(), table.currentColumn()
+        current_id = old_ids[current_row] if 0 <= current_row < len(old_ids) else None
+        had_selection = bool(table.selectedItems())
+        top_row = table.rowAt(0)
+        top_id = old_ids[top_row] if 0 <= top_row < len(old_ids) else None
+        top_item = table.item(top_row, 0) if top_row >= 0 else None
+        top_offset = table.visualItemRect(top_item).top() if top_item else 0
+        vertical, horizontal = table.verticalScrollBar().value(), table.horizontalScrollBar().value()
+        style_signature = (status_column, tuple(sorted(self._ui_palette().items()))) if status_column is not None else None
+        style_changed = getattr(table, "_xmu_status_style", None) != style_signature
+        signals_blocked = table.blockSignals(True)
+        updates_enabled = table.updatesEnabled()
+        table.setUpdatesEnabled(False)
+        try:
+            # 空态占位跨列且不可选，不能作为第一条真实事件继续复用。
+            if table.rowCount() and table.columnSpan(0, 0) > 1:
+                table.clearSpans()
+            if row_ids is not None:
+                wanted = set(row_ids)
+                live_ids = list(old_ids)
+                for index in range(len(live_ids) - 1, -1, -1):
+                    if live_ids[index] not in wanted:
+                        table.removeRow(index)
+                        live_ids.pop(index)
+                if not live_ids:
+                    table.setRowCount(len(rows))
+                else:
+                    for index, row_id in enumerate(row_ids):
+                        if index < len(live_ids) and live_ids[index] == row_id:
+                            continue
+                        # 只移动顺序改变的行；保留其原有 item、角色数据和样式。
+                        moved = []
+                        if row_id in live_ids[index:]:
+                            old_index = live_ids.index(row_id, index)
+                            moved = [table.takeItem(old_index, column) for column in range(table.columnCount())]
+                            table.removeRow(old_index)
+                            live_ids.pop(old_index)
+                        table.insertRow(index)
+                        live_ids.insert(index, row_id)
+                        for column, item in enumerate(moved):
+                            if item is not None:
+                                table.setItem(index, column, item)
+            elif table.rowCount() != len(rows):
+                table.setRowCount(len(rows))
+
+            for row_index, values in enumerate(rows):
+                for column, value in enumerate(values):
+                    text = str(value)
+                    item = table.item(row_index, column)
+                    created = item is None
+                    text_changed = created or item.text() != text
+                    if created:
+                        item = QTableWidgetItem(text)
+                    elif text_changed:
+                        item.setText(text)
+                    if column == 0:
+                        row_id = row_ids[row_index] if row_ids is not None else None
+                        if item.data(Qt.ItemDataRole.UserRole) != row_id:
+                            item.setData(Qt.ItemDataRole.UserRole, row_id)
+                    alignment = Qt.AlignmentFlag.AlignCenter if column in centered_columns else Qt.AlignmentFlag(0)
+                    if item.textAlignment() != alignment:
+                        item.setTextAlignment(alignment)
+                    if column == status_column and (text_changed or style_changed):
+                        self._style_status_item(item, text)
+                    if created:
+                        table.setItem(row_index, column, item)
+            table._xmu_status_style = style_signature
+
+            if row_ids is not None and current_id is not None:
+                if current_id in row_ids:
+                    new_row = row_ids.index(current_id)
+                    if (table.currentRow(), table.currentColumn()) != (new_row, current_column):
+                        table.setCurrentCell(new_row, current_column)
+                    if not had_selection:
+                        table.clearSelection()
+                else:
+                    # 删除的事件不能悄悄变为另一条签到的操作目标。
+                    table.clearSelection()
+                    table.setCurrentCell(-1, -1)
+            if row_ids is not None and old_ids != row_ids and top_id in row_ids:
+                table.scrollToItem(table.item(row_ids.index(top_id), 0), QAbstractItemView.ScrollHint.PositionAtTop)
+                if table.verticalScrollMode() == QAbstractItemView.ScrollMode.ScrollPerPixel:
+                    table.verticalScrollBar().setValue(table.verticalScrollBar().value() - top_offset)
+            else:
+                table.verticalScrollBar().setValue(vertical)
+            table.horizontalScrollBar().setValue(horizontal)
+        finally:
+            table.blockSignals(signals_blocked)
+            table.setUpdatesEnabled(updates_enabled)
 
     def _style_status_item(self, item: QTableWidgetItem, status: str):
         pal = self._ui_palette()
@@ -910,6 +990,13 @@ class DashboardWindow(
     def skip_selected_rollcall(self):
         event_id = self._selected_event_id()
         if event_id:
+            rollcall = self.events_by_id.get(event_id)
+            if rollcall is None:
+                return
+            # 跳过是本轮会话的自动处理决定，不能被下一次人数更新重新武装。
+            # 先使任务令牌失效，晚到的取消回执也不得把界面翻回「待处理」。
+            self._auto_answer_attempted_rollcalls.add(rollcall.rollcall_id)
+            self._auto_answer_inflight_rollcalls.pop(rollcall.rollcall_id, None)
             self._cancel_pending_answer(event_id)
             self._update_event_result(event_id, "已跳过", "用户手动跳过")
 
@@ -1036,6 +1123,7 @@ class DashboardWindow(
             self._emit((
                 "answer_result", event_id, False, "已退出登录",
                 auto_context is None, False, (auto_context or {}).get("task_token"),
+                source_session,
             ))
             return
         ok = False
@@ -1051,6 +1139,7 @@ class DashboardWindow(
                         self._emit((
                             "answer_result", event_id, False, "已取消", False, False,
                             (auto_context or {}).get("task_token"),
+                            source_session,
                         ))
                         return
                 finally:
@@ -1071,6 +1160,7 @@ class DashboardWindow(
                 self._emit((
                     "answer_result", event_id, False, "已取消（登录状态已变更）",
                     False, False, (auto_context or {}).get("task_token"),
+                    source_session,
                 ))
                 return
             number_code = event.number_code
@@ -1082,6 +1172,7 @@ class DashboardWindow(
                     self._emit((
                         "answer_result", event_id, False, reason, False, terminal,
                         auto_context.get("task_token"),
+                        source_session,
                     ))
                     return
                 number_code = checked_code or number_code
@@ -1095,13 +1186,14 @@ class DashboardWindow(
             if session_expired:
                 # 会话过期是终态：与监控过期分支一致，走后台错误通知引导重新登录
                 # （线程安全：仅 emit，不在 worker 线程内碰 Qt 控件）
-                self._emit(("error", "应答失败：登录已过期，请重新登录"))
+                self._emit(("error", "应答失败：登录已过期，请重新登录", None, source_session))
         finally:
             # 把 worker 克隆内新增/旋转的 cookie 合并回主会话（GUI 线程收到后单点写）
             self._emit(("merge_session_cookies", session, worker_account_id, None, source_session))
         self._emit((
             "answer_result", event_id, ok, detail, True, True,
             (auto_context or {}).get("task_token"),
+            source_session,
         ))
 
     def _auto_context_current(self, event: RollcallEvent, context: dict) -> tuple[bool, str, bool]:
@@ -1115,6 +1207,10 @@ class DashboardWindow(
             return False, "已取消（监控或自动策略已变更）", False
         if not self._auto_answer_enabled:
             return False, "已取消（自动签到已关闭）", False
+        if event.rollcall_id in getattr(self, "_auto_answer_attempted_rollcalls", set()):
+            # 包括尚未注册延迟取消信号的 worker，以及明细复核期间的手动跳过。
+            # 显式手动提交不经过自动守卫，用户仍可选择处理已跳过的签到。
+            return False, "已取消（该签到已处理或跳过）", True
         if event.rollcall_type not in ("数字签到", "雷达签到"):
             return False, "已取消（该签到类型不支持自动处理）", True
         if (
@@ -1585,6 +1681,9 @@ class DashboardWindow(
             self._auto_answer_attempted_rollcalls.add(rollcall_id)
             self._update_event_result(event_id, "已跳过", "签到已结束")
             return
+        if rollcall.result == "已跳过" and rollcall.detail == "用户手动跳过":
+            # 保留明确的用户选择；真实已签到/已请假/结束状态仍由上方更新。
+            return
         if progress.own_status_ambiguous:
             self._update_event_result(event_id, "待处理", "本人状态未知或冲突，等待下轮核实")
             return
@@ -1637,6 +1736,11 @@ class DashboardWindow(
             # 但 metric_last_result 会被无条件改写、通知不该再发——丢弃留痕
             #（与 _ev_poll/_ev_rollcall 同族守卫）。
             self.log(f"忽略登出后迟到的应答结果：{event[3]}")
+            return
+        # 同账号重登可能保留事件表，换号后指标仍会被旧结果改写。必须在取事件、
+        # 清自动任务标记或发通知前核对来源，覆盖请求在途和结果排队两种交错。
+        if len(event) > 7 and self.session is not event[7]:
+            self.log("忽略旧会话应答任务的迟到结果。")
             return
         event_id = event[1]
         ok = event[2]
@@ -1893,6 +1997,11 @@ class DashboardWindow(
             #（与 poll/rollcall/monitor_status/answer_result 同族守卫），丢弃留痕。
             self.log(f"忽略登出后迟到的错误事件：{event[1]}")
             return
+        # 应答错误携带来源 Session；不能把旧会话的过期通知投递给新登录。
+        # 监控事件仍使用原来的 worker_token，旧元组格式保持兼容。
+        if len(event) > 3 and self.session is not event[3]:
+            self.log("忽略旧会话应答任务的迟到错误。")
+            return
         worker_token = event[2] if len(event) > 2 else None
         if worker_token is not None and (
             worker_token is not self.monitor_stop_event or worker_token.is_set()
@@ -1908,10 +2017,14 @@ class DashboardWindow(
     def _ev_notification_result(self, event):
         ok = event[1]
         detail = event[2]
-        if self.session is None:
-            # 登出后在途通知 worker 的晚到结果：不得改写通知页摘要/弹 Toast
-            #（与 error/answer_result 等已工作会话事件同族守卫），丢弃留痕。
-            self.log(f"忽略登出后迟到的通知结果：{detail}")
+        # 新事件携带源会话，None 专指用户主动测试（无需登录）；旧三元组
+        # 保留登出守卫。对象身份同时隔离同一账号重新登录后的旧回执。
+        source_session = event[3] if len(event) > 3 else self.session
+        if (len(event) == 3 and self.session is None) or (
+            source_session is not None and self.session is not source_session
+        ):
+            context = "登出后" if self.session is None else "旧会话"
+            self.log(f"忽略{context}迟到的通知结果：{detail}")
             return
         self.notification_summary.setText(detail)
         self.log(("通知发送成功：" if ok else "通知发送失败：") + detail)
@@ -2008,7 +2121,7 @@ class DashboardWindow(
             if settings["system"]["enabled"]:
                 self._show_system_notification(message.title, message.body)
             if settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]:
-                self._send_external_notification(message, "后台异常提醒已发送")
+                self._send_external_notification(message, "后台异常提醒已发送", settings=settings)
         except Exception as exc:
             self.log(f"后台异常提醒发送失败：{exc}")
 
@@ -2038,7 +2151,7 @@ class DashboardWindow(
             if settings["system"]["enabled"]:
                 self._show_system_notification(message.title, message.body)
             if settings["pushplus"]["enabled"] or settings["qq_mail"]["enabled"]:
-                self._send_external_notification(message)
+                self._send_external_notification(message, settings=settings)
         except Exception as exc:
             self.log(f"通知准备失败：{exc}")
 

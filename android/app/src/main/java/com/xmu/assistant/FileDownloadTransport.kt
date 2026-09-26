@@ -1,6 +1,8 @@
 package com.xmu.assistant
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -27,12 +29,17 @@ internal class OkHttpFileDownloadTransport(
         var currentHeaders = request.headers
         // 断点续传：目标 .part 已有字节则带 Range 续传（平台实测返回 206）。
         // Range 不是凭据，跨源跳转剥离 Cookie 时必须保留，否则 CDN 续传失效。
-        val resumeFrom = if (target.exists()) target.length() else 0L
+        var resumeFrom = if (target.exists()) target.length() else 0L
+        var restartedAfterInvalidRange = false
         var attempt = 0
-        while (attempt < MAX_REDIRECTS) {
+        while (attempt < MAX_REDIRECTS + (if (restartedAfterInvalidRange) 1 else 0)) {
             attempt += 1
             val headers = if (resumeFrom > 0) {
                 currentHeaders + mapOf("Range" to "bytes=$resumeFrom-")
+            } else if (restartedAfterInvalidRange) {
+                currentHeaders.filterKeys {
+                    !it.equals("Range", ignoreCase = true) && !it.equals("If-Range", ignoreCase = true)
+                }
             } else {
                 currentHeaders
             }
@@ -57,12 +64,21 @@ internal class OkHttpFileDownloadTransport(
                     currentUrl = next
                     return@use // 继续下一跳
                 }
+                // 文件已变或断点超出文件末尾时，原 Range 不能恢复：仅从零重试一次。
+                // 旧断点先保留，重下失败/挑战页不得破坏已有内容。
+                if (it.code == 416 && resumeFrom > 0 && !restartedAfterInvalidRange) {
+                    resumeFrom = 0L
+                    restartedAfterInvalidRange = true
+                    return@use
+                }
                 val contentTypeHeader = it.header("Content-Type").orEmpty()
                 val result = FileDownloadResult(
                     code = it.code,
                     contentType = contentTypeHeader,
                 )
-                if (it.code in 200..299) {
+                // GET 下载只接纳完整文件或已校验的范围响应。204/202 等状态
+                // 不携带可用文件，不能用空正文覆盖旧断点。
+                if (it.code == 200 || it.code == 206) {
                     // 体检报告 P0-2：网关/WAF 可能以 200/206 + text/html 返回挑战页或登录页，
                     // application/json 错误载荷同理。这类「非文件载荷」绝不能写入 .part——
                     // 否则重试时会以 HTML 长度作 Range 起点追加真实字节，拼出损坏文件且
@@ -109,13 +125,34 @@ internal class OkHttpFileDownloadTransport(
                                     (declaredLength == null || declaredLength == expectedChunk)
                                 ) { "下载范围数据不完整" }
                                 check(range.endExclusive == range.total) { "下载范围未到达文件末尾" }
-                                java.io.FileOutputStream(target, appending).use { output ->
-                                    chunk.inputStream().use { input ->
-                                        input.copyTo(output, COPY_BUFFER_BYTES)
+                                if (restartedAfterInvalidRange) {
+                                    Files.move(chunk.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                                } else {
+                                    java.io.FileOutputStream(target, appending).use { output ->
+                                        chunk.inputStream().use { input ->
+                                            input.copyTo(output, COPY_BUFFER_BYTES)
+                                        }
                                     }
                                 }
                             } finally {
                                 chunk.delete()
+                            }
+                        } else if (restartedAfterInvalidRange) {
+                            // 416 后的全量响应必须完整校验后替换；短流仍保留原断点。
+                            val replacement = File.createTempFile("xmu-download-", ".download-chunk", target.parentFile)
+                            try {
+                                body.byteStream().use { input ->
+                                    replacement.outputStream().use { output ->
+                                        input.copyTo(output, COPY_BUFFER_BYTES)
+                                    }
+                                }
+                                val expectedLength = it.header("Content-Length")?.toLongOrNull() ?: -1L
+                                check(expectedLength < 0 || replacement.length() == expectedLength) {
+                                    "下载不完整（收到 ${replacement.length()}/$expectedLength 字节），已保留原断点"
+                                }
+                                Files.move(replacement.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                            } finally {
+                                replacement.delete()
                             }
                         } else {
                             body.byteStream().use { input ->

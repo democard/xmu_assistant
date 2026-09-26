@@ -305,7 +305,7 @@ class CoursewareClient private constructor(
             // 与桌面端 courseware._download_url 分类对齐：CDN 防盗链 403 不应引发 CAS 续登风暴
             if (result.code == 401) throw MainSessionExpiredException()
             if (result.code == 403) error("课件下载被平台拒绝（无下载权限）")
-            if (result.code !in 200..299) error("网络失败")
+            if (result.code != 200 && result.code != 206) error("平台未返回可下载文件（HTTP ${result.code}）")
             val contentType = result.contentType.lowercase()
             // The transport deliberately leaves HTML/JSON/XHTML challenge
             // payloads out of the .part file.  Treat all of them as failures

@@ -175,18 +175,19 @@ class SaveSessionTests(unittest.TestCase):
         import requests
         from xmu_rollcall import utils
 
-        original = requests.utils.dict_from_cookiejar
+        observed_locks = []
 
-        def inspect_lock(jar):
-            self.assertTrue(utils.SESSION_COOKIE_LOCK._is_owned())
-            return original(jar)
+        class TrackedCookieJar(requests.cookies.RequestsCookieJar):
+            def __iter__(self):
+                observed_locks.append(utils.SESSION_COOKIE_LOCK._is_owned())
+                return super().__iter__()
 
         session = requests.Session()
+        session.cookies = TrackedCookieJar()
         session.cookies.set("session_token", "abc123")
-        with tempfile.TemporaryDirectory() as directory, patch.object(
-            requests.utils, "dict_from_cookiejar", side_effect=inspect_lock
-        ):
+        with tempfile.TemporaryDirectory() as directory:
             utils.save_session(session, str(Path(directory) / "cookies.json"))
+        self.assertEqual(observed_locks, [True])
 
     def test_load_replaces_cookiejar_under_session_lock(self):
         import tempfile

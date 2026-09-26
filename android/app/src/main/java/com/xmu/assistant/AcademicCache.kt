@@ -15,6 +15,14 @@ internal class LatestSnapshotWriteGate {
 
     fun nextRevision(): Long = latestRevision.incrementAndGet()
 
+    fun currentRevision(): Long = latestRevision.get()
+
+    /** 后台读取只能接替它发起时的版本，不能抢走期间已被前台推进的新版本。 */
+    fun advanceIfCurrent(revision: Long): Boolean = latestRevision.compareAndSet(revision, revision + 1)
+
+    /** 清理方等待已进入的同步本地写入结束，再作废其余排队快照后清空持久化。 */
+    fun invalidateAndWait(): Long = synchronized(writeLock) { nextRevision() }
+
     fun persistIfLatest(revision: Long, persist: () -> Unit): Boolean = synchronized(writeLock) {
         if (revision != latestRevision.get()) return@synchronized false
         persist()

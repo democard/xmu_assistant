@@ -6,6 +6,8 @@
 依据 2026-08-20 onedir 实测：可删未用模块合计约 42 MB（onedir）。
 """
 import re
+import sys
+from pathlib import Path
 
 block_cipher = None
 
@@ -84,6 +86,10 @@ _EXCLUDE_MODULES = [
 ]
 
 from PyInstaller.utils.hooks import collect_submodules
+
+# collect_submodules 在 Analysis 应用 pathex 前执行，优先扫描当前源码，
+# 避免误用全局已安装的旧版包并生成失效的 hidden imports。
+sys.path.insert(0, str(Path(SPECPATH) / 'xmu-rollcall-cli'))
 
 a = Analysis(
     ['scripts/xmu_dashboard_launcher.py'],

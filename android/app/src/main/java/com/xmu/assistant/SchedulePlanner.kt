@@ -33,9 +33,9 @@ fun parseXmuWeekExpression(value: String): ParsedWeekExpression {
         .replace("/", ",")
         .replace("|", ",")
         .split(',')
-        .map { it.trim().replace(Regex("\\s+"), "") }
+        .map { token -> token.filterNot { it.isWhitespace() || it in "()（）" } }
         .filter(String::isNotBlank)
-    val parityMarkers = tokens.mapNotNull { token ->
+    val parityMarkers = tokens.filterNot { WEEK_NUMBER_PATTERN.containsMatchIn(it) }.mapNotNull { token ->
         when {
             token.contains("单双") -> null
             token.contains("单周") || token.endsWith("单") -> 1
@@ -45,7 +45,7 @@ fun parseXmuWeekExpression(value: String): ParsedWeekExpression {
     }.distinct()
     // Some XMU responses put the parity marker in its own suffix token:
     // "1-16周,单周". Only apply it globally when there is one unambiguous
-    // marker; mixed expressions must be handled token by token.
+    // standalone marker; a marker attached to a numbered range only filters that range.
     val globalParity = parityMarkers.singleOrNull()
     val result = linkedSetOf<Int>()
     var sawValidRange = false
@@ -87,12 +87,14 @@ fun parseXmuWeekExpression(value: String): ParsedWeekExpression {
             WEEK_NUMBER_PATTERN.findAll(token)
                 .mapNotNull { it.value.toIntOrNull() }
                 .forEach { week ->
-                    sawValidRange = true
+                    if (week > 0) sawValidRange = true
                     if (week in 1..MAX_XMU_WEEK && (parity == null || week % 2 == parity)) result += week
                 }
-            }
+        }
     }
-    return ParsedWeekExpression(result, parseable = sawValidRange && result.isNotEmpty())
+    // 有效表达式经单双周或范围上限过滤后可能为空，仍须区别于未知周次：
+    // 下游对未知周次会显示全学期，不能把明确的空集反向扩成每周上课。
+    return ParsedWeekExpression(result, parseable = sawValidRange)
 }
 
 private val WEEK_RANGE_PATTERN =

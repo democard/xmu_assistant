@@ -161,6 +161,8 @@ internal class RankSectionState(
                     ensureActive(); check(active()) { "会话已改变" }
                     val pending = working.pending ?: error("申请状态缺失")
                     val records = withContext(Dispatchers.IO) { client.records() }
+                    // 最后一次查询也可能跨过换号/清空；在解释结果或显示等待提示前重新验世代。
+                    ensureActive(); check(active()) { "会话已改变" }
                     // 多笔新申请并存时无法归因本次申请，但不妨碍兜底采用本范围最近记录
                     val record = try { identifyRankRecord(records, pending) }
                     catch (e: IllegalStateException) { ambiguity = e.message; null }

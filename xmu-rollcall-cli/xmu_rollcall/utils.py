@@ -1,7 +1,10 @@
+import copy
 import json
 import os
 import threading
 import time as _time
+from http.cookiejar import Cookie
+from urllib.parse import urlsplit
 
 import requests
 
@@ -152,7 +155,7 @@ def clone_session(src: requests.Session) -> requests.Session:
 
     用途：后台多线程（如课件 8 线程池）不应与主 Session 共用同一 cookiejar——
     requests 不保证 Session 线程安全，并发 Set-Cookie 会竞争写入 cookiejar。
-    clone 在 GUI 线程或 worker 入口生成（读 src.cookies 是快照式 dict 复制），
+    clone 在 GUI 线程或 worker 入口生成（逐条保留 Cookie 的作用域和属性），
     worker 内的请求与可能的新 Set-Cookie 都落到独立 cookiejar，互不干扰。
 
     非 requests.Session 实例（如测试用的 fake session，仅实现 .get 拦截）原样返回，
@@ -161,12 +164,11 @@ def clone_session(src: requests.Session) -> requests.Session:
     if not isinstance(src, requests.Session):
         return src
     cloned = requests.Session()
-    # dict_from_cookiejar → cookiejar_from_dict：快照式复制，不共享底层结构。
-    # 持 SESSION_COOKIE_LOCK：读主会话 jar 时与 GUI 线程的 merge 回写互斥。
+    # 不经 name→value 字典：同名 Cookie 可以分别属于身份域、LNT 或不同路径。
+    # 字典往返会丢 domain/path/secure，产生向任意下载域发送的无域 Cookie。
     with SESSION_COOKIE_LOCK:
-        cloned.cookies = requests.utils.cookiejar_from_dict(
-            requests.utils.dict_from_cookiejar(src.cookies)
-        )
+        for cookie in src.cookies:
+            cloned.cookies.set_cookie(_copy_cookie(cookie))
     cloned.headers.update(src.headers)
     # trust_env 随源会话：运行时 proxy_guard 补丁已令新会话 trust_env=False，
     # 克隆复制源值即与全局禁用系统代理口径一致；未打补丁环境（库形态）随源。
@@ -185,7 +187,14 @@ def merge_cookies(dst: requests.Session, src: requests.Session) -> None:
     """
     with SESSION_COOKIE_LOCK:
         for cookie in src.cookies:
-            dst.cookies.set_cookie(cookie)
+            dst.cookies.set_cookie(_copy_cookie(cookie))
+
+
+def _copy_cookie(cookie: Cookie) -> Cookie:
+    cloned = copy.copy(cookie)
+    # copy.copy 本身仍共享 HttpOnly/SameSite 等扩展属性字典。
+    cloned._rest = copy.deepcopy(cookie._rest)
+    return cloned
 
 
 def merge_worker_session_cookies(
@@ -316,6 +325,85 @@ headers = {
 }
 
 
+_COOKIE_FIELDS = (
+    "version", "name", "value", "port", "port_specified", "domain", "domain_specified",
+    "domain_initial_dot", "path", "path_specified", "secure", "expires", "discard",
+    "comment", "comment_url", "rfc2109",
+)
+_COOKIE_FLAGS = (
+    "port_specified", "domain_specified", "domain_initial_dot", "path_specified",
+    "secure", "discard", "rfc2109",
+)
+
+
+def _cookie_cache_payload(jar) -> dict:
+    """在 SESSION_COOKIE_LOCK 内取可独立序列化的完整快照。"""
+    cookies = []
+    for cookie in jar:
+        record = {field: getattr(cookie, field) for field in _COOKIE_FIELDS}
+        record["rest"] = copy.deepcopy(cookie._rest)
+        cookies.append(record)
+    return {"version": 2, "cookies": cookies}
+
+
+def _validate_cached_cookie_header_text(name: str, value: str | None) -> None:
+    # Cookie 名称和值会直接组成 HTTP 请求头。损坏缓存中的换行不能穿过
+    # 恢复入口，否则会覆盖有效 jar，并在随后请求时触发客户端 ValueError。
+    if any("\r" in text or "\n" in text for text in (name, value) if text is not None):
+        raise ValueError("会话缓存 Cookie 文本包含无效换行")
+
+
+def _cookie_from_record(record) -> Cookie:
+    if not isinstance(record, dict) or set(record) != set(_COOKIE_FIELDS) | {"rest"}:
+        raise ValueError("会话缓存 Cookie 字段不完整")
+    if type(record["version"]) is not int or record["version"] not in (0, 1):
+        raise ValueError("会话缓存 Cookie 版本无效")
+    if any(type(record[field]) is not bool for field in _COOKIE_FLAGS):
+        raise ValueError("会话缓存 Cookie 标志无效")
+    for field in ("name", "domain", "path"):
+        if not isinstance(record[field], str):
+            raise ValueError("会话缓存 Cookie 作用域无效")
+    if not record["name"]:
+        raise ValueError("会话缓存 Cookie 名称无效")
+    for field in ("value", "port", "comment", "comment_url"):
+        if record[field] is not None and not isinstance(record[field], str):
+            raise ValueError("会话缓存 Cookie 文本无效")
+    _validate_cached_cookie_header_text(record["name"], record["value"])
+    if record["expires"] is not None and type(record["expires"]) is not int:
+        raise ValueError("会话缓存 Cookie 有效期无效")
+    if not isinstance(record["rest"], dict):
+        raise ValueError("会话缓存 Cookie 扩展属性无效")
+    return Cookie(**record)
+
+
+def _cookiejar_from_cache(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("会话缓存格式无效")
+    jar = requests.cookies.RequestsCookieJar()
+    versioned = (
+        ("version" in payload and not isinstance(payload["version"], (str, type(None))))
+        or isinstance(payload.get("cookies"), list)
+    )
+    if versioned:
+        if (set(payload) != {"version", "cookies"} or type(payload.get("version")) is not int
+                or payload["version"] != 2 or not isinstance(payload["cookies"], list)):
+            raise ValueError("不支持的会话缓存版本")
+        for record in payload["cookies"]:
+            jar.set_cookie(_cookie_from_record(record))
+    else:
+        # 旧 name→value 缓存已无法恢复原域。仅用于 HTTPS LNT 会话恢复，
+        # 不猜测身份域归属，也不把它扩散到兄弟域或第三方课件地址。
+        domain = urlsplit(base_url).hostname
+        for name, value in payload.items():
+            if not isinstance(name, str) or not name or (value is not None and not isinstance(value, str)):
+                raise ValueError("旧会话缓存 Cookie 无效")
+            _validate_cached_cookie_header_text(name, value)
+            cookie = requests.cookies.create_cookie(name, value, domain=domain, path="/", secure=True)
+            cookie.domain_specified = False
+            jar.set_cookie(cookie)
+    return jar
+
+
 def save_session(sess: requests.Session, path: str):
     tmp_path = f"{path}.tmp"
     # 与 maintenance.cleanup_orphaned_cookie_files 互斥：登录落盘的新账号
@@ -324,9 +412,9 @@ def save_session(sess: requests.Session, path: str):
         try:
             # 固定锁顺序：CONFIG_LOCK → SESSION_COOKIE_LOCK；仅快照主 jar 时持 cookie 锁。
             with SESSION_COOKIE_LOCK:
-                cookie_dict = requests.utils.dict_from_cookiejar(sess.cookies)
+                cookie_payload = _cookie_cache_payload(sess.cookies)
             # cookie 等同于登录态：整个 JSON 内容加密落盘（与凭据字段同安全级别）
-            plaintext = json.dumps(cookie_dict)
+            plaintext = json.dumps(cookie_payload)
             protected = secrets.protect(plaintext)
             # 原子写（tmp + os.replace）：直接截断写在进程中途被杀时会留下半个密文，
             # 下次自动恢复必败且无提示；与 config.py 的写盘姿势保持一致。
@@ -355,8 +443,9 @@ def load_session(sess: requests.Session, path: str):
             raw = file.read()
         # 兼容旧明文：无 dpapi: 前缀直接按 JSON 解析；有前缀先解密
         plaintext = secrets.unprotect(raw) if raw.startswith(secrets.DPAPI_PREFIX) else raw
-        cookie_dict = json.loads(plaintext)
-        restored = requests.utils.cookiejar_from_dict(cookie_dict)
+        cookie_payload = json.loads(plaintext)
+        # 完整解析成功后才替换现有 jar，损坏缓存不得留下半恢复的会话。
+        restored = _cookiejar_from_cache(cookie_payload)
         with SESSION_COOKIE_LOCK:
             sess.cookies = restored
         return True

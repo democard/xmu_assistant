@@ -378,6 +378,36 @@ class FetchStudentRollcallDetailTests(unittest.TestCase):
 
         self.assertIsNone(fetch_student_rollcall_detail(Session(), ""))
 
+    def test_401_detail_is_terminal_session_expiry(self):
+        response = self._response(status_code=401)
+        with patch.object(core_module, "response_session_expired", return_value=False):
+            session = unittest.mock.Mock()
+            session.get.return_value = response
+            with self.assertRaises(SessionExpiredError):
+                fetch_student_rollcall_detail(session, "r1")
+            session.get.assert_called_once()
+
+    def test_resource_errors_do_not_expire_the_session(self):
+        for status in (403, 404, 429, 500):
+            with self.subTest(status=status):
+                session = unittest.mock.Mock()
+                session.get.return_value = self._response(status_code=status)
+                self.assertIsNone(fetch_student_rollcall_detail(session, "r1"))
+
+    def test_transport_failures_remain_unknown_but_programming_errors_surface(self):
+        import requests
+        for error in (requests.Timeout("offline"), OSError("socket unavailable")):
+            with self.subTest(error=error):
+                session = unittest.mock.Mock()
+                session.get.side_effect = error
+                self.assertIsNone(fetch_student_rollcall_detail(session, "r1"))
+        for error in (ValueError("broken request construction"), SessionExpiredError("expired")):
+            with self.subTest(error=error):
+                session = unittest.mock.Mock()
+                session.get.side_effect = error
+                with self.assertRaises(type(error)):
+                    fetch_student_rollcall_detail(session, "r1")
+
 
 class TestFetchStageOneStopOnExpired(unittest.TestCase):
     def test_stage_one_session_expired_stops_queued_courses(self):

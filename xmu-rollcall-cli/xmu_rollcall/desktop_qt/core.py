@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
+import requests
+
 from ..config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     MAX_POLL_INTERVAL_SECONDS,
@@ -152,7 +154,11 @@ class MonitorWorker(threading.Thread):
                     for event in events
                 )
                 self.last_payload = payload
+                # 先公布本轮全部新事件，避免第一条明细 GET 的网络等待遮住
+                # 其余签到的首次提醒；明细阶段仍逐项检查暂停/换号信号。
                 for event in events:
+                    if self.stop_event.is_set():
+                        break
                     if not event.rollcall_id:
                         continue
                     if event.rollcall_id not in self.seen_rollcall_ids:
@@ -163,6 +169,11 @@ class MonitorWorker(threading.Thread):
                             self.seen_rollcall_ids.popitem(last=False)
                         self.emit(("rollcall", event, self.stop_event))
 
+                for event in events:
+                    if self.stop_event.is_set():
+                        break
+                    if not event.rollcall_id:
+                        continue
                     # 同一轮明细 GET 同时供人数/比例、本人状态和数字签到码使用，
                     # 避免发现数字签到时再由独立 worker 重复读取一次。
                     detail = fetch_student_rollcall_detail(self.session, event.rollcall_id)
@@ -490,12 +501,12 @@ def fetch_student_rollcall_detail(session, rollcall_id: str):
             # 统一超时口径（体检 P2 遗留）：原标量 12 会同时作用于连接与读取
             timeout=API_TIMEOUT,
         )
-    except Exception:
+    except (requests.RequestException, OSError):
         return None
     # 会话过期严格分流（风控红线，与 fetch_first_json/courseware 同语义）：
-    # 身份域 302/登录页按类型化异常上抛——否则 L1 批量核实会对过期会话连打
+    # 401、身份域 302/登录页按类型化异常上抛——否则 L1 批量核实会对过期会话连打
     # N 个必败请求空跑登录域。其余非 200 保持"资源级失败"返回 None。
-    if response_session_expired(response):
+    if response.status_code == 401 or response_session_expired(response):
         raise SessionExpiredError("签到明细获取失败：登录已过期，请重新登录")
     if response.status_code == 200:
         try:

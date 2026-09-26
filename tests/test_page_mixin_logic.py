@@ -228,6 +228,26 @@ class _RecordingTable:
         self.set_row_calls: list[int] = []
         self.insert_row_calls: list[int] = []
         self.items: list[tuple[int, int]] = []
+        self.current_cell = (-1, -1)
+
+    def currentRow(self) -> int:
+        return self.current_cell[0]
+
+    def currentColumn(self) -> int:
+        return self.current_cell[1]
+
+    def setCurrentCell(self, row: int, column: int, *_flags) -> None:
+        self.current_cell = (row, column)
+
+    def selectionModel(self):
+        return self
+
+    def selectedRows(self):
+        # 此用例只验证行预留次数；真实选择保持由 Qt 行为模拟覆盖。
+        return []
+
+    def clearSelection(self) -> None:
+        pass
 
     def rowCount(self) -> int:
         return self.row_count

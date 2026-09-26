@@ -9,6 +9,7 @@ import threading
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -53,6 +54,8 @@ WINDOWS_RESERVED_NAMES = {
 
 # available_path 同名查名的防御性上限，与安卓 CoursewareClient.reserveDownloadFiles 一致（D3）
 MAX_AVAILABLE_PATH_ATTEMPTS = 50
+_DOWNLOAD_ALLOCATION_LOCK = threading.RLock()
+_RESERVED_DOWNLOAD_PATHS: set[Path] = set()
 
 
 @dataclass(frozen=True)
@@ -423,6 +426,9 @@ def fetch_courseware(session, course_id: str) -> list[CoursewareItem]:
         if thread_session is None:
             thread_session = clone_session(session)
             thread_local.session = thread_session
+            if thread_session is not session:
+                with worker_sessions_lock:
+                    worker_sessions.callback(thread_session.close)
         try:
             detail = _get_json(thread_session, f"/api/activities/{activity['id']}", "课件详情读取")
             return _courseware_items_from_detail(course_id, activity, detail, module_names, syllabus_names)
@@ -437,8 +443,11 @@ def fetch_courseware(session, course_id: str) -> list[CoursewareItem]:
     items: list[CoursewareItem] = []
     if ordered_activities:
         thread_local = threading.local()
+        worker_sessions_lock = threading.Lock()
         max_workers = min(COURSEWARE_DETAIL_WORKERS, len(ordered_activities))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Exit the executor first: a failed detail must not close a sibling's
+        # connection while that worker is still reading its response.
+        with ExitStack() as worker_sessions, ThreadPoolExecutor(max_workers=max_workers) as executor:
             for activity_items in executor.map(load_activity_items, ordered_activities):
                 items.extend(activity_items)
 
@@ -454,6 +463,10 @@ def sanitize_filename(filename: str, fallback: str = "courseware") -> str:
     return cleaned[:240]
 
 
+def _download_path_keys(target: Path) -> tuple[Path, Path]:
+    return target.resolve(), target.with_name(target.name + ".part").resolve()
+
+
 def available_path(directory: Path, filename: str) -> Path:
     """在目录里挑一个不冲突的落地文件名（同名自动加序号）。
 
@@ -461,20 +474,36 @@ def available_path(directory: Path, filename: str) -> Path:
     本函数只做「查名」（exists/.part 探测），不碰磁盘写入，理论上不会失败到上限；
     上限是防御性兜底——避免极端目录（同名 >= MAX 个）下无限循环，命中即抛清晰错误。
     """
-    target = directory / sanitize_filename(filename)
-    # 正式文件不存在即复用原名（即使有同名 .part 残留）：
-    # .part 是断点续传的依据——若因它存在而换名，重试永远从零开始，
-    # 断点续传形同虚设。并发同名下载由调用方单 worker 串行保证。
-    if not target.exists():
-        return target
-    stem, suffix = target.stem, target.suffix
-    number = 2
-    while number <= MAX_AVAILABLE_PATH_ATTEMPTS:
-        candidate = directory / f"{stem} ({number}){suffix}"
-        if not candidate.exists() and not candidate.with_name(candidate.name + ".part").exists():
-            return candidate
-        number += 1
+    with _DOWNLOAD_ALLOCATION_LOCK:
+        target = directory / sanitize_filename(filename)
+        # 原名和编号名都复用失败断点；活跃任务通过进程内占位排除，不能
+        # 仅靠 .part 是否存在判断，否则编号下载每次重试都会换名从零开始。
+        if not target.exists() and not _RESERVED_DOWNLOAD_PATHS.intersection(_download_path_keys(target)):
+            return target
+        stem, suffix = target.stem, target.suffix
+        number = 2
+        while number <= MAX_AVAILABLE_PATH_ATTEMPTS:
+            candidate = directory / f"{stem} ({number}){suffix}"
+            if not candidate.exists() and not _RESERVED_DOWNLOAD_PATHS.intersection(_download_path_keys(candidate)):
+                return candidate
+            number += 1
     raise RuntimeError("目录内同名课件过多，请清理后重试")
+
+
+@contextmanager
+def _reserve_download_path(directory: Path, filename: str):
+    # 仅分配时持锁，网络和写盘不阻塞其它下载。规范化路径让不同相对写法
+    # 使用同一占位；finally 覆盖请求启动失败、写盘失败和正常返回。
+    with _DOWNLOAD_ALLOCATION_LOCK:
+        target = available_path(directory, filename)
+        # 正式目标也可能恰好是另一任务的 .part；两种路径必须一起占用。
+        keys = _download_path_keys(target)
+        _RESERVED_DOWNLOAD_PATHS.update(keys)
+    try:
+        yield target
+    finally:
+        with _DOWNLOAD_ALLOCATION_LOCK:
+            _RESERVED_DOWNLOAD_PATHS.difference_update(keys)
 
 
 def _looks_direct_url(url: str) -> bool:
@@ -482,9 +511,9 @@ def _looks_direct_url(url: str) -> bool:
 
 
 def _write_url_shortcut(directory: Path, item: CoursewareItem) -> Path:
-    target = available_path(directory, f"{item.filename or item.activity_title or item.activity_id}.url")
-    target.write_text(f"[InternetShortcut]\nURL={item.entry_url}\n", encoding="utf-8")
-    return target
+    with _reserve_download_path(directory, f"{item.filename or item.activity_title or item.activity_id}.url") as target:
+        target.write_text(f"[InternetShortcut]\nURL={item.entry_url}\n", encoding="utf-8")
+        return target
 
 
 def download_courseware(session, item: CoursewareItem, destination: str | Path) -> Path:
@@ -517,11 +546,16 @@ def download_courseware(session, item: CoursewareItem, destination: str | Path) 
 
 
 def _download_url(session, url: str, directory: Path, filename: str) -> Path:
-    target = available_path(directory, filename or url.rsplit("/", 1)[-1] or "courseware")
+    with _reserve_download_path(directory, filename or url.rsplit("/", 1)[-1] or "courseware") as target:
+        return _download_to_path(session, url, directory, target)
+
+
+def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
     partial = target.with_name(target.name + ".part")
     # 断点续传：.part 已有字节则带 Range 续传（平台实测返回 206 Partial Content）。
     # 服务端忽略 Range 返回 200 时按全量覆盖处理——文件可能已变化，不可盲目追加。
     resume_from = partial.stat().st_size if partial.exists() else 0
+    restarting_rejected_range = False
     request_headers = {"User-Agent": headers["User-Agent"]}
     if resume_from > 0:
         request_headers["Range"] = f"bytes={resume_from}-"
@@ -532,6 +566,21 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
         stream=True,
     )
     try:
+        if response.status_code == 416 and resume_from > 0:
+            # 旧断点可能已超过远端文件末尾。只重试一次完整 GET，避免永久
+            # 复用同一失效 Range；响应通过校验前保留旧 .part。
+            rejected_response = response
+            response = None
+            rejected_response.close()
+            resume_from = 0
+            restarting_rejected_range = True
+            request_headers.pop("Range", None)
+            response = session.get(
+                url,
+                headers=request_headers,
+                timeout=DOWNLOAD_TIMEOUT,
+                stream=True,
+            )
         if response.status_code == 401:
             # 401 = 会话确定失效：类型化上抛引导重新登录（与 Android CoursewareClient
             # downloadUrl 的 401/403 分流对齐；PermissionError 会被上层当普通失败，
@@ -546,6 +595,10 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
         # 仅按最终 URL 与跳转事实判定（与 _get_json 同语义）
         if response_session_expired(response, peek_body=False):
             raise SessionExpiredError("登录已过期，请重新登录后再试")
+        if response.status_code not in (200, 206):
+            # raise_for_status 不会拒绝 202/204/304 等无文件响应；它们不能
+            # 截断既有断点或被提升为完整下载。空的 200 文件仍然合法。
+            raise RuntimeError(f"下载未返回文件内容（HTTP {response.status_code}），已保留断点续传记录")
         content_type = (response.headers.get("Content-Type") or "").lower()
         if "text/html" in content_type:
             raise RuntimeError("下载返回了登录页面，请重新登录后再试")
@@ -555,7 +608,7 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
         if "application/json" in content_type or "application/xhtml" in content_type:
             raise RuntimeError("下载返回了非文件内容，请稍后再试")
         content_encoding = (response.headers.get("Content-Encoding") or "").lower()
-        compressed = any(value.strip() in {"gzip", "deflate", "br"}
+        compressed = any(value.strip() in {"gzip", "x-gzip", "deflate", "br", "zstd"}
                          for value in content_encoding.split(","))
         # requests 会自动解压；压缩 206 无法按 Content-Range 安全拼接。
         # 压缩 200 可写入，但 Content-Length 不再对应解压后的字节数。
@@ -594,21 +647,35 @@ def _download_url(session, url: str, directory: Path, filename: str) -> Path:
                     chunk_path.unlink(missing_ok=True)
         else:
             # 200 是全量响应，压缩体跳过 Content-Length 校验。
-            with partial.open("wb") as file:
-                for chunk in response.iter_content(chunk_size=1024 * 256):
-                    if chunk:
-                        file.write(chunk)
-            expected_total = str(response.headers.get("Content-Length") or "")
-            if not compressed and expected_total.isdigit():
-                received = partial.stat().st_size
-                if received != int(expected_total):
-                    raise RuntimeError(
-                        f"下载不完整（收到 {received}/{expected_total} 字节），已保留断点续传记录"
-                    )
+            full_path = partial
+            try:
+                if restarting_rejected_range:
+                    # 失效断点恢复完成前保留原文件；短流/断网不应破坏它。
+                    with tempfile.NamedTemporaryFile(
+                        dir=directory, prefix=".xmu-download-", suffix=".chunk", delete=False,
+                    ) as full_file:
+                        full_path = Path(full_file.name)
+                with full_path.open("wb") as file:
+                    for chunk in response.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            file.write(chunk)
+                expected_total = str(response.headers.get("Content-Length") or "")
+                if not compressed and expected_total.isdigit():
+                    received = full_path.stat().st_size
+                    if received != int(expected_total):
+                        raise RuntimeError(
+                            f"下载不完整（收到 {received}/{expected_total} 字节），已保留断点续传记录"
+                        )
+                if full_path != partial:
+                    os.replace(full_path, partial)
+            finally:
+                if full_path != partial:
+                    full_path.unlink(missing_ok=True)
         os.replace(partial, target)
         return target
     finally:
-        response.close()
+        if response is not None:
+            response.close()
         # 失败时刻意保留 .part：已下载的字节是断点续传的依据。
         # 所有失败分支都在写文件之前抛出（流式探测不消费 body），
         # 或写入了合法的前缀字节，保留均安全；成功路径已 os.replace 不存在。

@@ -89,7 +89,9 @@ internal class HomeActions(
         }
         setAccountTransitionInProgress(true)
         setBusy(BusyStates.LOGGING_IN)
-        workScope.launch(Dispatchers.IO) {
+        workScope.launchStartupSessionWork(
+            onFinished = { ProcessSessionRecovery.coordinator.finishAutoLogin(loginToken) },
+        ) {
             runCatching { TronclassLogin().login(accountUsername, accountPassword) }
                 .onSuccess { result ->
                     withContext(Dispatchers.Main) {
@@ -106,12 +108,14 @@ internal class HomeActions(
                             // 换账号登录：清掉上一个账号的教务(ids/jw) cookie 与全部数据残留
                             // （成绩持久化、课表、考试、提醒、桌面小卡片、课程缓存），
                             // 否则 B 账号直接看到 A 的成绩/课表/考试，A 的提醒继续对 B 触发（串号/串提醒）。
+                            scores.clearAll()
                             settings.scoreCookieHeader = ""
                             settings.scoreRecordsJson = ""
                             settings.scoreUpdatedAtMillis = 0L
                             settings.academicCacheJson = ""
-                            scores.clearAll()
                             schedule.clearAll()
+                            // 等待后台课表的本地提交后再清一次，避免已进入的 setter 回填旧会话。
+                            settings.scoreCookieHeader = ""
                             deleteScheduleSnapshotFile(activity)
                             // 最近十次签到缓存按账号绑定，换号一并删除（防串号）
                             deleteRollcallHistoryCacheFile(activity)

@@ -166,6 +166,40 @@ class ScheduleIcsTest {
     }
 
     @Test
+    fun `valid empty week selection never expands to full term events`() {
+        listOf("2-2单周", "1-1双周", "26-30周").forEach { weeks ->
+            val text = buildScheduleIcs(listOf(entry(weeks = weeks)), calendar)!!
+            assertFalse(weeks, text.contains("BEGIN:VEVENT"))
+        }
+    }
+
+    @Test
+    fun `mixed full and odd week ranges retain distinct recurrence intervals`() {
+        val text = buildScheduleIcs(listOf(entry(weeks = "1-8周,10-16周(单周)")), calendar)!!
+        val rules = text.lineSequence().filter { it.startsWith("RRULE:") }.toList()
+        assertEquals(2, rules.size)
+        assertEquals("RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO;UNTIL=${date(8, 1)}T235959", rules[0])
+        assertEquals("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;UNTIL=${date(15, 1)}T235959", rules[1])
+    }
+
+    @Test
+    fun `equal and reverse time ranges are skipped while a valid sibling survives`() {
+        val text = buildScheduleIcs(
+            listOf(entry(startTime = 1020), entry(startTime = 1030), entry()), calendar,
+        )!!
+        assertEquals(1, Regex("BEGIN:VEVENT").findAll(text).count())
+        assertTrue(text.contains("T083000"))
+    }
+
+    @Test
+    fun `all newline forms in text are escaped without creating content lines`() {
+        val courseName = "A\rB\r\nC\nD"
+        val text = buildScheduleIcs(listOf(entry(courseName = courseName)), calendar)!!
+        assertEquals("SUMMARY:A\\nB\\nC\\nD", text.lineSequence().first { it.startsWith("SUMMARY:") })
+        assertEquals(1, text.lineSequence().count { it.startsWith("SUMMARY:") })
+    }
+
+    @Test
     fun `uids distinguish Java hash collision course names`() {
         // "Aa" and "BB" deliberately share Java String.hashCode(); every
         // other scheduling field remains equal.

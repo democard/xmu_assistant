@@ -2,9 +2,57 @@ package com.xmu.assistant
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
+import org.json.JSONObject
 
 class ScheduleCacheTest {
+    private fun calendarFixture() = XmuAcademicCalendar(
+        termCode = "20261", academicYearLabel = "2026—2027学年", semesterLabel = "第一学期",
+        startDate = java.time.LocalDate.of(2026, 9, 7), endDate = java.time.LocalDate.of(2027, 1, 9),
+        totalWeeks = 18,
+    )
+
+    @Test
+    fun `cached calendar rejects invalid week counts before they reach display and export`() {
+        listOf(0, -1, 26, Int.MAX_VALUE, 4_294_967_297L, 1.5, "invalid", JSONObject.NULL).forEach { count ->
+            val json = xmuCalendarToJson(calendarFixture()).put("totalWeeks", count)
+            assertNull("invalid totalWeeks=$count", xmuCalendarFromJson(json))
+        }
+        assertEquals(18, xmuCalendarFromJson(xmuCalendarToJson(calendarFixture()).apply { remove("totalWeeks") })?.totalWeeks)
+        assertEquals(25, xmuCalendarFromJson(xmuCalendarToJson(calendarFixture()).put("totalWeeks", 25))?.totalWeeks)
+    }
+
+    @Test
+    fun `cached calendar rejects reversed dates and malformed term codes`() {
+        val calendar = calendarFixture()
+        assertNull(xmuCalendarFromJson(xmuCalendarToJson(calendar.copy(endDate = calendar.startDate.minusDays(1)))))
+        listOf("", " ", "2026", "20264", "invalid").forEach { term ->
+            assertNull(term, xmuCalendarFromJson(xmuCalendarToJson(calendar.copy(termCode = term))))
+        }
+    }
+
+    @Test
+    fun `bad inferred calendars are discarded without losing valid siblings or schedule entries`() {
+        val valid = calendarFixture()
+        val entry = XmuScheduleEntry(1, 1, 2, 800, 940, "保留课程", "教室", "老师", "1-16周", "20261")
+        val snapshot = XmuScheduleSnapshot(
+            entries = listOf(entry), termCode = "20261", updatedAtMillis = 123L,
+            inferredCalendars = mapOf(
+                "20261" to valid,
+                "20252" to valid.copy(termCode = "20252", totalWeeks = 0),
+                "20251" to valid.copy(termCode = "20251", endDate = valid.startDate.minusDays(1)),
+                "20262" to valid.copy(termCode = "20263"),
+            ),
+        )
+
+        val restored = xmuScheduleSnapshotFromJson(xmuScheduleSnapshotToJson(snapshot))
+
+        assertEquals(mapOf("20261" to valid), restored.inferredCalendars)
+        assertEquals(listOf(entry), restored.entries)
+        assertEquals(123L, restored.updatedAtMillis)
+    }
+
     @Test
     fun `schedule cache round trip preserves source rows term and timestamp`() {
         val snapshot = XmuScheduleSnapshot(

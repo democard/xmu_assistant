@@ -109,4 +109,7 @@ dependencies {
     // Robolectric 的 Compose UI 测试（ScheduleWeekGridUiTest/ThemeUiTest)也依赖此 debug manifest
     // 提供可解析的 ComponentActivity，不能删
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // initWith(debug) 复制构建设置，不继承 debugImplementation 依赖。
+    // 基准变体也运行 src/test 中的完整 Compose/Robolectric 测试。
+    add("networkBenchmarkImplementation", libs.androidx.compose.ui.test.manifest)
 }

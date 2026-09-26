@@ -52,6 +52,13 @@ class SessionEpoch {
         activeOwnerId == owner.id
     }
 
+    /** 无 Activity 的后台读取只观察世代，不能注册 owner 抢走前台会话属主。 */
+    internal fun currentGeneration(): Long = synchronized(lock) { generation }
+
+    internal fun isGenerationCurrent(expected: Long): Boolean = synchronized(lock) {
+        generation == expected
+    }
+
     fun beginLoginAttempt(owner: SessionOwner, username: String, password: String): LoginAttempt? = synchronized(lock) {
         if (activeOwnerId != owner.id) return@synchronized null
         generation += 1

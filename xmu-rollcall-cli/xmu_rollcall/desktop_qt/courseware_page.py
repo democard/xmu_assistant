@@ -12,7 +12,7 @@ from __future__ import annotations
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -219,9 +219,16 @@ class CoursewarePageMixin:
             return
         course = self._selected_courseware_course()
         if not course:
+            self._reset_courseware_selection_prompt()
             if not silent:
                 QMessageBox.information(self, "未选择课程", "请先选择一门课程。")
             return
+        # 切课时旧请求可能仍占用读取门；先移除旧课程行，避免其文件被下载到新课程目录。
+        if any(item.course_id != course.course_id for item in self.courseware_items):
+            self.courseware_items = []
+            self.courseware_download_status = {}
+            self._refresh_courseware_table()
+            self._update_nav_badges()
         if self.courseware_refresh_in_progress:
             return
         self.courseware_refresh_in_progress = True
@@ -320,6 +327,11 @@ class CoursewarePageMixin:
             return
         course = self._selected_courseware_course()
         if not course:
+            return
+        if not items:
+            return
+        if any(item.course_id != course.course_id for item in items):
+            QMessageBox.warning(self, "课件已变更", "所选课件不属于当前课程，请等待列表刷新后重新选择。")
             return
         if not self.courseware_download_dir.text().strip():
             # 空目录文本：Path("")/课程名 得相对路径，会在启动目录（开始菜单启动
@@ -555,18 +567,34 @@ class CoursewarePageMixin:
             "scorm": "SCORM",
             "h5_courseware": "H5课件",
         }
-        checked_keys = {
-            self._courseware_key(self.courseware_items[row])
-            for row in range(min(self.courseware_table.rowCount(), len(self.courseware_items)))
-            if self.courseware_table.item(row, 0)
-            and self.courseware_table.item(row, 0).checkState() == Qt.CheckState.Checked
-        }
+        # 旧表保存自身的稳定标识；此时 courseware_items 可能已经被新列表替换，
+        # 不能再用旧行号索引新列表，否则重排/删除会把用户选择转移到别的文件。
+        checked_keys = set()
+        selected_keys = set()
+        current_key = None
+        current_column = self.courseware_table.currentColumn()
+        selected_rows = {index.row() for index in self.courseware_table.selectionModel().selectedRows()}
+        for row in range(self.courseware_table.rowCount()):
+            cell = self.courseware_table.item(row, 0)
+            if cell is None:
+                continue
+            key = cell.data(Qt.ItemDataRole.UserRole)
+            if cell.checkState() == Qt.CheckState.Checked:
+                checked_keys.add(key)
+            if row in selected_rows:
+                selected_keys.add(key)
+            if row == self.courseware_table.currentRow():
+                current_key = key
         # 一次 setRowCount 预留全部行后直接 setItem：逐行 insertRow 会让 Qt 每行
         # 内部重排（O(n²)）——下载批次里每次进度/完成事件都整表重建，100 项课件即
         # 200 次 × O(n²) 的行插入；首页事件表已是 setRowCount(n)+setItem 的 O(n) 版。
         self.courseware_table.setRowCount(len(self.courseware_items))
+        self.courseware_table.clearSelection()
+        self.courseware_table.setCurrentCell(-1, -1)
         for row_index, item in enumerate(self.courseware_items):
+            key = self._courseware_key(item)
             checkbox = QTableWidgetItem("")
+            checkbox.setData(Qt.ItemDataRole.UserRole, key)
             checkbox.setFlags(
                 Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsSelectable
@@ -574,7 +602,7 @@ class CoursewarePageMixin:
             )
             checkbox.setCheckState(
                 Qt.CheckState.Checked
-                if self._courseware_key(item) in checked_keys
+                if key in checked_keys
                 else Qt.CheckState.Unchecked
             )
             checkbox.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -594,6 +622,15 @@ class CoursewarePageMixin:
                 if column == 5:
                     cell.setForeground(QColor(self._courseware_status_color(str(value))))
                 self.courseware_table.setItem(row_index, column, cell)
+            if key == current_key:
+                self.courseware_table.setCurrentCell(
+                    row_index, max(0, current_column), QItemSelectionModel.SelectionFlag.NoUpdate,
+                )
+            if key in selected_keys:
+                self.courseware_table.selectionModel().select(
+                    self.courseware_table.model().index(row_index, 0),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
         self._refresh_courseware_empty_state()
 
     def _refresh_courseware_empty_state(self):

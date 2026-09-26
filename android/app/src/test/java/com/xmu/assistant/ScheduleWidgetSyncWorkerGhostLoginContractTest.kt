@@ -8,8 +8,8 @@ import org.junit.Test
 /**
  * 登出后幽灵登录守卫：凭据（学号/密码）按设计登出残留，周期 Widget worker
  * 若不复核登录态，会在登出后以残留凭据发起教务 CAS 登录（登录请求已打出 =
- * 风控暴露；同款缺陷 ScoreSectionState.refresh 已先行修复）。纯源码契约
- * （worker 行为 JVM 测试覆盖不到，参照项目契约测试哲学）。
+ * 风控暴露；同款缺陷 ScoreSectionState.refresh 已先行修复）。这里保留接线契约；
+ * 真实 runner 的离线会话交错行为由 ScheduleWidgetWorkerTimelineTest 覆盖。
  */
 class ScheduleWidgetSyncWorkerGhostLoginContractTest {
     @Test
@@ -32,7 +32,8 @@ class ScheduleWidgetSyncWorkerGhostLoginContractTest {
         )
         assertTrue(
             "mayRelogin must re-read the mirror in-flight (mid-refresh logout is also blocked)",
-            "mayRelogin = { sessionAllowsSync() }" in worker,
+            "mayRelogin = { mayRelogin() }" in worker &&
+                "sessionAllowsSync() && persistenceGate.currentRevision() == revision" in worker,
         )
         assertTrue(
             "markLoginSucceeded must raise the mirror",
@@ -60,7 +61,8 @@ class ScheduleWidgetSyncWorkerGhostLoginContractTest {
         )
         assertTrue(
             "persisted artifacts must be dropped when the account switched mid-refresh",
-            "if (settings.username != fetchedUsername) return Result.success()" in worker,
+            "settings.username == fetchedUsername" in worker &&
+                "sessionEpoch.isGenerationCurrent(generation)" in worker,
         )
     }
 

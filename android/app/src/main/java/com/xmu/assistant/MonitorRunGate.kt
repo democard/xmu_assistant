@@ -1,6 +1,7 @@
 package com.xmu.assistant
 
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.CancellationException
 import java.util.concurrent.locks.ReentrantLock
 
 class MonitorRunGate {
@@ -142,22 +143,25 @@ internal fun processRollcallMonitorPoll(
     completedIds: MutableSet<String>,
     answerAttempts: MutableMap<String, Int>,
     runIfActive: (action: () -> Unit) -> Boolean,
-    onNotify: (RollcallEvent) -> Unit,
+    // true 表示至少一个通知渠道已接受投递；不可投递时下一轮仍可重试通知。
+    onNotify: (RollcallEvent) -> Boolean,
     onAnswer: (RollcallEvent) -> Boolean,
     onSuccess: () -> Unit,
     settingsStillCurrent: () -> Boolean = { true },
     maxAnswerAttempts: Int = 3,
 ) {
     var hasUnresolvedAnswerFailure = false
+    var firstAnswerFailure: Exception? = null
     val pendingEvents = mutableListOf<RollcallEvent>()
+    val seenInPoll = mutableSetOf<String>()
 
     // 同轮先发出所有新事件的本地通知，再执行可能长时间阻塞的网络应答。
     for (event in events) {
-        if (event.id in completedIds) continue
+        // 接口可能重复返回同一 ID；同轮快照不能消耗多次写入重试预算。
+        if (event.id in completedIds || !seenInPoll.add(event.id)) continue
         if (event.id !in notifiedIds) {
             if (!runIfActive {
-                    onNotify(event)
-                    notifiedIds += event.id
+                    if (onNotify(event)) notifiedIds += event.id
                 }
             ) return
         }
@@ -179,7 +183,8 @@ internal fun processRollcallMonitorPoll(
         }
         val resolvedStatus = event.ownStatus ?: event.status
         val definitelyFinished = expired || isTerminalRollcallStatus(resolvedStatus)
-        if (definitelyFinished || event.type !in setOf("数字签到", "雷达签到")) {
+        val notificationOnly = event.type !in setOf("数字签到", "雷达签到")
+        if (definitelyFinished || (notificationOnly && event.id in notifiedIds)) {
             if (!runIfActive {
                     completedIds += event.id
                     answerAttempts.remove(event.id)
@@ -233,15 +238,22 @@ internal fun processRollcallMonitorPoll(
                     recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.REJECTED)
                 }
             ) return
-            throw error
+            hasUnresolvedAnswerFailure = true
+            if (firstAnswerFailure == null) firstAnswerFailure = error
         } catch (error: Throwable) {
             if (!runIfActive {
                     recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.UNCERTAIN)
                 }
             ) return
-            throw error
+            // 用户取消、线程中断和严重故障立即停止，不能继续发起其它签到写入。
+            if (error !is Exception || error is CancellationException || error is InterruptedException) throw error
+            hasUnresolvedAnswerFailure = true
+            if (firstAnswerFailure == null) firstAnswerFailure = error
         }
     }
+    // 单个签到的拒绝/网络失败不应饿死同轮其它签到；处理完后仍上报首个错误，
+    // 由监控记录本轮失败，绝不把局部成功当作整体健康。
+    firstAnswerFailure?.let { throw it }
     if (!hasUnresolvedAnswerFailure) runIfActive(onSuccess)
 }
 

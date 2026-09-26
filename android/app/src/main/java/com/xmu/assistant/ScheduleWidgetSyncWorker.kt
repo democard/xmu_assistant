@@ -5,6 +5,7 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ListenableWorker.Result
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -13,6 +14,9 @@ import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 
 /** 进程级前台标志：由 MainActivity.onStart/onStop 维护，后台同步 worker 借此避开与用户操作并发刷新。 */
 internal object AppForegroundTracker {
@@ -45,41 +49,61 @@ internal fun scheduleWidgetSyncSessionAllowed(
  * - 复用与手动刷新完全相同的取课表逻辑（fetchScheduleWithNetworkRetry），
  *   失败由 WorkManager 指数退避重试。
  */
-class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
-    CoroutineWorker(context, params) {
-
-    override suspend fun doWork(): Result {
-        val context = applicationContext
+internal class ScheduleWidgetSyncRun(
+    private val context: Context,
+    private val settingsFactory: () -> AssistantSettings = { AssistantSettings(context) },
+    private val fetchSchedule: ScheduleFetcher = ScheduleFetcher { u, p, c, mayRelogin ->
+        fetchScheduleWithNetworkRetry(u, p, c, mayRelogin)
+    },
+    private val writeSnapshot: (XmuScheduleSnapshot) -> Unit = { saveScheduleSnapshotToFile(context, it) },
+    private val writeCookie: (AssistantSettings, String) -> Unit = { settings, cookie -> settings.scoreCookieHeader = cookie },
+    private val updateWidget: (XmuScheduleSnapshot, Int) -> Unit = { snapshot, manualWeek ->
+        syncScheduleWidget(context, snapshot.entries, snapshot.termCode,
+            inferredCalendar = snapshot.inferredCalendars[snapshot.termCode], manualWeek = manualWeek)
+    },
+) {
+    suspend fun execute(): Result {
         if (AppForegroundTracker.foreground) return Result.success()
-        val settings = AssistantSettings(context)
-        if (settings.username.isBlank() || settings.password.isBlank()) return Result.success()
+        val workContext = currentCoroutineContext()
+        workContext.ensureActive()
+        val sessionEpoch = ProcessSessionEpoch.instance
+        val generation = sessionEpoch.currentGeneration()
+        val persistenceGate = ScheduleSectionState.sharedPersistenceGate()
+        val revision = persistenceGate.currentRevision()
+        val settings = settingsFactory()
+        val fetchedUsername = settings.username
+        val fetchedPassword = settings.password
+        val fetchedMainCookie = settings.cookieHeader
+        val fetchedScoreCookie = settings.scoreCookieHeader
+        if (fetchedUsername.isBlank() || fetchedPassword.isBlank()) return Result.success()
         if (!settings.widgetEnabled) return Result.success()
         // 登录态复核（三态镜像，见 readWidgetLoggedInMirror）：登出后凭据按设计
         // 残留，缺此复核会以残留凭据发起教务 CAS 登录——登录请求已打出（登出后
         // 幽灵登录 = 风控暴露；同款守卫见 ScoreSectionState.refresh）
-        fun sessionAllowsSync(): Boolean = scheduleWidgetSyncSessionAllowed(
-            loggedInMirror = AssistantSettings.readWidgetLoggedInMirror(context),
-            autoLoginPolicy = settings.autoLoginPolicy,
-            mainCookieHeader = settings.cookieHeader,
-        )
+        fun sessionAllowsSync(): Boolean =
+            sessionEpoch.isGenerationCurrent(generation) &&
+                settings.username == fetchedUsername && settings.password == fetchedPassword &&
+                settings.cookieHeader == fetchedMainCookie && settings.widgetEnabled &&
+                scheduleWidgetSyncSessionAllowed(
+                    loggedInMirror = AssistantSettings.readWidgetLoggedInMirror(context),
+                    autoLoginPolicy = settings.autoLoginPolicy,
+                    mainCookieHeader = settings.cookieHeader,
+                )
+        fun mayRelogin(): Boolean = workContext.isActive && !AppForegroundTracker.foreground &&
+            sessionAllowsSync() && persistenceGate.currentRevision() == revision
         if (!sessionAllowsSync()) return Result.success()
 
         return try {
-            // 取数账号快照：供成功落盘前复核账号是否已切换（与下方镜像复核配套）
-            val fetchedUsername = settings.username
-            val result = fetchScheduleWithNetworkRetry(
-                username = settings.username,
-                password = settings.password,
-                scoreCookieHeader = settings.scoreCookieHeader,
-                // 闭包内活读完整门禁：刷新中途登出时，在途 CAS 也被拦下
-                mayRelogin = { sessionAllowsSync() },
+            val result = fetchSchedule.fetch(
+                username = fetchedUsername,
+                password = fetchedPassword,
+                scoreCookieHeader = fetchedScoreCookie,
+                // 返回前台后停止后台 CAS；同账号重登也不能为旧请求重新授权。
+                mayRelogin = { mayRelogin() },
             )
-            // 持久化前复核（同 ScoreSectionState.refresh 的账号复核范式）：
-            // 刷新期间登出（镜像 false）或换号（当前用户名≠取数快照）则丢弃本次
-            // 结果——登出/换号清理链已删快照文件、清 widget 数据与教务 cookie，
-            // 此处照常落盘会让旧账号课表复活覆盖新会话（串号）
+            // 阻塞 IO 正常返回并不意味着协程仍活跃，取消后不得开始本地写入。
+            workContext.ensureActive()
             if (!sessionAllowsSync()) return Result.success()
-            if (settings.username != fetchedUsername) return Result.success()
             val updatedAt = System.currentTimeMillis()
             val termCode = result.termCode
             val entries = result.entries
@@ -103,15 +127,15 @@ class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
                 updatedAtMillis = updatedAt,
                 inferredCalendars = calendars,
             )
-            saveScheduleSnapshotToFile(context, snapshot)
-            settings.scoreCookieHeader = result.jwCookie
-            syncScheduleWidget(
-                context,
-                entries,
-                termCode,
-                inferredCalendar = calendars[termCode],
-                manualWeek = settings.manualAcademicWeek(termCode),
-            )
+            persistenceGate.persistIfLatest(revision) {
+                // 等待本地锁时仍可能被取消/换号；锁内只提交已完成的读取，不进行网络请求。
+                workContext.ensureActive()
+                if (!sessionAllowsSync()) return@persistIfLatest
+                if (!persistenceGate.advanceIfCurrent(revision)) return@persistIfLatest
+                writeCookie(settings, result.jwCookie)
+                writeSnapshot(snapshot)
+                updateWidget(snapshot, settings.manualAcademicWeek(termCode))
+            }
             Result.success()
         } catch (error: kotlinx.coroutines.CancellationException) {
             // Worker 被取消（重新入队/约束失效）必须优雅终止，不能转成 retry 与取消语义对抗
@@ -123,6 +147,11 @@ class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
             Result.retry()
         }
     }
+}
+
+class ScheduleWidgetSyncWorker(context: Context, params: WorkerParameters) :
+    CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = ScheduleWidgetSyncRun(applicationContext).execute()
 
     companion object {
         private const val UNIQUE_NAME = "schedule-widget-daily-sync"

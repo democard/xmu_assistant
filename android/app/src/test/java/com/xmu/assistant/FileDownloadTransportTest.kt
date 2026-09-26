@@ -255,6 +255,146 @@ class FileDownloadTransportTest {
     }
 
     @Test
+    fun `416 retries once from zero and replaces stale partial with validated full response`() {
+        server.enqueue(MockResponse().setResponseCode(416).addHeader("Content-Range", "bytes */3"))
+        server.enqueue(MockResponse().setResponseCode(200).addHeader("Content-Type", "application/pdf").setBody("new"))
+        val target = File(temporaryFolder.root, "stale.pdf.part").apply { writeText("stale-prefix") }
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString(), mapOf("Cookie" to "fixture=session")), target,
+        )
+
+        assertEquals(200, result.code)
+        assertEquals("new", target.readText())
+        assertEquals(2, server.requestCount)
+        assertEquals("bytes=12-", server.takeRequest().getHeader("Range"))
+        val restarted = server.takeRequest()
+        assertEquals(null, restarted.getHeader("Range"))
+        assertEquals("fixture=session", restarted.getHeader("Cookie"))
+        assertEquals(listOf(target.name), temporaryFolder.root.listFiles().orEmpty().map { it.name })
+    }
+
+    @Test
+    fun `repeated 416 is bounded and retains the original partial`() {
+        repeat(2) { server.enqueue(MockResponse().setResponseCode(416)) }
+        val target = File(temporaryFolder.root, "repeated.pdf.part").apply { writeText("old-prefix") }
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString()), target,
+        )
+
+        assertEquals(416, result.code)
+        assertEquals(2, server.requestCount)
+        assertEquals("old-prefix", target.readText())
+    }
+
+    @Test
+    fun `416 without an existing range never retries`() {
+        server.enqueue(MockResponse().setResponseCode(416))
+        val target = File(temporaryFolder.root, "absent.pdf.part")
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString()), target,
+        )
+
+        assertEquals(416, result.code)
+        assertEquals(1, server.requestCount)
+        assertFalse(target.exists())
+    }
+
+    @Test
+    fun `416 recovery error and challenge responses retain the original partial`() {
+        listOf(401 to "application/json", 500 to "text/plain", 200 to "text/html").forEachIndexed { index, (code, contentType) ->
+            server.enqueue(MockResponse().setResponseCode(416))
+            server.enqueue(MockResponse().setResponseCode(code).addHeader("Content-Type", contentType).setBody("error"))
+            val target = File(temporaryFolder.root, "recovery-error-$index.pdf.part").apply { writeText("old-prefix") }
+
+            val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+                FileDownloadRequest(server.url("/file").toString()), target,
+            )
+
+            assertEquals(code, result.code)
+            assertEquals("old-prefix", target.readText())
+        }
+        assertEquals(6, server.requestCount)
+    }
+
+    @Test
+    fun `416 recovery validates full response length before replacing the original partial`() {
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(MockResponse().setResponseCode(200).addHeader("Content-Type", "application/pdf").setBody("short"))
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val response = chain.proceed(chain.request())
+            if (response.code == 200) response.newBuilder().header("Content-Length", "20").build() else response
+        }.build()
+        val target = File(temporaryFolder.root, "recovery-short.pdf.part").apply { writeText("old-prefix") }
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            OkHttpFileDownloadTransport(client).download(FileDownloadRequest(server.url("/file").toString()), target)
+        }
+
+        assertEquals(2, server.requestCount)
+        assertEquals("old-prefix", target.readText())
+        assertEquals(listOf(target.name), temporaryFolder.root.listFiles().orEmpty().map { it.name })
+    }
+
+    @Test
+    fun `416 recovery accepts a complete 206 starting at zero`() {
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(
+            MockResponse().setResponseCode(206).addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 0-2/3").setBody("new"),
+        )
+        val target = File(temporaryFolder.root, "recovery-206.pdf.part").apply { writeText("old-prefix") }
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString()), target,
+        )
+
+        assertEquals(206, result.code)
+        assertEquals("new", target.readText())
+        assertEquals(2, server.requestCount)
+        assertEquals(listOf(target.name), temporaryFolder.root.listFiles().orEmpty().map { it.name })
+    }
+
+    @Test
+    fun `416 recovery rejects a mismatched range without replacing the original partial`() {
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(
+            MockResponse().setResponseCode(206).addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 1-3/4").setBody("new"),
+        )
+        val target = File(temporaryFolder.root, "recovery-bad-range.pdf.part").apply { writeText("old-prefix") }
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            OkHttpFileDownloadTransport(OkHttpClient()).download(
+                FileDownloadRequest(server.url("/file").toString()), target,
+            )
+        }
+
+        assertEquals(2, server.requestCount)
+        assertEquals("old-prefix", target.readText())
+        assertEquals(listOf(target.name), temporaryFolder.root.listFiles().orEmpty().map { it.name })
+    }
+
+    @Test
+    fun `416 recovery has one retry after the final allowed redirect`() {
+        repeat(7) { index ->
+            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/redirect-$index"))
+        }
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(MockResponse().setResponseCode(200).addHeader("Content-Type", "application/pdf").setBody("new"))
+        val target = File(temporaryFolder.root, "redirect-recovery.pdf.part").apply { writeText("old-prefix") }
+        val client = OkHttpClient.Builder().followRedirects(false).build()
+
+        val result = OkHttpFileDownloadTransport(client).download(FileDownloadRequest(server.url("/file").toString()), target)
+
+        assertEquals(200, result.code)
+        assertEquals("new", target.readText())
+        assertEquals(9, server.requestCount)
+    }
+
+    @Test
     fun `cross-host redirect strips cookie header`() {
         // 签名地址 302 → 第三方 CDN：跨主机跳转必须剥离 Cookie（会话凭据不外泄）
         val cdn = MockWebServer()

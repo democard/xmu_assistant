@@ -27,7 +27,10 @@ class RollcallEngine internal constructor(
 
     fun pollOnce(): List<RollcallEvent> {
         val json = getStatusJson("$baseUrl/api/radar/rollcalls")
-        val rollcalls = json.optJSONArray("rollcalls") ?: JSONArray()
+        // 空数组是正常的「没有签到」；缺字段/错误类型则不能当作健康空列表，
+        // 否则网关错误 JSON 会让监控清除失败状态并静默漏掉签到。
+        val rollcalls = json.optJSONArray("rollcalls")
+            ?: error("签到列表格式异常：缺少有效的 rollcalls 数组")
         return (0 until rollcalls.length()).mapNotNull { index ->
             val item = rollcalls.optJSONObject(index) ?: return@mapNotNull null
             // optRealString：显式 null 会被 optString 读成 "null"，穿透 isBlank 守卫
@@ -104,6 +107,7 @@ class RollcallEngine internal constructor(
             throw MainSessionExpiredException()
         }
         if (response.code !in 200..299) error("网络失败：${response.code}")
+        if (isKnownLoginForm(response.body)) throw MainSessionExpiredException()
         return JSONObject(response.body)
     }
 
@@ -124,6 +128,7 @@ class RollcallEngine internal constructor(
         }
         if (response.code == 403) return null
         if (response.code !in 200..299) error("网络失败：${response.code}")
+        if (isKnownLoginForm(response.body)) throw MainSessionExpiredException()
         return JSONObject(response.body)
     }
 
@@ -207,6 +212,11 @@ class RollcallEngine internal constructor(
         val response = executePut(url, body)
         if (response.code == 401) throw MainSessionExpiredException()
         if (response.code in 300..399 && isIdentityRedirect(response.url, response.location)) {
+            throw MainSessionExpiredException()
+        }
+        // 身份域可能直接返回 200 登录表单；这并不是签到成功回执。
+        // 只识别已知登录页，不改变 403 等明确拒绝的含义。
+        if (response.code in 200..299 && isKnownLoginForm(response.body)) {
             throw MainSessionExpiredException()
         }
         return when {

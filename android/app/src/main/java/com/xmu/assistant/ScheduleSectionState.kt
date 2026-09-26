@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.time.LocalDate
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -70,7 +71,13 @@ internal class ScheduleSectionState(
         fetchScheduleWithNetworkRetry(u, p, c, m)
     },
     snapshotInitial: XmuScheduleSnapshot = XmuScheduleSnapshot(),
+    private val cacheDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val writeCacheSnapshot: (Activity, XmuScheduleSnapshot) -> Unit = { context, snapshot ->
+        saveScheduleSnapshotToFile(context, snapshot)
+    },
 ) {
+    @Volatile private var stateGeneration = 0L
+
     /** 完整快照（含反推日历）：widget 同步与手动周次校准读取 inferredCalendars。 */
     var cache by mutableStateOf(snapshotInitial)
         private set
@@ -150,18 +157,8 @@ internal class ScheduleSectionState(
                         updatedAtMillis = updatedAt,
                         inferredCalendars = calendars,
                     )
-                    // 文件缓存与加密 prefs 写入挪到后台线程，UI 线程只做内存状态更新，
-                    // 避免刷新完成瞬间的主线程磁盘/加密 IO 卡顿。
-                    // 写入前校验会话世代仍有效：若用户已退出登录，跳过持久化，
-                    // 防止陈旧请求把已清除的 cookie/课表写回（登录态"复活"）。
-                    val persistSnapshot = snapshot
-                    val persistCookie = refreshResult.jwCookie
-                    scope.launch(Dispatchers.IO) {
-                        if (sessionEpoch.isCurrent(session)) {
-                            saveScheduleSnapshotToFile(activity, persistSnapshot)
-                            setScoreCookieHeader(persistCookie)
-                        }
-                    }
+                    // 大课表文件留在后台写入；小 cookie 同步交接，保证紧接的请求拿到新会话。
+                    persistSnapshotAsync(snapshot, request = session, cookie = refreshResult.jwCookie)
                     cache = snapshot
                     termCode = newTermCode
                     entries = newEntries
@@ -229,7 +226,14 @@ internal class ScheduleSectionState(
         settings: AssistantSettings,
         isEligible: () -> Boolean,
     ) {
-        scope.launch(Dispatchers.IO) {
+        // 已有进程快照时无需重新读盘，也不能让启动任务取代其待写的新版本。
+        if (cache.entries.isNotEmpty() || termCode.isNotBlank()) return
+        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
+        val generation = stateGeneration
+        val revision = persistenceGate.nextRevision()
+        val current = { stateGeneration == generation && sessionEpoch.isCurrent(session) }
+        scope.launch(cacheDispatcher) {
+            if (!current()) return@launch
             // 优先读明文文件缓存（快、免解密）；文件不存在时回退旧加密 prefs 并迁移
             val fromFile = loadScheduleSnapshotFromFile(activity)
             val initial = if (fromFile.entries.isNotEmpty()) {
@@ -237,23 +241,29 @@ internal class ScheduleSectionState(
             } else {
                 val legacy = xmuScheduleSnapshotFromJson(settings.scheduleCacheJson)
                 if (legacy.entries.isNotEmpty()) {
-                    saveScheduleSnapshotToFile(activity, legacy)
-                    // 写回后读回校验，确认文件缓存可用才清理旧版加密残留，避免误删数据
-                    if (loadScheduleSnapshotFromFile(activity).entries.isNotEmpty()) {
-                        settings.clearScheduleCacheLegacyPref()
+                    persistenceGate.persistIfLatest(revision) {
+                        if (current()) {
+                            writeCacheSnapshot(activity, legacy)
+                            // 写回后读回校验，确认文件缓存可用才清理旧版加密残留。
+                            if (current() && loadScheduleSnapshotFromFile(activity).entries.isNotEmpty()) {
+                                settings.clearScheduleCacheLegacyPref()
+                            }
+                        }
                     }
                 }
                 legacy
             }
             // 文件缓存已可用但旧版加密残留仍在（此前迁移过但未清理）→ 顺手清一次
-            if (initial.entries.isNotEmpty() && settings.scheduleCacheJson.isNotBlank()) {
-                settings.clearScheduleCacheLegacyPref()
+            if (fromFile.entries.isNotEmpty() && settings.scheduleCacheJson.isNotBlank()) {
+                persistenceGate.persistIfLatest(revision) {
+                    if (current()) settings.clearScheduleCacheLegacyPref()
+                }
             }
             withContext(Dispatchers.Main) {
                 // 会话守卫：仅当仍登录且缓存仍为空才应用——
                 // 防止登出后旧账号缓存复现（clearLoggedOutUi 会清内存并删文件），
                 // 也防止覆盖启动期间的网络刷新数据。
-                if (isEligible() && cache.entries.isEmpty() && termCode.isBlank()) {
+                if (current() && isEligible() && cache.entries.isEmpty() && termCode.isBlank()) {
                     applySnapshot(initial)
                 }
             }
@@ -266,6 +276,7 @@ internal class ScheduleSectionState(
         calendars[termCode] = calendar
         val updated = cache.copy(inferredCalendars = calendars)
         cache = updated
+        updateProcessScheduleSnapshot(updated)
         persistSnapshotAsync(updated)
     }
 
@@ -276,6 +287,7 @@ internal class ScheduleSectionState(
         calendars.remove(termCode)
         val updated = cache.copy(inferredCalendars = calendars)
         cache = updated
+        updateProcessScheduleSnapshot(updated)
         persistSnapshotAsync(updated)
     }
 
@@ -284,11 +296,22 @@ internal class ScheduleSectionState(
      *  与 refresh 的落盘同款世代校验：手动校准也可能在登出/换号前一刻发起，
      *  晚到的写会把 deleteScheduleSnapshotFile 刚删掉的缓存文件重建出来，
      *  下次冷启动即被新账号读走（串号展示）。 */
-    private fun persistSnapshotAsync(snapshot: XmuScheduleSnapshot) {
+    private fun persistSnapshotAsync(
+        snapshot: XmuScheduleSnapshot,
+        request: SessionRequest? = null,
+        cookie: String? = null,
+    ) {
         val context = activity
-        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
-        scope.launch(Dispatchers.IO) {
-            if (sessionEpoch.isCurrent(session)) saveScheduleSnapshotToFile(context, snapshot)
+        val session = request ?: sessionEpoch.snapshot(sessionOwner, cookieHeader())
+        val revision = persistenceGate.nextRevision()
+        // 下一次教务请求立即读取 cookie；只把大快照的文件写入留在后台。
+        if (cookie != null) persistenceGate.persistIfLatest(revision) {
+            if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(cookie)
+        }
+        scope.launch(cacheDispatcher) {
+            persistenceGate.persistIfLatest(revision) {
+                if (sessionEpoch.isCurrent(session)) writeCacheSnapshot(context, snapshot)
+            }
         }
     }
 
@@ -299,6 +322,9 @@ internal class ScheduleSectionState(
 
     /** 登出/换号清理：清内存状态并清进程级快照（持久化由调用方一并清理，与拆分前一致）。 */
     fun clearAll() {
+        stateGeneration += 1
+        // 旧 Activity 的阻塞文件写入不会因 scope 取消立即退出；先等它完成再由调用方删文件。
+        persistenceGate.invalidateAndWait()
         cache = XmuScheduleSnapshot()
         entries = emptyList()
         termCode = ""
@@ -309,6 +335,11 @@ internal class ScheduleSectionState(
     }
 
     companion object {
+        /** 与进程快照同生命周期，所有 Activity 与 Widget worker 的本地写入共用。 */
+        private val persistenceGate = LatestSnapshotWriteGate()
+
+        internal fun sharedPersistenceGate(): LatestSnapshotWriteGate = persistenceGate
+
         /** 进程级课表快照缓存：转屏（Activity 重建）时复用内存数据，避免先清空再异步重载
          *  的回退；登出/换号时清空（跟随账号会话）。原顶层 @Volatile var 收进 companion，
          *  三方读写点统一经唯一访问器（B5，行为零变化）。 */

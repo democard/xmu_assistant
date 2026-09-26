@@ -185,7 +185,7 @@ internal class CoursewareSectionState(
                 val entries = AtomicInteger(0)
                 val failed = AtomicInteger(0)
                 val done = AtomicInteger(0)
-                val client = CoursewareClient(activity, sessionCookie)
+                val client = createCoursewareClient(sessionCookie)
                 runCatching {
                     downloadCoursewareInParallel(targets) { item ->
                         val outcome = runCatching { client.download(item) }
@@ -202,9 +202,9 @@ internal class CoursewareSectionState(
                         // boundedParallelMap 的 transform 是同步回调（非 suspend 上下文），
                         // 用 runOnUiThread 切主线程写 Compose 状态（与拆分前行为一致）。
                         activity.runOnUiThread {
-                            if (sessionEpoch.accepts(session, cookieHeader(), loggedIn())) {
+                            if (sessionEpoch.accepts(session, cookieHeader(), loggedIn()) && isSelectedCourse(item.courseId)) {
                                 coursewareItems = coursewareItems.map { current ->
-                                    if (current.id == item.id) {
+                                    if (current.courseId == item.courseId && current.id == item.id) {
                                         current.copy(
                                             downloadStatus = status,
                                             failureReason = if (outcome.isSuccess) "" else reason,
