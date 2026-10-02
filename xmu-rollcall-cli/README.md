@@ -2,7 +2,7 @@
 
 本目录包含 `xmu_rollcall` Python 包：PySide6 桌面界面、登录与会话、签到监控、课件下载和通知逻辑。当前版本 **1.7.3**。虽然目录沿用 `xmu-rollcall-cli` 名称，当前应用入口是桌面界面。
 
-[直接下载 EXE](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md)
+[直接下载 EXE](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 从源码运行
 

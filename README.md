@@ -136,6 +136,8 @@ Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 
 
 ### 项目结构
 
+[开发文档导航](documentation/README.md) · [贡献与目录约定](CONTRIBUTING.md) · [模块定位](documentation/architecture.md)
+
 ```text
 xmu_assistant/
 ├── android/                 # Kotlin + Compose 原生客户端及 JVM 测试
@@ -143,6 +145,7 @@ xmu_assistant/
 ├── tests/                   # Python 回归测试
 ├── assets/                  # 图标与品牌资源
 ├── scripts/                 # 构建、模拟器启动及维护脚本
+├── documentation/           # 公开维护文档与历史开发记录
 ├── xmu-assistant.spec        # Windows PyInstaller 打包配置
 ├── release/SHA256SUMS.txt    # 发布文件校验值；二进制不入库
 ├── TEST_REPORT.md           # 扫描、修复与发布验证记录
