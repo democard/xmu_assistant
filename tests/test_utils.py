@@ -170,6 +170,27 @@ class TuneSessionTests(unittest.TestCase):
 
 
 class SaveSessionTests(unittest.TestCase):
+    def test_failed_save_preserves_file_and_cleans_temporary_for_both_error_modes(self):
+        import tempfile
+        import requests
+        from xmu_rollcall import utils
+
+        for strict in (False, True):
+            with self.subTest(strict=strict), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "cookies.json"
+                path.write_text("previous synthetic session", encoding="utf-8")
+                failure = OSError("synthetic disk failure")
+                with requests.Session() as session, patch.object(utils.os, "replace", side_effect=failure), \
+                        patch.object(utils, "_diag_log"):
+                    if strict:
+                        with self.assertRaises(OSError) as error:
+                            utils.save_session(session, str(path), strict=True)
+                        self.assertIs(error.exception, failure)
+                    else:
+                        utils.save_session(session, str(path))
+                self.assertEqual(path.read_text(encoding="utf-8"), "previous synthetic session")
+                self.assertFalse(Path(f"{path}.tmp").exists())
+
     def test_save_reads_cookiejar_under_session_lock(self):
         import tempfile
         import requests
@@ -258,6 +279,24 @@ class VerifySessionErrorTests(unittest.TestCase):
 
 
 class ResponseSessionExpiredTests(unittest.TestCase):
+    def test_identity_host_text_outside_exact_url_hostname_is_not_expiry(self):
+        urls = (
+            "https://files.example.test/ids.xmu.edu.cn.pdf",
+            "https://files.example.test/lesson.pdf?origin=https://ids.xmu.edu.cn",
+            "https://files.example.test/lesson.pdf#c-identity.xmu.edu.cn",
+            "https://ids.xmu.edu.cn.example.test/file.pdf",
+            "https://not-ids.xmu.edu.cn/file.pdf",
+            "https://ids.xmu.edu.cn@files.example.test/file.pdf",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertFalse(self._response(url=url))
+
+    def test_identity_hostname_matching_ignores_case_port_and_dns_trailing_dot(self):
+        for url in ("https://IDS.XMU.EDU.CN:443/login", "https://ids.xmu.edu.cn./login"):
+            with self.subTest(url=url):
+                self.assertTrue(self._response(url=url))
+
     """会话过期判定分支覆盖（B1，此前零测试）：final URL / history+HTML / 标记词 / 流式 peek_body。"""
 
     @staticmethod

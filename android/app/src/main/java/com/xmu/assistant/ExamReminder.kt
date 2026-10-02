@@ -54,9 +54,25 @@ internal object ExamReminder {
      * 为当前考试列表重建提醒计划：取消旧计划，为每场未完成考试调度一个闹钟。
      * 幂等：重复调用只保留最新计划。
      */
-    fun schedule(context: Context, settings: ExamReminderSettings, exams: List<XmuExam>) {
+    fun schedule(
+        context: Context,
+        settings: ExamReminderSettings,
+        exams: List<XmuExam>,
+        expectedPlan: ExamReminderPlanToken? = null,
+    ) {
+        ExamReminderPlans.replace(context, expectedPlan) { planToken ->
+            registerPlan(context, settings, exams, planToken)
+        }
+    }
+
+    private fun registerPlan(
+        context: Context,
+        settings: ExamReminderSettings,
+        exams: List<XmuExam>,
+        planToken: String,
+    ) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
-        cancelAll(context)
+        cancelAlarms(context)
         if (!settings.enabled) return
 
         val now = System.currentTimeMillis()
@@ -72,7 +88,7 @@ internal object ExamReminder {
             .take(100)
         var requestCode = REQUEST_CODE_BASE
         futureExams.forEach { (exam, triggerAt) ->
-            val pendingIntent = reminderPendingIntent(context, requestCode, exam)
+            val pendingIntent = reminderPendingIntent(context, requestCode, exam, planToken)
             requestCode += 1
             // 精确闹钟：Android 12+ 需要 USE_EXACT_ALARM 或 SCHEDULE_EXACT_ALARM 权限。
             // 无权限时回退 setWindow（约 10 分钟内触发），保证基本提醒可用。
@@ -101,6 +117,10 @@ internal object ExamReminder {
     }
 
     fun cancelAll(context: Context) {
+        ExamReminderPlans.replace(context) { cancelAlarms(context) }
+    }
+
+    private fun cancelAlarms(context: Context) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         // 取消一段范围内的 requestCode（预留 100 个槽位）。
         // 用 FLAG_NO_CREATE 取已注册的实例：从未注册过的槽位直接跳过，不再为每个
@@ -160,8 +180,9 @@ internal object ExamReminder {
             }
         }
 
-    private fun reminderPendingIntent(context: Context, requestCode: Int, exam: XmuExam): PendingIntent {
+    private fun reminderPendingIntent(context: Context, requestCode: Int, exam: XmuExam, planToken: String): PendingIntent {
         val intent = Intent(context, ExamReminderReceiver::class.java).apply {
+            putExtra(ExamReminderPlans.EXTRA_TOKEN, planToken)
             putExtra("exam_id", exam.id)
             putExtra("exam_course", exam.courseName)
             putExtra("exam_date", exam.date)
@@ -202,6 +223,12 @@ internal class ExamReminderReceiver(
     private val readSettings: (Context) -> ExamReminderSettings = ::loadReminderSettings,
 ) : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        ExamReminderPlans.runIfCurrent(context, intent.getStringExtra(ExamReminderPlans.EXTRA_TOKEN)) {
+            postNotification(context, intent)
+        }
+    }
+
+    private fun postNotification(context: Context, intent: Intent) {
         val exam = XmuExam(
             id = intent.getStringExtra("exam_id").orEmpty(),
             courseName = intent.getStringExtra("exam_course").orEmpty(),

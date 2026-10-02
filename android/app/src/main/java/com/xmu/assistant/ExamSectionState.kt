@@ -168,21 +168,12 @@ internal class ExamSectionState(
         if (!requestGate.tryStart("exam-reminder")) return
         val reminderSettings = reminderSettings()
         val context = activity
-        scope.launch(Dispatchers.IO) {
-            try {
-                // 登出竞态保护（与 clearAll 的 gate 等待双保险）：执行前复查教务会话已清，
-                // 避免登出后仍用旧缓存重建闹钟（reschedule 线程可能晚于登出启动）。
-                if (scoreCookieHeader().isBlank()) return@launch
-                ExamReminder.ensureChannel(context)
-                // 聚合所有已缓存学期的考试（含未完成/已完成，schedule 内部跳过已过提醒时间的）
-                ExamReminder.schedule(context, reminderSettings, ExamCache.loadAllExams(context))
-            } finally {
-                // NonCancellable：scope 取消时普通 withContext 会抛 CancellationException 跳过 finish，
-                // 导致门永久占用（与其它分块同一修复）
-                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
-                    requestGate.finish("exam-reminder")
-                }
-            }
+        val plan = ExamReminderPlans.snapshot(context)
+        scope.launchGatedRequest(requestGate, "exam-reminder") {
+            if (scoreCookieHeader().isBlank()) return@launchGatedRequest
+            ExamReminder.ensureChannel(context)
+            // 缓存读取期间若已登出/重排，计划标识在同一锁内拒绝旧任务写回。
+            ExamReminder.schedule(context, reminderSettings, ExamCache.loadAllExams(context), expectedPlan = plan)
         }
     }
 
@@ -523,7 +514,7 @@ internal class ExamSectionState(
         loading = false
     }
 
-    /** 登出/换号清理：清状态 + 磁盘缓存 + 提醒闹钟（带 gate 竞态保护，与 clearLoggedOutUi 语义对齐）。
+    /** 登出/换号清理：清状态 + 磁盘缓存 + 作废提醒计划，与 clearLoggedOutUi 语义对齐。
      *  考试数据不含个人信息，但跟随账号会话，换号时也必须清（防串号串提醒）。 */
     fun clearAll() {
         stateGeneration++
@@ -535,12 +526,8 @@ internal class ExamSectionState(
         refreshError = ""
         autoUpdated = false
         ExamCache.clear(activity)
-        // 登出-提醒竞态保护：尝试取得 exam-reminder 门（无在途重排）再 cancelAll。
-        // 在途时不忙等（阻塞 UI 且 reschedule 线程执行前复查 scoreCookieHeader 已兜底），
-        // 仅在真正取得门时才释放（不释放他人持有的门）。
-        val acquired = requestGate.tryStart("exam-reminder")
+        // 取消会推进持久化计划标识，旧缓存读取和已排队广播都不能复活提醒。
         ExamReminder.cancelAll(activity)
-        if (acquired) requestGate.finish("exam-reminder")
     }
 
     /** rememberSaveable Saver 使用的可保存快照（顺序固定：selectedTerm, manuallySelected）。 */

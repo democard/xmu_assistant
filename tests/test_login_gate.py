@@ -161,7 +161,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
 
         with mock.patch("xmu_rollcall.desktop_qt.app.xmulogin", return_value=session), \
              mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
-             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+             mock.patch("xmu_rollcall.login_persistence.save_session") as save_session_mock:
             DashboardWindow._login_worker(host, "1001", "secret", 7)
 
         save_config_mock.assert_not_called()
@@ -199,7 +199,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         )
         host.log = host.logs.append
         with mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
-             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+             mock.patch("xmu_rollcall.login_persistence.save_session") as save_session_mock:
             DashboardWindow._ev_login_success(
                 host,
                 ("login_success", session, None, 7, "1001", "secret", "Alice"),
@@ -255,10 +255,10 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         host.events = []
         host._emit = host.events.append
 
-        with mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
-             mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
-             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock, \
-             mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value="cookies.json"):
+        with mock.patch("xmu_rollcall.login_persistence.load_config", return_value=config), \
+             mock.patch("xmu_rollcall.login_persistence.save_config") as save_config_mock, \
+             mock.patch("xmu_rollcall.login_persistence.save_session") as save_session_mock, \
+             mock.patch("xmu_rollcall.login_persistence.get_cookies_path", return_value="cookies.json"):
             DashboardWindow._ev_login_success(
                 host,
                 ("login_success", session, None, 7, "1001", "secret", "Alice"),
@@ -272,7 +272,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
             DashboardWindow._ev_login_persisted(host, host.events.pop())
 
         save_config_mock.assert_called_once_with(config)
-        save_session_mock.assert_called_once_with(session, "cookies.json")
+        save_session_mock.assert_called_once_with(session, "cookies.json", strict=True)
         self.assertIs(host.session, session)
         self.assertEqual(host.account["username"], "1001")
         self.assertEqual(config["current_account_id"], host.account["id"])
@@ -312,9 +312,9 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
                 "written_account": dict(config["accounts"][0]),
                 "cookie": None,
             }
-            with mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value=str(cookie_path)), \
-                 mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
-                 mock.patch("xmu_rollcall.desktop_qt.app.save_config") as saved:
+            with mock.patch("xmu_rollcall.login_persistence.get_cookies_path", return_value=str(cookie_path)), \
+                 mock.patch("xmu_rollcall.login_persistence.load_config", return_value=config), \
+                 mock.patch("xmu_rollcall.login_persistence.save_config") as saved:
                 DashboardWindow._ev_login_persisted(
                     host, ("login_persisted", session, {"id": 1}, 7, "", undo)
                 )
@@ -356,9 +356,9 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
                 "written_account": written,
                 "cookie": b"old-cookie",
             }
-            with mock.patch("xmu_rollcall.desktop_qt.app.get_cookies_path", return_value=str(cookie_path)), \
-                 mock.patch("xmu_rollcall.desktop_qt.app.load_config", return_value=config), \
-                 mock.patch("xmu_rollcall.desktop_qt.app.save_config"):
+            with mock.patch("xmu_rollcall.login_persistence.get_cookies_path", return_value=str(cookie_path)), \
+                 mock.patch("xmu_rollcall.login_persistence.load_config", return_value=config), \
+                 mock.patch("xmu_rollcall.login_persistence.save_config"):
                 DashboardWindow._discard_persisted_login_worker(host, session, undo, False)
             self.assertEqual(cookie_path.read_bytes(), b"old-cookie")
         self.assertEqual(config["accounts"], [prior])
@@ -370,7 +370,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         host._emit = host.events.append
         with mock.patch("xmu_rollcall.desktop_qt.app.xmulogin", return_value=None), \
              mock.patch("xmu_rollcall.desktop_qt.app.save_config") as save_config_mock, \
-             mock.patch("xmu_rollcall.desktop_qt.app.save_session") as save_session_mock:
+             mock.patch("xmu_rollcall.login_persistence.save_session") as save_session_mock:
             DashboardWindow._login_worker(host, "1001", "wrong", 3)
         save_config_mock.assert_not_called()
         save_session_mock.assert_not_called()

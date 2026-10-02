@@ -128,8 +128,10 @@ class StartupSessionLifecycleTest {
             try {
                 assertTrue(entered.await(5, TimeUnit.SECONDS))
                 controller.pause().stop().destroy()
+                gate.coordinator.invalidate()
                 assertFalse("blocking request has not returned yet", job.isCompleted)
                 assertNull("another login must not overlap the still-running operation", gate.start())
+                assertFalse("academic login must wait for the old request too", gate.coordinator.tryStartAcademicCasLogin())
             } finally {
                 release.countDown()
             }
@@ -158,13 +160,15 @@ class StartupSessionLifecycleTest {
             io.drain() // Old IO is complete, while its main-thread result is still queued.
             epoch.attachOwner()
             gate.coordinator.invalidate()
-            val newToken = requireNotNull(gate.start())
+            assertNull("The old task has not completed its cleanup yet", gate.start())
 
             main.drain()
             io.drain()
 
             assertTrue(job.isCompleted)
             assertEquals(0, callbacks)
+            val newToken = requireNotNull(gate.start())
+            gate.finish(oldToken)
             assertTrue(gate.coordinator.accepts(newToken))
             assertNull(gate.start())
         } finally {

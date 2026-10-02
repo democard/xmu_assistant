@@ -163,6 +163,28 @@ class SessionRecoveryTest {
     }
 
     @Test
+    fun `invalidating results keeps both login domains blocked until the old operation finishes`() {
+        val coordinator = SessionRecoveryCoordinator()
+        val oldLogin = requireNotNull(coordinator.tryStartAutoLogin())
+
+        coordinator.invalidate()
+
+        assertFalse(coordinator.accepts(oldLogin))
+        assertNull("A stale login may still be running its blocking request", coordinator.tryStartAutoLogin())
+        assertFalse("An academic login must not overlap the stale identity request", coordinator.tryStartAcademicCasLogin())
+
+        coordinator.finishAutoLogin(oldLogin)
+        assertTrue(coordinator.tryStartAcademicCasLogin())
+        coordinator.finishAcademicCasLogin()
+        val newLogin = requireNotNull(coordinator.tryStartAutoLogin())
+        coordinator.finishAutoLogin(oldLogin)
+        assertTrue(coordinator.accepts(newLogin))
+        assertNull("Repeated stale completion must not release the new login", coordinator.tryStartAutoLogin())
+        coordinator.finishAutoLogin(newLogin)
+        assertNotNull(coordinator.tryStartAutoLogin())
+    }
+
+    @Test
     fun `finished and invalidated auto login work is rejected`() {
         val coordinator = SessionRecoveryCoordinator()
         val completed = requireNotNull(coordinator.tryStartAutoLogin())
@@ -174,6 +196,8 @@ class SessionRecoveryTest {
         val stale = requireNotNull(coordinator.tryStartAutoLogin())
         coordinator.invalidate()
         assertFalse(coordinator.accepts(stale))
+        assertNull(coordinator.tryStartAutoLogin())
+        coordinator.finishAutoLogin(stale)
         assertNotNull(coordinator.tryStartAutoLogin())
     }
 

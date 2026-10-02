@@ -27,6 +27,7 @@ from xmu_rollcall.desktop_qt.notifications_page import NotificationsPageMixin  #
 from xmu_rollcall.desktop_qt.overview_page import OverviewPageMixin  # noqa: E402
 from xmu_rollcall.desktop_qt.settings_page import SettingsPageMixin  # noqa: E402
 from xmu_rollcall.desktop_qt.startup_registry import StartupRegistryMixin  # noqa: E402
+from xmu_rollcall.desktop_qt.table_view import TableViewMixin
 from xmu_rollcall.desktop_qt.tray import TrayMixin  # noqa: E402
 from xmu_rollcall.desktop_qt.tutorial_page import TutorialPageMixin  # noqa: E402
 from xmu_rollcall.desktop_qt.ui_snapshot import UiSnapshotMixin  # noqa: E402
@@ -38,6 +39,7 @@ QT_BUILTINS = {
 }
 
 MIXINS = (
+    ("table_view.py", "TableViewMixin", TableViewMixin),
     ("courseware_page.py", "CoursewarePageMixin", CoursewarePageMixin),
     ("courses_page.py", "CoursesPageMixin", CoursesPageMixin),
     ("notifications_page.py", "NotificationsPageMixin", NotificationsPageMixin),

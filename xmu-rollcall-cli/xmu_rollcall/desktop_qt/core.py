@@ -41,6 +41,7 @@ from ..utils import (
     unwrap_list,
 )
 from ..verify import find_number_code
+from ..worker_sessions import ThreadLocalSessions, close_cloned_session
 
 # 课程列表端点单一来源（2026-08-28 C3 单点化）：原为与 courseware.py 逐字重复的
 # 双份元组，漂移只能靠 B11 守护事后拦截；改导入后结构上不可能漂移。
@@ -97,6 +98,7 @@ class MonitorWorker(threading.Thread):
         # 独立 cookiejar：避免与课件池/应答 worker 并发请求时竞争写入主 session 的
         # cookiejar（requests 不保证 Session 线程安全）。轮询是只读 GET，无 cookie 回写需求。
         self.session = clone_session(session)
+        self._source_session = session
         # C2：轮询逻辑统一走 RollcallEngine（拉取→会话判定→解析唯一实现），
         # 去重集合仍保留在本 worker（状态所有者），杜绝 engine/core 双份逻辑漂移。
         self.engine = RollcallEngine(self.session)
@@ -114,6 +116,12 @@ class MonitorWorker(threading.Thread):
         self.last_payload = {"rollcalls": []}
 
     def run(self):
+        try:
+            self._run_poll_loop()
+        finally:
+            close_cloned_session(self.session, self._source_session)
+
+    def _run_poll_loop(self):
         # stop_event 同时作为本轮 worker 的身份令牌。GUI 可据它丢弃
         # 旧 worker 在换号/停止后才送达的事件，又不破坏旧的元组前缀。
         self.emit(("monitor_status", "运行中", self.stop_event))
@@ -575,7 +583,6 @@ def fetch_course_rollcall_records(
     # 与 courseware.fetch_courseware 同款做法：每线程持有独立克隆 Session（threadlocal），
     # 避免 N 线程并发共用主 session 的 cookiejar 竞争写（requests 不保证 Session 线程安全）。
     # 签到列表是只读 GET，无 Set-Cookie 回写需求，clone 用完即弃。
-    thread_local = threading.local()
     # 熔断事件：某课程确认会话过期（终态）后，同池排队任务入口检查即跳过，
     # 不再对登录域空跑剩余请求（镜像阶段二 verify_recent_rollcall_records
     # 的 stop 模式；executor.map 抛出后线程池仍会执行已提交任务）。
@@ -586,10 +593,7 @@ def fetch_course_rollcall_records(
         # 而不是为每门课生成一条"未知"错误记录后继续打身份域（与 retry_request 语义一致）。
         if stop.is_set():
             return [], None
-        thread_session = getattr(thread_local, "session", None)
-        if thread_session is None:
-            thread_session = clone_session(session)
-            thread_local.session = thread_session
+        thread_session = worker_sessions.get()
 
         endpoints = tuple(
             template.format(course_id=course["id"], student_id=student_id)
@@ -650,7 +654,7 @@ def fetch_course_rollcall_records(
     max_workers = min(COURSE_ROLLCALL_WORKERS, len(courses))
     records: list[CourseRollcallRecord] = []
     endpoint_hits: list[str] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadLocalSessions(session, clone_session) as worker_sessions, ThreadPoolExecutor(max_workers=max_workers) as executor:
         # executor.map 按提交顺序产出结果，保证 records 的课程顺序与原串行实现一致。
         for course_records, rollcall_endpoint in executor.map(fetch_one_course, courses):
             records.extend(course_records)
@@ -689,16 +693,12 @@ def verify_recent_rollcall_records(
 
     # 每次调用独立的 threadlocal：与 fetch_course_rollcall_records 的克隆会话
     # 策略一致（只读 GET 无 cookie 回写需求，clone 用完即弃）。
-    thread_local = threading.local()
     stop = threading.Event()
 
     def verify_one(record: CourseRollcallRecord):
         if stop.is_set():
             return None
-        thread_session = getattr(thread_local, "session", None)
-        if thread_session is None:
-            thread_session = clone_session(session)
-            thread_local.session = thread_session
+        thread_session = worker_sessions.get()
         try:
             detail = fetch_student_rollcall_detail(thread_session, record.rollcall_id)
         except SessionExpiredError:
@@ -726,7 +726,7 @@ def verify_recent_rollcall_records(
 
     verified_records: list[CourseRollcallRecord] = []
     max_workers = min(COURSE_ROLLCALL_WORKERS, len(candidates))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadLocalSessions(session, clone_session) as worker_sessions, ThreadPoolExecutor(max_workers=max_workers) as executor:
         try:
             for updated in executor.map(verify_one, candidates):
                 if updated is not None:

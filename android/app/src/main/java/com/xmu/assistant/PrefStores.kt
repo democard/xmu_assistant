@@ -37,6 +37,8 @@ package com.xmu.assistant
  *    键：cookie（归属账号标识，换号失效判据）/ notified_ids_ordered /
  *    completed_ids_ordered（两类有界 FIFO）/ answer_attempts（回执不明写请求计数）；
  *    seen_ids / seen_ids_ordered 仅用于旧版迁移。
+ * 6. exam_reminder        【明文】考试提醒计划标识（随机值，不含账号/考试内容）。
+ *    键：active_plan；取消/重排时替换，使已排队的旧广播失效。登出后保留失效标识。
  *
  * ── 登出清理链对照（clearLoggedOutUi，MainActivity；2026-08-29 与实现逐行核对）─
  * 登出时实际清理：会话键（cookie_header/score_cookie_header/score_records_json/
@@ -60,5 +62,6 @@ internal object PrefStores {
         "schedule_widget",
         "widget_mirror",
         "rollcall_seen",
+        "exam_reminder",
     )
 }

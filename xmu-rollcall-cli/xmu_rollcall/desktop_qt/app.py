@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import os
 import sys
 import threading
@@ -12,24 +11,20 @@ from pathlib import Path
 
 import requests
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QKeySequence, QPalette, QPixmap, QShortcut
+from PySide6.QtGui import QFont, QGuiApplication, QKeySequence, QPalette, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QAbstractItemView,
     QMessageBox,
     QStackedWidget,
     QSystemTrayIcon,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -50,18 +45,16 @@ from .single_instance import (
 )
 from .startup_registry import StartupRegistryMixin
 from .tray import TrayMixin
+from .table_view import TableViewMixin
 from ..config import (
-    add_account,
     CONFIG_LOCK,
     get_app_settings,
-    get_all_accounts,
     get_cookies_path,
     get_current_account,
     get_notification_settings,
     get_rollcall_settings,
     load_config,
     save_config,
-    set_current_account,
     set_app_settings,
     set_rollcall_settings,
 )
@@ -70,10 +63,12 @@ from ..courseware import (
     CoursewareItem,
     reset_modules_cache,
 )
+from .. import login_persistence
 from ..engine import RollcallEngine
 from ..rollcall_progress import RollcallProgress, summarize_rollcall_progress, wait_before_answer_satisfied
 from ..rollcall_models import rollcall_is_expired
 from ..verify import find_number_code
+from ..worker_sessions import close_cloned_session
 from ..proxy_guard import disable_system_proxies
 from ..notifications import (
     NotificationMessage,
@@ -91,7 +86,6 @@ from ..utils import (
     late_worker_result_accepted,
     load_session,
     merge_worker_session_cookies,
-    save_session,
     tune_session,
     verify_session,
 )
@@ -134,6 +128,7 @@ from .ui_snapshot import (
 
 
 class DashboardWindow(
+    TableViewMixin,
     TrayMixin,
     NotificationsPageMixin,
     TutorialPageMixin,
@@ -429,140 +424,6 @@ class DashboardWindow(
             start_year = datetime.now().year
         return [f"{year}-{year + 1}" for year in range(start_year + 1, start_year - 6, -1)]
 
-    def _make_table(self, headers: tuple[str, ...], widths: tuple[int, ...]) -> QTableWidget:
-        table = QTableWidget(0, len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.setAlternatingRowColors(True)
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        for index, width in enumerate(widths):
-            table.setColumnWidth(index, width)
-        return table
-
-    def _set_table_rows(
-        self,
-        table: QTableWidget,
-        rows: list[tuple],
-        row_ids: list[str] | None = None,
-        centered_columns: tuple[int, ...] = (),
-        status_column: int | None = None,
-    ):
-        if row_ids is not None and (len(row_ids) != len(rows) or len(set(row_ids)) != len(row_ids)):
-            raise ValueError("表格行标识必须唯一且与数据行数一致")
-        old_ids = [
-            table.item(row, 0).data(Qt.ItemDataRole.UserRole) if table.item(row, 0) else None
-            for row in range(table.rowCount())
-        ]
-        current_row, current_column = table.currentRow(), table.currentColumn()
-        current_id = old_ids[current_row] if 0 <= current_row < len(old_ids) else None
-        had_selection = bool(table.selectedItems())
-        top_row = table.rowAt(0)
-        top_id = old_ids[top_row] if 0 <= top_row < len(old_ids) else None
-        top_item = table.item(top_row, 0) if top_row >= 0 else None
-        top_offset = table.visualItemRect(top_item).top() if top_item else 0
-        vertical, horizontal = table.verticalScrollBar().value(), table.horizontalScrollBar().value()
-        style_signature = (status_column, tuple(sorted(self._ui_palette().items()))) if status_column is not None else None
-        style_changed = getattr(table, "_xmu_status_style", None) != style_signature
-        signals_blocked = table.blockSignals(True)
-        updates_enabled = table.updatesEnabled()
-        table.setUpdatesEnabled(False)
-        try:
-            # 空态占位跨列且不可选，不能作为第一条真实事件继续复用。
-            if table.rowCount() and table.columnSpan(0, 0) > 1:
-                table.clearSpans()
-            if row_ids is not None:
-                wanted = set(row_ids)
-                live_ids = list(old_ids)
-                for index in range(len(live_ids) - 1, -1, -1):
-                    if live_ids[index] not in wanted:
-                        table.removeRow(index)
-                        live_ids.pop(index)
-                if not live_ids:
-                    table.setRowCount(len(rows))
-                else:
-                    for index, row_id in enumerate(row_ids):
-                        if index < len(live_ids) and live_ids[index] == row_id:
-                            continue
-                        # 只移动顺序改变的行；保留其原有 item、角色数据和样式。
-                        moved = []
-                        if row_id in live_ids[index:]:
-                            old_index = live_ids.index(row_id, index)
-                            moved = [table.takeItem(old_index, column) for column in range(table.columnCount())]
-                            table.removeRow(old_index)
-                            live_ids.pop(old_index)
-                        table.insertRow(index)
-                        live_ids.insert(index, row_id)
-                        for column, item in enumerate(moved):
-                            if item is not None:
-                                table.setItem(index, column, item)
-            elif table.rowCount() != len(rows):
-                table.setRowCount(len(rows))
-
-            for row_index, values in enumerate(rows):
-                for column, value in enumerate(values):
-                    text = str(value)
-                    item = table.item(row_index, column)
-                    created = item is None
-                    text_changed = created or item.text() != text
-                    if created:
-                        item = QTableWidgetItem(text)
-                    elif text_changed:
-                        item.setText(text)
-                    if column == 0:
-                        row_id = row_ids[row_index] if row_ids is not None else None
-                        if item.data(Qt.ItemDataRole.UserRole) != row_id:
-                            item.setData(Qt.ItemDataRole.UserRole, row_id)
-                    alignment = Qt.AlignmentFlag.AlignCenter if column in centered_columns else Qt.AlignmentFlag(0)
-                    if item.textAlignment() != alignment:
-                        item.setTextAlignment(alignment)
-                    if column == status_column and (text_changed or style_changed):
-                        self._style_status_item(item, text)
-                    if created:
-                        table.setItem(row_index, column, item)
-            table._xmu_status_style = style_signature
-
-            if row_ids is not None and current_id is not None:
-                if current_id in row_ids:
-                    new_row = row_ids.index(current_id)
-                    if (table.currentRow(), table.currentColumn()) != (new_row, current_column):
-                        table.setCurrentCell(new_row, current_column)
-                    if not had_selection:
-                        table.clearSelection()
-                else:
-                    # 删除的事件不能悄悄变为另一条签到的操作目标。
-                    table.clearSelection()
-                    table.setCurrentCell(-1, -1)
-            if row_ids is not None and old_ids != row_ids and top_id in row_ids:
-                table.scrollToItem(table.item(row_ids.index(top_id), 0), QAbstractItemView.ScrollHint.PositionAtTop)
-                if table.verticalScrollMode() == QAbstractItemView.ScrollMode.ScrollPerPixel:
-                    table.verticalScrollBar().setValue(table.verticalScrollBar().value() - top_offset)
-            else:
-                table.verticalScrollBar().setValue(vertical)
-            table.horizontalScrollBar().setValue(horizontal)
-        finally:
-            table.blockSignals(signals_blocked)
-            table.setUpdatesEnabled(updates_enabled)
-
-    def _style_status_item(self, item: QTableWidgetItem, status: str):
-        pal = self._ui_palette()
-        mapping = {
-            "未签": (pal["status_unsigned_fg"], pal["status_unsigned_bg"]),
-            "未知": (pal["status_unknown_fg"], pal["status_unknown_bg"]),
-            "已签": (pal["status_signed_fg"], pal["status_signed_bg"]),
-            "无记录": (pal["status_none_fg"], pal["status_none_bg"]),
-            "失败": (pal["status_unsigned_fg"], pal["status_unsigned_bg"]),
-            "跳过": (pal["status_none_fg"], pal["status_none_bg"]),
-            "处理中": (pal["status_unknown_fg"], pal["status_unknown_bg"]),
-        }
-        foreground, background = mapping.get(status, (pal["status_none_fg"], pal["status_none_bg"]))
-        item.setForeground(QColor(foreground))
-        item.setBackground(QColor(background))
-        item.setFont(QFont("Microsoft YaHei UI", 9, QFont.Weight.DemiBold))
-
     def _run_thread(self, target, *args):
         threading.Thread(target=target, args=args, daemon=True).start()
 
@@ -853,6 +714,7 @@ class DashboardWindow(
             self.log(f"自动恢复检查失败：{exc}")
 
     def _restore_worker(self, silent=False, login_epoch: int = -1):
+        session = None
         try:
             account = get_current_account(load_config())
             if not account:
@@ -872,8 +734,15 @@ class DashboardWindow(
                 self._emit(("restore_failed", "登录态已失效，请重新登录。", silent, login_epoch))
                 return
             self._emit(("login_success", session, account, login_epoch))
+            session = None  # Ownership transfers to the queued event handler.
         except Exception as exc:
             self._emit(("restore_failed", str(exc), silent, login_epoch))
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
 
     def logout(self):
         if not self.account and not self.session:
@@ -915,8 +784,13 @@ class DashboardWindow(
         self.courseware_download_in_progress = False
         self.courseware_download_status = {}
         account = self.account
+        previous_session = self.session
         self.session = None
         self.account = None
+        try:
+            previous_session.close()
+        except Exception:
+            pass
         self.password_input.clear()
         self._set_login_status("未登录", warn=True)
         self.metric_account.setText("未登录")
@@ -1189,7 +1063,12 @@ class DashboardWindow(
                 self._emit(("error", "应答失败：登录已过期，请重新登录", None, source_session))
         finally:
             # 把 worker 克隆内新增/旋转的 cookie 合并回主会话（GUI 线程收到后单点写）
-            self._emit(("merge_session_cookies", session, worker_account_id, None, source_session))
+            try:
+                self._emit(("merge_session_cookies", session, worker_account_id, None, source_session))
+            finally:
+                # Closing releases connection pools; the queued merge still
+                # owns the CookieJar, including after cancellation or failure.
+                close_cloned_session(session, source_session)
         self._emit((
             "answer_result", event_id, ok, detail, True, True,
             (auto_context or {}).get("task_token"),
@@ -1325,7 +1204,16 @@ class DashboardWindow(
             username, password, name = event[4:7]
             self._login_persisting = True
             self._login_persist_cancel_remove_cookie = False
-            self._run_thread(self._persist_login_worker, session, username, password, name, worker_epoch)
+            try:
+                self._run_thread(self._persist_login_worker, session, username, password, name, worker_epoch)
+            except Exception as exc:
+                self._login_persisting = False
+                if session is not self.session:
+                    try:
+                        session.close()
+                    except Exception:
+                        pass
+                self._ev_login_failed(("login_failed", str(exc), worker_epoch))
             return
         self._login_persisting = False
         self._login_in_progress = False
@@ -1343,7 +1231,13 @@ class DashboardWindow(
         self._cancel_all_pending_answers()
         if self.monitor_worker is not None:
             self.stop_monitor()
+        previous_session = self.session
         self.session = tune_session(session)
+        if previous_session is not None and previous_session is not self.session:
+            try:
+                previous_session.close()
+            except Exception:
+                pass
         self.account = account
         # 跨账号防护：本地快照属于其他账号时立即丢弃，避免串号展示
         if self._snapshot_account_id and str(account.get("id")) != self._snapshot_account_id:
@@ -1400,36 +1294,8 @@ class DashboardWindow(
         self._refresh_after_login()
 
     def _persist_login_worker(self, session, username, password, name, login_epoch):
-        account = None
-        undo = None
-        try:
-            with CONFIG_LOCK:
-                config = load_config()
-                account = next(
-                    (item for item in get_all_accounts(config) if item.get("username") == username),
-                    None,
-                )
-                undo = {
-                    "current_account_id": config.get("current_account_id"),
-                    "account": copy.deepcopy(account),
-                }
-                if account is None:
-                    account_id = add_account(config, username, password, name)
-                    account = next(item for item in get_all_accounts(config) if item.get("id") == account_id)
-                else:
-                    account["password"] = password
-                    account["name"] = name
-                set_current_account(config, account["id"])
-                set_rollcall_settings(account, get_rollcall_settings(account))
-                cookie_path = get_cookies_path(account["id"])
-                undo["cookie"] = Path(cookie_path).read_bytes() if os.path.exists(cookie_path) else None
-                undo["account_id"] = account["id"]
-                undo["written_account"] = copy.deepcopy(account)
-                save_config(config)
-                save_session(session, cookie_path)
-            self._emit(("login_persisted", session, account, login_epoch, "", undo))
-        except Exception as exc:
-            self._emit(("login_persisted", session, account, login_epoch, str(exc), undo))
+        result = login_persistence.persist_login(session, username, password, name)
+        self._emit(("login_persisted", session, result.account, login_epoch, result.error, result.undo))
 
     def _ev_login_persisted(self, event):
         session, account, login_epoch, error = event[1:5]
@@ -1454,61 +1320,16 @@ class DashboardWindow(
         self._ev_login_success(("login_success", session, account, login_epoch))
 
     def _discard_persisted_login_worker(self, session, undo, remove_cookie):
-        errors = []
         try:
-            if undo and "account_id" in undo:
-                with CONFIG_LOCK:
-                    try:
-                        config = load_config()
-                        account_id = undo["account_id"]
-                        account = next(
-                            (item for item in get_all_accounts(config) if str(item.get("id")) == str(account_id)),
-                            None,
-                        )
-                        prior = undo["account"]
-                        written = undo["written_account"]
-                        if prior is None:
-                            if account == written:
-                                config["accounts"] = [
-                                    item for item in config["accounts"]
-                                    if str(item.get("id")) != str(account_id)
-                                ]
-                        elif account:
-                            for key in ("password", "name", "rollcall_settings"):
-                                if account.get(key) == written.get(key):
-                                    if key in prior:
-                                        account[key] = prior[key]
-                                    else:
-                                        account.pop(key, None)
-                        if str(config.get("current_account_id")) == str(account_id):
-                            config["current_account_id"] = undo["current_account_id"]
-                        save_config(config)
-                    except Exception as exc:
-                        errors.append(f"配置回滚失败：{exc}")
-                    try:
-                        path = get_cookies_path(undo["account_id"])
-                        prior_cookie = None if remove_cookie else undo.get("cookie")
-                        if prior_cookie is None:
-                            if os.path.exists(path):
-                                os.remove(path)
-                        else:
-                            tmp_path = f"{path}.tmp"
-                            try:
-                                Path(tmp_path).write_bytes(prior_cookie)
-                                os.replace(tmp_path, path)
-                            finally:
-                                if os.path.exists(tmp_path):
-                                    os.remove(tmp_path)
-                    except Exception as exc:
-                        errors.append(f"Cookie 回滚失败：{exc}")
+            error = login_persistence.rollback_login(undo, remove_cookie=remove_cookie)
         except Exception as exc:
-            errors.append(str(exc))
+            error = str(exc)
         finally:
             try:
                 session.close()
             except Exception:
                 pass
-            self._emit(("login_persist_discarded", "；".join(errors)))
+        self._emit(("login_persist_discarded", error))
 
     def _ev_login_persist_discarded(self, event):
         self._login_persisting = False
@@ -2218,16 +2039,6 @@ class DashboardWindow(
         event.result = result
         event.detail = detail
         self._refresh_event_tables()
-
-    def _set_table_empty_state(self, table: QTableWidget, message: str) -> None:
-        table.setRowCount(0)
-        table.insertRow(0)
-        item = QTableWidgetItem(message)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        item.setForeground(QColor(self._ui_palette()["empty_text"]))
-        table.setItem(0, 0, item)
-        table.setSpan(0, 0, 1, table.columnCount())
 
     def _tick_runtime(self):
         if self.started_at and self.monitor_worker and self.monitor_worker.is_alive():

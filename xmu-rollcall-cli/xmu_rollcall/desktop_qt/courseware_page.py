@@ -40,6 +40,7 @@ from ..courseware import (
 )
 from ..notifications import friendly_error_message
 from ..utils import clone_session
+from ..worker_sessions import close_cloned_session
 from .core import current_academic_year_label
 from .icons import app_asset_path
 
@@ -204,7 +205,8 @@ class CoursewarePageMixin:
         worker_account_id = str((self.account or {}).get("id") or "")
         # 克隆会话：与签到情况 worker 并发启动（_refresh_after_login），
         # 不能直接共用主 Session（requests.Session 非线程安全）
-        worker_session = clone_session(self.session) if self.session is not None else None
+        worker_source_session = self.session
+        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
         if worker_session is None:
             self._emit(("courseware_courses_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
             return
@@ -213,6 +215,8 @@ class CoursewarePageMixin:
             self._emit(("courseware_courses", courses, source, worker_account_id))
         except Exception as exc:
             self._emit(("courseware_courses_error", str(exc), silent, worker_account_id))
+        finally:
+            close_cloned_session(worker_session, worker_source_session)
 
     def refresh_selected_courseware(self, silent=False):
         if not self._require_login(silent=silent):
@@ -256,6 +260,8 @@ class CoursewarePageMixin:
             self._emit(("courseware", course, fetch_courseware(worker_session, course.course_id), worker_account_id))
         except Exception as exc:
             self._emit(("courseware_error", str(exc), silent, worker_account_id))
+        finally:
+            close_cloned_session(worker_session, worker_source_session)
 
     def choose_courseware_download_dir(self):
         selected = QFileDialog.getExistingDirectory(
@@ -449,6 +455,9 @@ class CoursewarePageMixin:
                         key, f"下载失败：{self._short_courseware_error(exc)}",
                     ))
         finally:
+            # Session.close releases sockets but preserves its CookieJar for
+            # the queued GUI merge, including when the batch is stale.
+            close_cloned_session(worker_session, worker_source_session)
             # M4：无论成功还是中途异常都必须发出完成事件（GUI 据此复位
             # courseware_download_in_progress），否则异常逃逸会让后续下载永久被拦。
             # 先合并克隆内新增/旋转的 cookie 回主会话（GUI 单点写），再发完成事件。
