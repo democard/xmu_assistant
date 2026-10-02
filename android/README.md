@@ -4,7 +4,7 @@
 
 当前版本 **1.7.3 / versionCode 30**，支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35。
 
-[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md)
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 使用入口
 

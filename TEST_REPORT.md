@@ -41,11 +41,11 @@ Android 源码编译、单元测试和 Lint 实际执行完成，构建结果为
 
 证据：
 
-- [桌面完整测试日志](build/project-scan-python-final.log)
-- [Android 构建与验证日志](build/project-scan-android-final.log)
-- [Android 单元测试报告](android/app/build/reports/tests/testDebugUnitTest/index.html)
-- [Android Lint 报告](android/app/build/reports/lint-results-debug.html)
-- [原版代码失败复现日志](build/project-scan-before-reproduction.log)
+- 桌面完整测试日志（`build/project-scan-python-final.log`，仅本地保存）
+- Android 构建与验证日志（`build/project-scan-android-final.log`，仅本地保存）
+- Android 单元测试报告（`android/app/build/reports/tests/testDebugUnitTest/index.html`，仅本地保存）
+- Android Lint 报告（`android/app/build/reports/lint-results-debug.html`，仅本地保存）
+- 原版代码失败复现日志（`build/project-scan-before-reproduction.log`，仅本地保存）
 
 原版复现使用 `build/project-scan-before/` 内从 Git HEAD 提取的隔离源码，配合本轮新增测试，不替换工作区实现。选定的错误续传、压缩下载和非法端口用例出现预期失败（pytest 统计 11 个失败，含子测试；1 项通过），证明回归用例能识别旧行为。
 
@@ -90,14 +90,14 @@ Android 源码编译、单元测试和 Lint 实际执行完成，构建结果为
 
 ### 统一验证与证据
 
-- 桌面完整测试：**481 passed，144 subtests passed**，见 [最终测试日志](build/scan2/python-final.log)。
-- Python 致命语法/名称静态检查及编译检查通过，见 [静态检查日志](build/scan2/python-static.log)。
-- Android 完整 Debug 测试：**610 项，0 失败、0 错误、0 跳过**；Lint **0 错误、6 警告、12 条提示**。构建成功，见 [完整验证日志](build/scan2/android-final.log)。
-- `networkBenchmark` 变体编译和定向模式/安全测试通过：**4 项，0 失败、0 错误、0 跳过**，见 [变体验证日志](build/scan2/android-benchmark-final.log)。只运行本地测试，没有实际校园网络基准请求。
+- 桌面完整测试：**481 passed，144 subtests passed**，见 最终测试日志（`build/scan2/python-final.log`，仅本地保存）。
+- Python 致命语法/名称静态检查及编译检查通过，见 静态检查日志（`build/scan2/python-static.log`，仅本地保存）。
+- Android 完整 Debug 测试：**610 项，0 失败、0 错误、0 跳过**；Lint **0 错误、6 警告、12 条提示**。构建成功，见 完整验证日志（`build/scan2/android-final.log`，仅本地保存）。
+- `networkBenchmark` 变体编译和定向模式/安全测试通过：**4 项，0 失败、0 错误、0 跳过**，见 变体验证日志（`build/scan2/android-benchmark-final.log`，仅本地保存）。只运行本地测试，没有实际校园网络基准请求。
 - `git diff --check`：通过。
-- 实际 wheel 资源与图标加载验证通过，见 [打包日志](build/scan2/python-wheel-final.log)及[隔离加载结果](build/scan2/wheel-smoke-final.log)。
-- 修复前复现：从本轮开始状态创建隔离源码副本，带入新增回归，缓存隔离、fragment 直链、旧批次完成和进度四项按预期失败；当前源码均通过，见 [复现日志](build/scan2/python-before-reproduction.log)。网络基准变体在修复前有明确编译失败，见 [变体失败日志](build/scan2/android-benchmark.log)。旧 wheel 缺少资源且 Qt 图标为空，见 [旧 wheel 检查](build/scan2/wheel-smoke.log)。
-- 三份扫描底稿与覆盖清单： [桌面](build/scan2/desktop-scan.md)、[Android 核心](build/scan2/android-core-scan.md)、[Android 功能](build/scan2/android-features-scan.md)。底稿中的候选问题以本报告的审核结论为准。
+- 实际 wheel 资源与图标加载验证通过，见 打包日志（`build/scan2/python-wheel-final.log`，仅本地保存）及隔离加载结果（`build/scan2/wheel-smoke-final.log`，仅本地保存）。
+- 修复前复现：从本轮开始状态创建隔离源码副本，带入新增回归，缓存隔离、fragment 直链、旧批次完成和进度四项按预期失败；当前源码均通过，见 复现日志（`build/scan2/python-before-reproduction.log`，仅本地保存）。网络基准变体在修复前有明确编译失败，见 变体失败日志（`build/scan2/android-benchmark.log`，仅本地保存）。旧 wheel 缺少资源且 Qt 图标为空，见 旧 wheel 检查（`build/scan2/wheel-smoke.log`，仅本地保存）。
+- 三份扫描底稿与覆盖清单： 桌面（`build/scan2/desktop-scan.md`，仅本地保存）、Android 核心（`build/scan2/android-core-scan.md`，仅本地保存）、Android 功能（`build/scan2/android-features-scan.md`，仅本地保存）。底稿中的候选问题以本报告的审核结论为准。
 
 ### 保留事项与验证边界
 
@@ -105,7 +105,7 @@ Android 源码编译、单元测试和 Lint 实际执行完成，构建结果为
 - 请求门在协程启动前取消的候选问题，尚未确认当前生命周期中存在可继续操作却被永久占用的路径；本轮不改。CAS 登录中的互斥标记保留到旧请求结束，以免登出清标记后引入两次并发登录。
 - 下载请求已发出后不会被强制中断；本轮保证旧事件不污染新账号，并在后续文件开始前检查会话。没有承诺立即撤回已进行中的文件写入。
 - ICS UID 规则改变后，再向已导入旧版本日历的同一日历导入，可能形成新旧两组事件；本轮未做旧 UID 迁移，也未实测第三方日历客户端导入。
-- 成绩图片存储测试使用 SDK 28 与真实 PNG 编码/文件写入。Windows 下 AndroidX FileProvider 无法匹配反斜杠路径，测试仅模拟该组件的 URI 映射；没有验证真机文件共享组件。压缩失败测试明确断言执行了 `compress=false` 分支。见 [分享专项测试日志](build/scan2/android-share-repair.log)。
+- 成绩图片存储测试使用 SDK 28 与真实 PNG 编码/文件写入。Windows 下 AndroidX FileProvider 无法匹配反斜杠路径，测试仅模拟该组件的 URI 映射；没有验证真机文件共享组件。压缩失败测试明确断言执行了 `compress=false` 分支。见 分享专项测试日志（`build/scan2/android-share-repair.log`，仅本地保存）。
 - 没有 Android 真机、真实校园响应、Windows 安装包或真实通知发送验收。第一轮列出的下载一致性边界继续适用。
 - 第二轮扫描结束时所有改动保留在工作区；后续打包验收记录见下节。
 
