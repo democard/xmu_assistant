@@ -9,13 +9,14 @@ import threading
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import request_probe
 from .rollcall_models import first_value as _first_value
+from .worker_sessions import ThreadLocalSessions
 from .utils import (
     API_TIMEOUT,
     DOWNLOAD_TIMEOUT,
@@ -422,13 +423,7 @@ def fetch_courseware(session, course_id: str) -> list[CoursewareItem]:
         # 每个线程持有独立 Session（threadlocal）：避免 8 线程并发请求共用主
         # session 的 cookiejar 竞争写入（requests 不保证 Session 线程安全）。
         # 课件读取是只读 API，无 Set-Cookie 回写需求，clone 用完即弃。
-        thread_session = getattr(thread_local, "session", None)
-        if thread_session is None:
-            thread_session = clone_session(session)
-            thread_local.session = thread_session
-            if thread_session is not session:
-                with worker_sessions_lock:
-                    worker_sessions.callback(thread_session.close)
+        thread_session = worker_sessions.get()
         try:
             detail = _get_json(thread_session, f"/api/activities/{activity['id']}", "课件详情读取")
             return _courseware_items_from_detail(course_id, activity, detail, module_names, syllabus_names)
@@ -442,12 +437,10 @@ def fetch_courseware(session, course_id: str) -> list[CoursewareItem]:
 
     items: list[CoursewareItem] = []
     if ordered_activities:
-        thread_local = threading.local()
-        worker_sessions_lock = threading.Lock()
         max_workers = min(COURSEWARE_DETAIL_WORKERS, len(ordered_activities))
         # Exit the executor first: a failed detail must not close a sibling's
         # connection while that worker is still reading its response.
-        with ExitStack() as worker_sessions, ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadLocalSessions(session, clone_session) as worker_sessions, ThreadPoolExecutor(max_workers=max_workers) as executor:
             for activity_items in executor.map(load_activity_items, ordered_activities):
                 items.extend(activity_items)
 

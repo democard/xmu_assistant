@@ -288,8 +288,15 @@ def response_session_expired(response, peek_body: bool = True) -> bool:
 
     peek_body=False 用于流式响应（下载），避免为探测 body 提前消费流。
     """
-    final_url = str(getattr(response, "url", "") or "").lower()
-    if any(host in final_url for host in IDENTITY_HOSTS):
+    final_url = str(getattr(response, "url", "") or "")
+    try:
+        final_host = (urlsplit(final_url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        final_host = ""
+    # Signed download URLs may include the identity domain in a filename,
+    # origin parameter or fragment. Only the actual host proves a redirect
+    # to the identity service; substring matches also accept lookalike hosts.
+    if final_host in IDENTITY_HOSTS:
         return True
     if not getattr(response, "history", None):
         return False
@@ -404,7 +411,8 @@ def _cookiejar_from_cache(payload):
     return jar
 
 
-def save_session(sess: requests.Session, path: str):
+def save_session(sess: requests.Session, path: str, *, strict: bool = False):
+    """Atomically persist cookies; strict callers can roll back failed logins."""
     tmp_path = f"{path}.tmp"
     # 与 maintenance.cleanup_orphaned_cookie_files 互斥：登录落盘的新账号
     # cookie 不得被并发孤儿清理误删（写路径与清理路径共用 CONFIG_LOCK）
@@ -431,6 +439,8 @@ def save_session(sess: requests.Session, path: str):
                 pass
             # console=False 的打包 exe 里 print 不可见，失败线索落 diag.log
             _diag_log(f"保存会话缓存失败（{path}）：{exc}")
+            if strict:
+                raise
 
 
 def load_session(sess: requests.Session, path: str):

@@ -82,6 +82,8 @@ class SessionRecoveryCoordinator(private val minProbeIntervalMillis: Long = 60_0
     private var nextGeneration = 0L
     private var probeToken: SessionWorkToken? = null
     private var autoLoginToken: SessionWorkToken? = null
+    // 结果失效不代表阻塞登录已经结束；在途标记只能由对应任务的完成路径释放。
+    private var autoLoginInFlightToken: SessionWorkToken? = null
     private var lastCompletedProbeAtMillis: Long? = null
     // academic 域（ids/jw CAS）登录的跨模块单飞门：成绩/课表/恢复模块共用，
     // 杜绝两个模块同时打身份域登录（并发 CAS 登录 = 风控红线）。
@@ -104,7 +106,7 @@ class SessionRecoveryCoordinator(private val minProbeIntervalMillis: Long = 60_0
 
     /** 尝试获取 academic CAS 登录门：已在途（含 TronClass 身份域登录在途）则拒绝（风控红线：不并发打两个身份域）。 */
     fun tryStartAcademicCasLogin(): Boolean = synchronized(lock) {
-        if (academicCasLoginInFlight || autoLoginToken != null) return false
+        if (academicCasLoginInFlight || autoLoginInFlightToken != null) return false
         academicCasLoginInFlight = true
         true
     }
@@ -116,18 +118,23 @@ class SessionRecoveryCoordinator(private val minProbeIntervalMillis: Long = 60_0
 
     fun tryStartAutoLogin(): SessionWorkToken? = synchronized(lock) {
         // 与 academic CAS 登录互斥（风控红线：不并发打两个身份域）
-        if (autoLoginToken != null || academicCasLoginInFlight) return null
-        newToken().also { autoLoginToken = it }
+        if (autoLoginInFlightToken != null || academicCasLoginInFlight) return null
+        newToken().also {
+            autoLoginToken = it
+            autoLoginInFlightToken = it
+        }
     }
 
     fun finishAutoLogin(token: SessionWorkToken) = synchronized(lock) {
         if (autoLoginToken == token) autoLoginToken = null
+        if (autoLoginInFlightToken == token) autoLoginInFlightToken = null
     }
 
     fun invalidate() = synchronized(lock) {
         nextGeneration += 1
         probeToken = null
         autoLoginToken = null
+        // 不清实际在途门：取消 Activity 或切换会话无法同步中断阻塞登录。
     }
 
     fun accepts(token: SessionWorkToken): Boolean = synchronized(lock) {

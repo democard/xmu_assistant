@@ -25,7 +25,7 @@ class PrefStoresContractTest {
     /** 源码中出现的 SharedPreferences 文件名（字面量 + 常量定义双重提取）。 */
     private fun actualFileNames(): Set<String> {
         val files = listOf(
-            "AssistantSettings.kt", "ExamCache.kt", "ScheduleWidgetData.kt",
+            "AssistantSettings.kt", "ExamCache.kt", "ExamReminderPlan.kt", "ScheduleWidgetData.kt",
             "RollcallMonitorService.kt", "ScheduleCache.kt", "MainActivity.kt",
         )
         val literal = Regex("""getSharedPreferences\("([^"]+)""")

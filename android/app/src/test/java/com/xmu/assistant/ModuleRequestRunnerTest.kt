@@ -17,13 +17,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * runModuleRequest（B1 统一会话守卫骨架）行为锁定。五 SectionState +
  * MainActivity 的模块刷新全部经此单点，回归会同时击穿多个模块：
  * - 结果回填与 loading 释放各自独立做世代判定（acceptsResult=false 时都不执行）；
  * - onFinally 是内层 finally 的无条件段（守卫拒绝路径也必须执行）；
- * - 门释放在外层 NonCancellable finally：协程取消/内层跳过都不会让 gateKey 永久占用。
+ * - 门释放在任务完成回调：启动前取消/内层跳过都不会让 gateKey 永久占用。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -42,6 +44,60 @@ class ModuleRequestRunnerTest {
     }
 
     private fun newScope() = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Test
+    fun `releases gate when its scope was cancelled before request dispatch`() {
+        val gate = RequestGate()
+        assertTrue(gate.tryStart("m"))
+        val scope = newScope()
+        scope.cancel()
+        var requests = 0
+        var callbacks = 0
+        val job = scope.runModuleRequest(
+            requestGate = gate,
+            gateKey = "m",
+            acceptsResult = { true },
+            ioWork = { requests++; 42 },
+            onResult = { callbacks++ },
+            releaseLoading = { callbacks++ },
+        )
+
+        assertTrue(awaitCondition { job.isCompleted })
+        assertTrue(job.isCancelled)
+        assertEquals(0, requests)
+        assertEquals(0, callbacks)
+        assertTrue("A cancelled owner must not retain request admission", gate.tryStart("m"))
+    }
+
+    @Test
+    fun `cancelled blocking work retains the gate until the operation returns`() {
+        val gate = RequestGate()
+        assertTrue(gate.tryStart("m"))
+        val scope = newScope()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var callbacks = 0
+        val job = scope.runModuleRequest(
+            requestGate = gate,
+            gateKey = "m",
+            acceptsResult = { true },
+            ioWork = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)); 42 },
+            onResult = { callbacks++ },
+            releaseLoading = { callbacks++ },
+        )
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            scope.cancel()
+            assertFalse(job.isCompleted)
+            assertFalse("Cancellation must not admit overlapping blocking work", gate.tryStart("m"))
+        } finally {
+            release.countDown()
+            scope.cancel()
+        }
+        assertTrue(awaitCondition { job.isCompleted })
+        assertEquals(0, callbacks)
+        assertTrue(gate.tryStart("m"))
+    }
 
     @Test
     fun `delivers result and releases loading and gate when accepted`() {
@@ -143,10 +199,10 @@ class ModuleRequestRunnerTest {
         // 若在启动前取消，launch 的 body（含 finally）根本不会执行。
         assertTrue("ioWork 未进入", awaitCondition { ioStarted.isCompleted })
         // ioWork 挂起期间取消整个 scope：内层 withContext 整段跳过（无回填/无释放），
-        // 但外层 NonCancellable finally 必须释放门（否则 gateKey 永久占用）。
+        // 但最终完成回调必须释放门（否则 gateKey 永久占用）。
         scope.cancel()
         releaseIo.complete(Unit)
-        // isCompleted（终态）才代表外层 finally（含 NonCancellable 门释放）已执行完；
+        // isCompleted（终态）才代表任务已完成；
         // isCancelled 在取消发起时即为真，不能作为收尾判据。
         assertTrue(awaitCondition { job.isCompleted })
         assertTrue(job.isCancelled)

@@ -85,6 +85,17 @@ def direct_item(url):
 
 
 class DownloadHttpIntegrationTests(unittest.TestCase):
+    def test_identity_hostname_in_download_query_does_not_expire_valid_session(self):
+        body = b"synthetic lesson PDF"
+        with loopback_server([(200, body, {})]) as (url, recorded), \
+                tempfile.TemporaryDirectory() as directory, local_session() as (session, responses):
+            target = download_courseware(
+                session, direct_item(url + "?origin=https://ids.xmu.edu.cn"), directory,
+            )
+            self.assertEqual(target.read_bytes(), body)
+            self.assertEqual(len(recorded), 1)
+            self.assertTrue(responses[0].raw.closed)
+
     def test_real_206_stream_appends_multiple_chunks_and_promotes_original_name(self):
         complete = bytes(range(256)) * 2600  # More than two 256 KiB download chunks.
         prefix_length = 65537

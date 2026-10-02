@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..utils import clone_session
+from ..worker_sessions import close_cloned_session
 from ..rollcall_progress import summarize_rollcall_progress
 from ..verify import find_number_code
 from .core import (
@@ -149,7 +150,8 @@ class CoursesPageMixin:
         # 会竞争 cookiejar/连接池；而 fetch_course_rollcall_records 入口的
         # profile+课程列表请求不走其内部线程级 clone，必须在此隔离。
         # 只读 GET 用完即弃，不回写主会话。
-        worker_session = clone_session(self.session) if self.session is not None else None
+        worker_source_session = self.session
+        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
         if worker_session is None:
             self._emit(("course_rollcalls_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
             return
@@ -169,6 +171,8 @@ class CoursesPageMixin:
             self._emit(("course_records_verified", verified, worker_account_id, "auto"))
         except Exception as exc:
             self._emit(("course_rollcalls_error", str(exc), silent, worker_account_id))
+        finally:
+            close_cloned_session(worker_session, worker_source_session)
 
     def _verify_selected_rollcall(self):
         """L2 手动核实：对表格选中行按本人签到明细判定状态并原位更新。"""
@@ -195,7 +199,8 @@ class CoursesPageMixin:
 
     def _course_verify_one_worker(self, record: CourseRollcallRecord, username: str, worker_account_id: str):
         # 克隆会话：与 GUI 线程/其他 worker 隔离（同 _course_rollcalls_worker 纪律）
-        worker_session = clone_session(self.session) if self.session is not None else None
+        worker_source_session = self.session
+        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
         if worker_session is None:
             self._emit(("course_records_verify_error", "登录状态已变更，请重新登录。", worker_account_id))
             return
@@ -208,6 +213,8 @@ class CoursesPageMixin:
             # 会话过期等失败走独立错误事件：GUI 侧解锁按钮并给重试横幅
             self._emit(("course_records_verify_error", str(exc), worker_account_id))
             return
+        finally:
+            close_cloned_session(worker_session, worker_source_session)
         updated = replace(
             record,
             signed_status=verdict or record.signed_status,

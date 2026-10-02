@@ -390,3 +390,52 @@ EXE 完成构建和归档内容检查，wheel 同时核验本轮新实现与图�
 先将原 桌面上的 `xmu助手.exe` 备份为 `build/maintenance4-delivery/desktop-previous-xmu助手.exe`，校验备份后覆盖同名桌面文件，再核对桌面文件 SHA-256 为 `13dc37c24101c0425dae46e24a3d0953b5c8b74279dfd0671d02ffd9d3675cd2`。使用隔离空白配置直接启动桌面 EXE，7 秒后仍有运行进程；结束本次测试进程，确认没有残留实例，开机启动注册表路径保持原值。真实账号配置未参与该启动验证。
 
 APK SHA-256 为 `74dec792d76fe9cba736c90f12ee1762be3e2f264e80d427e8ffe13aef594061`，`zipalign -c -v 4` 与之前的 v2 签名检查通过。包名 `com.xmu.assistant`，版本 `1.7.3` / `versionCode 30`，沿用项目固定测试证书，支持同包名、同签名且已安装版本号不高于 30 的覆盖安装。本机未连接用户手机执行真机安装，APK 供用户直接测试。本次测试二进制未上传 GitHub Release。
+
+## 2026-10-03 双端结构整理与故障修复
+
+### 依赖安装
+
+复用 Python 3.14.6、PySide6、pytest、Ruff、JDK 17、Android SDK 35 与 Gradle 8.7；未升级依赖和产品版本。全部检查在独立克隆中执行，Python 使用隔离配置目录和 `QT_QPA_PLATFORM=offscreen`，Android 使用已有依赖缓存。测试只使用虚构账号、临时文件和本机模拟 HTTP 服务。
+
+### 功能验证
+
+| 检查 | 当前实测结果 |
+| --- | --- |
+| 修改前 Windows 基线 | 631 项测试、207 个子测试通过 |
+| 修改前 Android Debug 基线 | 730 项，0 失败、错误或跳过 |
+| 修改后 Windows 全套 | 668 项测试、225 个子测试通过 |
+| 修改后 Android Debug 全套 | 741 项，0 失败、错误或跳过 |
+| 修改后 Android networkBenchmark 全套 | 744 项，0 失败、错误或跳过；不代表校园网络性能实测 |
+| Android Debug Lint 与 APK 构建 | 构建成功；Lint 0 错误、36 警告、12 提示 |
+| Windows 静态与编译检查 | Ruff `E9,F63,F7,F82`、`compileall` 通过 |
+| 独立复核 | 新模块职责、并发边界、会话所有权、真实写盘失败与提交内容脱敏检查完成 |
+
+复验命令：根目录 `python -m pytest tests -q`、`python -m ruff check xmu-rollcall-cli tests scripts --select E9,F63,F7,F82`、`python -m compileall -q xmu-rollcall-cli tests scripts`；Android 目录 `gradlew.bat :app:testDebugUnitTest :app:testNetworkBenchmarkUnitTest :app:lintDebug :app:assembleDebug --console=plain`。
+
+本轮新增 Windows 37 项正式测试、18 个子测试，Android 每个变体新增 11 项。最终日志和 XML 汇总保存在被忽略的 `build/structure-debug/`，主要文件为 `final-python.log`、`final-android.log`、`final-android-summary.json`；不将重复执行次数计入新增用例。
+
+### 修复记录
+
+| 编号 | 原问题、修复和验证 |
+| --- | --- |
+| S-01 | Cookie 写入失败被底层吞掉，账号配置却已保存，界面可能误判成功。新增独立登录保存模块；严格传递保存异常，在锁内补偿账号和 Cookie。以真实保存函数加文件替换故障注入复现；并覆盖旧账号恢复、首次配置失败和回滚失败。 |
+| S-02 | 失效恢复、账号切换、退出、线程启动失败及多种后台任务未完整释放自有 Session。统一克隆会话所有权，线程池等待所有工作结束后释放；窗口只交接主会话。新增成功、异常、取消和借用会话测试，保留 Cookie 合并行为。 |
+| S-03 | 普通文件 URL 的查询参数含身份域字符串时被误判为登录页。改为解析并精确匹配主机，真实本机 HTTP 下载与大小写、路径、查询参数场景通过。 |
+| S-04 | Android 续传被服务器忽略并返回 gzip 全量时，可能保存压缩字节。分离 HTTP 传输与文件校验；有界重试去掉 Range 和编码请求头，允许正常解压。重试失败保留原断点；不支持的编码拒绝写入。原有下载与新增 4 项编码测试通过。 |
+| S-05 | Android 请求尚未调度便被取消时，刷新门无法释放。统一在任务真正完成时释放；阻塞请求取消后仍保持互斥，直到操作返回。取消前后与阻塞场景测试通过。 |
+| S-06 | Android 登录结果失效会过早放开实际仍在执行的登录门。分离结果有效性与实际在途标记，只有对应任务完成才能释放，阻止跨登录域重叠。陈旧完成、Activity 销毁及会话失效场景通过。 |
+| S-07 | 考试提醒取消或重排后，已排队的旧广播仍可能显示通知。新增持久化随机计划标识，让取消、调度与接收共用有效性边界；兼容旧安装，取消后的旧读取不能重建闹钟。真实临时偏好和 Robolectric 广播测试通过。 |
+
+结构整理同时将表格渲染从窗口抽出为 `TableViewMixin`；原方法 AST 对照一致，主题、选中状态、增量更新和宿主属性契约测试继续通过。模块边界及入口同步写入[架构导航](documentation/architecture.md)。
+
+### 服务启动
+
+从当前源码创建完整离屏 Qt 窗口，使用空白隔离配置，拦截后台启动和托盘操作；截图 `build/structure-debug/figures/shot_dashboard.png` 已检查。离屏平台首次未加载中文字体，截图复验显式加载系统字体后显示正常；未改产品主题或字体配置。测试窗口、线程和本机 HTTP 服务由各自句柄清理，没有新增常驻服务，也没有关闭或重启用户应用。
+
+全量复验曾在新窗口测试刷新全局样式时发生 Qt 原生访问冲突，日志保留为 `python-qt-access-violation.log`。新增窗口测试在构造前处理前序测试遗留的延迟删除事件并回收对象，修复后完整回归通过；不将此前崩溃记作通过。
+
+### 已知问题
+
+未使用真实校园登录、签到或外部通知服务，未执行 Android 真机与厂商后台调度验收。本轮构建 Debug APK 用于编译验证，没有发布新安装包、更新桌面 EXE、改版本或签名。
+
+本次 Lint 警告为 30 条依赖/构建插件版本提示、3 条第三方库 TrustManager 警告、2 条单色启动图标提示、1 条偏好写入提示；未把 Lint 成功描述为零警告。既有断点归属、多进程互斥及真实设备限制沿用前述报告。敏感信息核验针对本轮提交内容，不能视为整个 Git 历史已完成安全审计；真实配置、运行日志和测试生成物均未纳入提交。
