@@ -9,6 +9,7 @@
 | 找到功能对应的源码和测试 | [模块定位](architecture.md) |
 | 排查记录查询的兼容问题 | [接口兼容说明](number-code-compatibility.md) |
 | 查看当前源码的验证范围 | [1.7.4 验证记录](verification-1.7.4.md) |
+| 查看当前安装包的更新与下载 | [1.7.4 发布说明](releases/v1.7.4.md) |
 | 了解提交范围与目录约定 | [贡献指南](../CONTRIBUTING.md) |
 | 查阅发布时的验证记录 | [测试报告](../TEST_REPORT.md) |
 | 查阅签到统计的历史决策 | [开发记录索引](history/README.md) |

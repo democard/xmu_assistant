@@ -1,4 +1,4 @@
-# 数字签到接口兼容（1.7.4 测试版）
+# 数字签到接口兼容（1.7.4）
 
 旧明细接口 `GET /api/rollcall/{id}/student_rollcalls` 可能成功返回 JSON，但 `number_code` 为 null。双端仍用该明细核实本人状态和人数；数字码缺失时只读补查：
 

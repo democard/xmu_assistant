@@ -2,9 +2,9 @@
 
 虾大助手的 Android 原生客户端，使用 Kotlin 和 Jetpack Compose，提供课程、课表、学习记录与日常提醒等功能。与 Windows 端独立运行，登录态和业务缓存保存在设备本地。
 
-当前源码测试版 **1.7.4 / versionCode 31**，尚未公开发布；下方下载仍对应 v1.7.3。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35。
+当前公开版本 **1.7.4 / versionCode 31**。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35。安装包按最新源码构建，沿用既有包名和签名。
 
-[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 使用入口
 
@@ -59,7 +59,7 @@ cd android
 
 单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。v1.7.3 发布前共 610 项 Debug 测试通过，Lint 0 错误、6 警告；release 构建、签名及模拟器覆盖升级已验证。真实校园功能、真实通知与 Android 真机全流程不在本次验收范围，详见[测试报告](../TEST_REPORT.md)。
 
-当前 1.7.4 源码已通过 758 项 Debug 测试，Lint 0 错误、36 警告（30 条为依赖版本提示）。用户已反馈本版部分实际流程成功；不代表全部功能或设备已验收，详见 [1.7.4 验证记录](../documentation/verification-1.7.4.md)。
+当前 1.7.4 源码已通过 758 项 Debug 测试，Lint 0 错误、36 警告（30 条为依赖版本提示）。发布 APK 已核对版本及签名，与此前同版测试包的签名一致；用户反馈针对此前测试包，不代表新发布包全部功能或设备已验收，详见 [1.7.4 验证记录](../documentation/verification-1.7.4.md)。
 
 仓库另带 `gradle/init.gradle` 作为可选镜像配置，可用 `-I gradle/init.gradle` 显式加载。依赖未缓存完整时，不要添加 `--offline`。
 

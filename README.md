@@ -8,11 +8,11 @@
 
 课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
 
-**当前源码测试版：Windows 1.7.4 · Android 1.7.4（versionCode 31）**
+**当前版本：Windows 1.7.4 · Android 1.7.4（versionCode 31）**
 
-1.7.4 改善记录查询的兼容性与时间处理，Android 部分流程已由用户实测确认，Windows 完整实际流程仍待验证；尚未公开发布。以下公开下载仍对应 v1.7.3。
+1.7.4 改善记录查询的兼容性与时间处理，安装包已按最新源码构建。Android 同版部分流程已有用户实测反馈，完整验证范围见下方说明。
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.3)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.4)
 
 </div>
 
@@ -26,11 +26,11 @@
 
 | 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Windows | 1.7.3 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.7.3（versionCode 30） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.7.3 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.7.3.zip) |
+| Windows | 1.7.4 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant.exe)，下载后运行，无需另装 Python |
+| Android | 1.7.4（versionCode 31） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.7.4 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.7.4.zip) |
 
-文件校验值见 [SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与校验文件中的同名条目核对：
+文件校验值见 [SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与校验文件中的同名条目核对：
 
 ```powershell
 Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
@@ -78,16 +78,17 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 ## 本版更新
 
-### 1.7.4 · 当前测试版
+### 1.7.4 · 当前公开版本
 
 - 改善双端记录详情查询的兼容性。
 - 修复跨时区、跨日期记录的时间处理。
 - 修复 Windows 后续查询失败或返回空值时沿用旧缓存的问题。
+- 统一公开文字与界面展示文案，保留原有图像、接口及旧版兼容标识。
 - 补充回归用例，保留现有个人策略与状态核实流程。
 
-该版本已完成本地自动化验证和安装包构建，Android 部分实际流程已获用户确认；完整验证范围见 [1.7.4 验证记录](documentation/verification-1.7.4.md)。
+本版安装包已重新构建、核对版本和校验值，APK 签名保持兼容，Windows 隔离启动检查通过。用户已反馈此前同版 Android 测试包部分流程成功；不将该反馈等同于新发布包全功能验收。详见 [发布说明](documentation/releases/v1.7.4.md)与[验证记录](documentation/verification-1.7.4.md)。
 
-### 1.7.3 · 最近公开发布
+### 1.7.3 · 历史版本
 
 v1.7.3 主要修复下载、账号切换和导出中的边界问题：
 
@@ -136,8 +137,8 @@ Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 
 | --- | --- |
 | Windows 自动化回归 | 703 项测试、225 个子测试通过；静态检查与编译检查通过 |
 | Android Debug 回归 | 758 项测试通过；Lint 0 错误、36 警告（含 30 条依赖版本提示） |
-| Windows 安装包 | EXE 构建通过，确认包含更新后的业务模块；新包完整运行流程尚待测试 |
-| Android 安装包 | release 构建、签名与版本检查通过；用户已确认本版部分实际流程成功，未验收全部功能 |
+| Windows 安装包 | EXE 构建、业务模块比对及隔离启动检查通过；完整实际流程仍待验证 |
+| Android 安装包 | release 构建、签名与版本检查通过；此前同版测试包部分实际流程已有用户反馈，新发布包未单独完成真机全功能验收 |
 
 自动化测试使用虚构数据和模拟传输，不代表所有设备、网络或实际业务场景均已验证。维护侧没有执行真实业务写入；用户反馈仅覆盖其实际测试的 Android 流程，真实通知、长期后台运行及 Windows 完整流程仍待验收。详见 [1.7.4 验证记录](documentation/verification-1.7.4.md)，历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
 

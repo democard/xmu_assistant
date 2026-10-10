@@ -1,8 +1,8 @@
 # 虾大助手 Windows 源码
 
-本目录包含 `xmu_rollcall` Python 包：PySide6 桌面界面、登录与会话、学习记录、课件下载和通知逻辑。当前源码测试版 **1.7.4**，尚未公开发布；下方下载仍对应 v1.7.3。虽然目录沿用 `xmu-rollcall-cli` 名称，当前应用入口是桌面界面。
+本目录包含 `xmu_rollcall` Python 包：PySide6 桌面界面、登录与会话、学习记录、课件下载和通知逻辑。当前公开版本 **1.7.4**。虽然目录沿用 `xmu-rollcall-cli` 名称，当前应用入口是桌面界面。
 
-[直接下载 EXE](https://github.com/democard/xmu_assistant/releases/download/v1.7.3/xmu-assistant.exe) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
+[直接下载 EXE](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant.exe) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 从源码运行
 
@@ -46,7 +46,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 
 v1.7.3 发布前完成 481 项测试、144 个子测试，以及上述静态与编译检查。EXE 已验证启动、首页和图标；真实校园功能、真实通知和所有页面的人工检查不在本次验收范围。具体回归场景见[测试报告](../TEST_REPORT.md)。
 
-当前 1.7.4 源码已通过 703 项测试、225 个子测试，并修复后续查询空值或失败时复用旧缓存的问题。Windows 完整实际流程仍待验证，详见 [1.7.4 验证记录](../documentation/verification-1.7.4.md)。
+当前 1.7.4 源码已通过 703 项测试、225 个子测试，并修复后续查询空值或失败时复用旧缓存的问题。发布 EXE 的更新模块、DPAPI 与必要插件已核对，隔离空白配置启动检查通过；Windows 完整实际流程仍待验证，详见 [1.7.4 验证记录](../documentation/verification-1.7.4.md)。
 
 ## 打包 EXE
 
