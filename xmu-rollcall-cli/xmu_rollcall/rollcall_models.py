@@ -40,6 +40,15 @@ class RollcallEvent:
     attendance_percent: float | None = None
 
     @property
+    def course_id(self) -> str:
+        course = self.raw.get("course")
+        return str(self.raw.get("course_id") or (course.get("id") if isinstance(course, dict) else "") or "")
+
+    @property
+    def rollcall_time(self) -> str:
+        return str(first_value(self.raw, ("rollcall_time", "start_time", "created_at", "time"), ""))
+
+    @property
     def remaining_text(self) -> str:
         if self.remaining_seconds is None:
             return "未知"

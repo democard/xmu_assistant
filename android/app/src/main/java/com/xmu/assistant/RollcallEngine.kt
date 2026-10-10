@@ -24,6 +24,7 @@ class RollcallEngine internal constructor(
     private val answerTransport: QueryHttpTransport = defaultRollcallAnswerTransport,
 ) {
     private val baseUrl = "https://lnt.xmu.edu.cn"
+    private val numberCodeLookup = RollcallNumberCodeLookup(cookieHeader, statusTransport)
 
     fun pollOnce(): List<RollcallEvent> {
         val json = getStatusJson("$baseUrl/api/radar/rollcalls")
@@ -56,6 +57,8 @@ class RollcallEngine internal constructor(
                 deadline = deadline,
                 remainingSeconds = remainingSecondsFromDeadline(deadline),
                 isExpired = item.optBoolean("is_expired", false),
+                courseId = item.optRealString("course_id").ifBlank { item.optJSONObject("course")?.optRealString("id").orEmpty() },
+                rollcallTime = firstString(item, "rollcall_time", "start_time", "created_at", "time"),
             )
         }
     }
@@ -63,6 +66,7 @@ class RollcallEngine internal constructor(
     /** 页面和监控共用：每个活动 id 同轮最多一次只读明细 GET。 */
     fun pollWithDetails(username: String = ""): List<RollcallEvent> {
         val detailById = mutableMapOf<String, JSONObject?>()
+        val codeById = mutableMapOf<String, String>()
         return pollOnce().map { event ->
             val detail = if (detailById.containsKey(event.id)) {
                 detailById[event.id]
@@ -76,12 +80,17 @@ class RollcallEngine internal constructor(
                 }
                 detailById[event.id] = loaded
                 loaded
-            } ?: return@map event
-            val parsed = parseStudentRollcallDetails(detail, username)
+            }
+            val parsed = detail?.let { parseStudentRollcallDetails(it, username) }
+            val code = if (event.type == "数字签到") codeById.getOrPut(event.id) {
+                numberCodeLookup.complete(
+                    event.id, detail, event.courseId, event.rollcallTime, event.courseTitle, event.deadline,
+                )
+            } else ""
             event.copy(
-                numberCode = if (event.type == "数字签到") parsed.numberCode else "",
-                progress = parsed.progress,
-                ownStatus = parsed.ownStatus,
+                numberCode = code,
+                progress = parsed?.progress,
+                ownStatus = parsed?.ownStatus,
             )
         }
     }
@@ -132,9 +141,10 @@ class RollcallEngine internal constructor(
         return JSONObject(response.body)
     }
 
-    fun answerNumber(rollcallId: String): Boolean {
-        val detail = getStudentRollcallDetail(rollcallId) ?: return false
-        val code = findNumberCode(detail) ?: return false
+    fun answerNumber(rollcallId: String, courseId: String = "", rollcallTime: String = ""): Boolean {
+        val detail = getStudentRollcallDetail(rollcallId)
+        val code = numberCodeLookup.complete(rollcallId, detail, courseId, rollcallTime)
+        if (code.isBlank()) return false
         val body = JSONObject()
             .put("deviceId", UUID.randomUUID().toString())
             .put("numberCode", code)

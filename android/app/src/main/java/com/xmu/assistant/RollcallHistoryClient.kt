@@ -163,12 +163,12 @@ internal class RollcallHistoryClient internal constructor(
         } catch (error: MainSessionExpiredException) {
             throw error
         } catch (_: Throwable) {
-            return DetailVerdict(STATUS_UNKNOWN, null, "")
+            null
         }
         val obj = detail as? JSONObject
         val parsed = obj?.let { parseStudentRollcallDetails(it, username) }
         val ownStatus = parsed?.ownStatus ?: run {
-            val own = findOwnStudentRollcalls(detail, username)
+            val own = detail?.let { findOwnStudentRollcalls(it, username) }.orEmpty()
             parsedOwnRollcallStatus(own) ?: STATUS_UNKNOWN
         }
         val progress = when (detail) {
@@ -179,7 +179,10 @@ internal class RollcallHistoryClient internal constructor(
         return DetailVerdict(
             ownStatus = ownStatus,
             progress = progress,
-            numberCode = if (item.type == "数字签到") parsed?.numberCode.orEmpty() else "",
+            numberCode = if (item.type == "数字签到") RollcallNumberCodeLookup(cookieHeader, queryTransport).complete(
+                item.rollcallId, detail, item.courseId,
+                item.sortKeyMillis?.let { java.time.Instant.ofEpochMilli(it).toString() }.orEmpty(),
+            ) else "",
         )
     }
 

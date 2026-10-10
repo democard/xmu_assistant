@@ -1133,11 +1133,17 @@ class DashboardWindow(
                 return False, "继续等待（无法确认签到仍在进行）", "", False
             if current_event is None or rollcall_is_expired(current_event):
                 return False, "已取消（签到已结束）", "", True
-            detail = fetch_student_rollcall_detail(session, event.rollcall_id)
+            detail = fetch_student_rollcall_detail(
+                session, current_event.rollcall_id,
+                number_code_fallback=current_event.rollcall_type == "数字签到",
+                course_id=current_event.course_id, rollcall_time=current_event.rollcall_time,
+                course_title=current_event.course_title,
+            )
             progress = summarize_rollcall_progress(
                 detail, my_user_no=str(context.get("username") or "")
             )
-            checked_code = find_number_code(detail) or "" if detail else checked_code
+            # A failed fresh read must not authorize a write with the earlier code.
+            checked_code = find_number_code(detail) or ""
             # 网络读取结束后再次检查账号、停止令牌、总开关与策略，封闭在途变化窗口。
             valid, reason, terminal = DashboardWindow._auto_context_current(self, current_event, context)
             if not valid:
@@ -1485,8 +1491,8 @@ class DashboardWindow(
             rollcall.attendance_present = None
             rollcall.attendance_total = None
             rollcall.attendance_percent = None
-        if code:
-            rollcall.number_code = code
+        # This poll is authoritative: missing code invalidates the previous cache.
+        rollcall.number_code = code or ""
         self._refresh_event_tables()
 
         if progress.own_present is True:

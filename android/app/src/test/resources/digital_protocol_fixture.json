@@ -1,0 +1,30 @@
+{
+  "activity": {
+    "rollcall_id": "fixture-number",
+    "course_id": "fixture-course",
+    "course_title": "Fixture course",
+    "is_number": true,
+    "is_radar": false,
+    "status": "in_progress",
+    "is_expired": false,
+    "rollcall_time": "2026-06-04T07:48:00+08:00"
+  },
+  "detail": {
+    "is_number": true,
+    "is_radar": false,
+    "number_code": null,
+    "status": "in_progress",
+    "student_rollcalls": [
+      {"student_id": "fixture-me", "user_no": "fixture-user", "status": "absent", "rollcall_status": "absent", "status_detail": null},
+      {"student_id": "fixture-a", "user_no": "fixture-a", "status": "on_call", "rollcall_status": "on_call", "status_detail": null},
+      {"student_id": "fixture-b", "user_no": "fixture-b", "status": "on_call", "rollcall_status": "on_call", "status_detail": null},
+      {"student_id": "fixture-c", "user_no": "fixture-c", "status": "absent", "rollcall_status": "absent", "status_detail": null}
+    ]
+  },
+  "timetable": {
+    "rollcalls": [
+      {"id": "fixture-other", "course": {"id": "fixture-course"}, "number_code": "9999", "is_number": true},
+      {"id": "fixture-number", "course": {"id": "fixture-course"}, "number_code": "0042", "is_number": true, "student_rollcalls": [{"id": "fixture-row", "student_id": "fixture-me", "status": "on_call"}]}
+    ]
+  }
+}

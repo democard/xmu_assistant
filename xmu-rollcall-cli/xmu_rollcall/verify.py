@@ -3,6 +3,7 @@ import uuid
 
 import requests
 
+from .number_code import complete_number_code, find_number_code  # re-export legacy helper
 from .request_probe import classify_status
 from .utils import (
     API_TIMEOUT,
@@ -26,29 +27,6 @@ def _raise_if_session_expired(response):
         raise classify_status(response.status_code, "签到应答")
     if response_session_expired(response):
         raise SessionExpiredError("登录已过期，请重新登录")
-
-
-def find_number_code(data, depth=0, max_depth=10):
-    """Extract ``number_code`` from nested TronClass API responses."""
-    if depth > max_depth:
-        return None
-    if isinstance(data, dict):
-        number_code = data.get("number_code")
-        # 空串/全空白视为「本层没有码」继续下探：Android findNumberCode 用
-        # takeIf { it.isNotBlank() }，而 PC 原先遇空串即 return "" 并停止——
-        # 平台返回聚合壳（外层 number_code 为空、真码在嵌套层）时 PC 永远取不到码。
-        if number_code is not None and str(number_code).strip():
-            return str(number_code)
-        for value in data.values():
-            nested_code = find_number_code(value, depth + 1, max_depth)
-            if nested_code:
-                return nested_code
-    elif isinstance(data, list):
-        for item in data:
-            nested_code = find_number_code(item, depth + 1, max_depth)
-            if nested_code:
-                return nested_code
-    return None
 
 
 # 雷达签到双点定位几何（自 send_radar 体内提升为模块级纯函数，函数体逐字未动，便于直测；Android 侧 RollcallEngine 有同构实现）
@@ -98,7 +76,7 @@ def solve_two_points(lat1, lon1, lat2, lon2, d1, d2):
     return point_1, point_2
 
 
-def send_code(in_session, rollcall_id, number_code=""):
+def send_code(in_session, rollcall_id, number_code="", *, course_id="", rollcall_time="", course_title=""):
     """提交数字签到码。返回 True/False；网络层/SessionExpired 异常按契约处理。
 
     仅用于兼容层：PySide6 桌面端直接组装提交，这里保留统一 bool 契约。
@@ -108,6 +86,7 @@ def send_code(in_session, rollcall_id, number_code=""):
     request_headers = in_session.headers
     number_code = str(number_code or "").strip()
     if not number_code:
+        code_data = None
         try:
             code_response = retry_request(
                 lambda: in_session.get(code_url, headers=request_headers, timeout=API_TIMEOUT),
@@ -116,14 +95,16 @@ def send_code(in_session, rollcall_id, number_code=""):
                 label="get_number_code",
             )
             _raise_if_session_expired(code_response)
-            if code_response.status_code != 200:
-                return False
-            code_data = code_response.json()
+            if code_response.status_code == 200:
+                code_data = code_response.json()
         except requests.RequestException:
-            return False
+            pass
         except ValueError:
-            return False
-        number_code = find_number_code(code_data)
+            pass
+        number_code = complete_number_code(
+            in_session, rollcall_id, code_data, course_id=course_id,
+            rollcall_time=rollcall_time, course_title=course_title,
+        )
     if not number_code:
         return False
 

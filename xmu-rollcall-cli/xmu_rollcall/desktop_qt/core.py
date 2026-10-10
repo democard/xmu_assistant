@@ -41,6 +41,7 @@ from ..utils import (
     unwrap_list,
 )
 from ..verify import find_number_code
+from ..number_code import complete_number_code
 from ..worker_sessions import ThreadLocalSessions, close_cloned_session
 
 # 课程列表端点单一来源（2026-08-28 C3 单点化）：原为与 courseware.py 逐字重复的
@@ -164,6 +165,7 @@ class MonitorWorker(threading.Thread):
                 self.last_payload = payload
                 # 先公布本轮全部新事件，避免第一条明细 GET 的网络等待遮住
                 # 其余签到的首次提醒；明细阶段仍逐项检查暂停/换号信号。
+                course_cache = {}
                 for event in events:
                     if self.stop_event.is_set():
                         break
@@ -184,7 +186,13 @@ class MonitorWorker(threading.Thread):
                         continue
                     # 同一轮明细 GET 同时供人数/比例、本人状态和数字签到码使用，
                     # 避免发现数字签到时再由独立 worker 重复读取一次。
-                    detail = fetch_student_rollcall_detail(self.session, event.rollcall_id)
+                    detail = fetch_student_rollcall_detail(
+                        self.session, event.rollcall_id,
+                        number_code_fallback=event.rollcall_type == "数字签到",
+                        course_id=event.course_id, rollcall_time=event.rollcall_time,
+                        course_title=event.course_title, course_cache=course_cache,
+                        cancelled=self.stop_event.is_set,
+                    )
                     progress = summarize_rollcall_progress(detail, my_user_no=self.username)
                     code = find_number_code(detail) or "" if detail else ""
                     if self.stop_event.is_set():
@@ -499,7 +507,23 @@ def find_student_rollcall(payload, username: str) -> dict | None:
     return matches[0] if matches else None
 
 
-def fetch_student_rollcall_detail(session, rollcall_id: str):
+def fetch_student_rollcall_detail(session, rollcall_id: str, *, number_code_fallback=False,
+                                 course_id="", rollcall_time="", course_title="", course_cache=None, cancelled=None):
+    detail = _fetch_legacy_student_rollcall_detail(session, rollcall_id)
+    if number_code_fallback:
+        code = complete_number_code(
+            session, rollcall_id, detail, course_id=course_id, rollcall_time=rollcall_time,
+            course_title=course_title, course_cache=course_cache,
+            cancelled=cancelled,
+        )
+        if code:
+            # Only overlay the code; timetable student IDs are not own-status evidence.
+            detail = dict(detail) if isinstance(detail, dict) else {"data": detail}
+            detail["number_code"] = code
+    return detail
+
+
+def _fetch_legacy_student_rollcall_detail(session, rollcall_id: str):
     if not rollcall_id:
         return None
     try:
@@ -539,8 +563,11 @@ def verify_own_status(student_detail, username: str, fallback_platform_status: s
     return _classify_rollcall_records_status(own_records)[1]
 
 
-def fetch_number_code(session, rollcall_id: str) -> str:
-    detail = fetch_student_rollcall_detail(session, rollcall_id)
+def fetch_number_code(session, rollcall_id: str, *, course_id="", rollcall_time="", course_title="") -> str:
+    detail = fetch_student_rollcall_detail(
+        session, rollcall_id, number_code_fallback=True, course_id=course_id,
+        rollcall_time=rollcall_time, course_title=course_title,
+    )
     if not detail:
         return ""
     return find_number_code(detail) or ""
@@ -700,7 +727,11 @@ def verify_recent_rollcall_records(
             return None
         thread_session = worker_sessions.get()
         try:
-            detail = fetch_student_rollcall_detail(thread_session, record.rollcall_id)
+            detail = fetch_student_rollcall_detail(
+                thread_session, record.rollcall_id,
+                number_code_fallback=record.rollcall_type == "数字签到",
+                course_id=record.course_id, rollcall_time=record.rollcall_time,
+            )
         except SessionExpiredError:
             # 任务内置位再上抛：同池排队的后续任务立刻可见，不再空跑登录域
             stop.set()

@@ -205,7 +205,11 @@ class CoursesPageMixin:
             self._emit(("course_records_verify_error", "登录状态已变更，请重新登录。", worker_account_id))
             return
         try:
-            detail = fetch_student_rollcall_detail(worker_session, record.rollcall_id)
+            detail = fetch_student_rollcall_detail(
+                worker_session, record.rollcall_id,
+                number_code_fallback=record.rollcall_type == "数字签到",
+                course_id=record.course_id, rollcall_time=record.rollcall_time,
+            )
             verdict = verify_own_status(detail, username, record.signed_status)
             progress = summarize_rollcall_progress(detail, my_user_no=username)
             number_code = find_number_code(detail) or "" if detail else ""

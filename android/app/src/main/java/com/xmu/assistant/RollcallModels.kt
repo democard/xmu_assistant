@@ -30,6 +30,9 @@ data class RollcallEvent(
     val ownStatus: String? = null,
     /** 平台明确标记活动已结束；无截止时间时仍可阻止后台提交。 */
     val isExpired: Boolean = false,
+    /** Context for UTC date-code fallback; old persisted events remain compatible. */
+    val courseId: String = "",
+    val rollcallTime: String = "",
 )
 
 data class NotificationSettings(

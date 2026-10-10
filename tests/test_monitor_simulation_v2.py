@@ -23,6 +23,8 @@ def response(url, payload, status=200):
 
 
 class ScenarioTransport:
+    headers = {}
+
     def __init__(self, detail):
         self.detail = detail
         self.calls = []
@@ -34,6 +36,8 @@ class ScenarioTransport:
                 {"rollcall_id": key, "course_title": key, "is_number": True, "status": "unsigned"}
                 for key in ("a", "b")
             ]})
+        if "/api/my-courses?" in url:
+            return response(url, {"courses": []})
         return self.detail(url)
 
 
