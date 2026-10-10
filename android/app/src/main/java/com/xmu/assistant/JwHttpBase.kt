@@ -64,7 +64,7 @@ internal class JwHttpBase(
             headers["Sec-Fetch-Dest"] = "empty"
             headers["Sec-Fetch-Mode"] = "cors"
         }
-        // attachCredentials=false：跳转已离开厦大域（见 followDecorated），不再携带会话 Cookie，
+        // attachCredentials=false：跳转已离开虾大域（见 followDecorated），不再携带会话 Cookie，
         // 也不把第三方主机种下的 Set-Cookie 读回 jar（jar 是平铺 header 串，读回来后续仍会发往校内）。
         if (attachCredentials) {
             jar?.header()?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
@@ -124,7 +124,7 @@ internal class JwHttpBase(
         var current = url
         var nextMethod = method
         var nextBody = body
-        // 重定向落点一旦离开厦大域（或 https→http 降级明文），从本跳起剥离凭据——
+        // 重定向落点一旦离开虾大域（或 https→http 降级明文），从本跳起剥离凭据——
         // 不再携带会话 Cookie，也不再读回第三方种下的 Cookie。CAS 链的
         // ids.xmu.edu.cn 属校内域不受影响；口径与 FileDownloadTransport 的下载
         // 重定向守卫对齐（那里已把「跨源跳转保留手动 Cookie」当凭据外泄缺陷修掉）。
@@ -157,11 +157,11 @@ internal class JwHttpBase(
         throw onExhaustedNonLogin()
     }
 
-    /** 重定向落点是否仍可信（厦大域 + 未降级明文）：决定本跳起是否继续携带/读取 Cookie。 */
+    /** 重定向落点是否仍可信（虾大域 + 未降级明文）：决定本跳起是否继续携带/读取 Cookie。 */
     private fun isTrustedUniversityHop(from: URL, to: URL): Boolean =
         isUniversityHost(to.host) && to.protocol.equals(from.protocol, ignoreCase = true)
 
-    /** 厦大域判定：精确 xmu.edu.cn 或其子域。后缀匹配必须带点，防 evilxmu.edu.cn 绕过。 */
+    /** 虾大域判定：精确 xmu.edu.cn 或其子域。后缀匹配必须带点，防 evilxmu.edu.cn 绕过。 */
     private fun isUniversityHost(host: String): Boolean {
         val normalized = host.lowercase(Locale.US)
         return normalized == "xmu.edu.cn" || normalized.endsWith(".xmu.edu.cn")

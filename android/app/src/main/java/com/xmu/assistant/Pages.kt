@@ -500,7 +500,7 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("2. 填入预计出分课程的成绩（0-100）和学分，可添加多行，每行可单独删除。")
             Text("3. 面板实时显示计入模拟行后的整体平均绩点、加权绩点、平均分数、加权分数；模拟课不计入已修总学分。")
             Text("4. 空、非法或超范围的行自动跳过，不影响其余计算。")
-            Text("5. 换算采用厦大官方 4.0 分制，纯本地计算，不上传任何数据。")
+            Text("5. 换算采用虾大官方 4.0 分制，纯本地计算，不上传任何数据。")
             OutlinedButton(onClick = { navigate("成绩") }) { Text("前往成绩") }
         }
         TutorialSection("桌面小卡片", modifier = Modifier.bringIntoViewRequester(anchors.getValue("桌面小卡片"))) {
@@ -508,7 +508,7 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
             Text("2. 系统会弹出固定小部件窗口，选一个位置放置即可。")
             Text("3. 小卡片显示今天的课程、时间和地点，点击可打开 App 课表页。")
             Text("4. 课表刷新后小卡片会自动更新；在策略页关闭开关可隐藏内容。")
-            Text("5. 如果没弹出添加窗口，可以长按手机桌面空白处 -> 小部件 -> 找到 xmu助手。")
+            Text("5. 如果没弹出添加窗口，可以长按手机桌面空白处 -> 小部件 -> 找到 虾大助手。")
             OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
         }
         TutorialSection("设置微信通知", modifier = Modifier.bringIntoViewRequester(anchors.getValue("设置微信通知"))) {
@@ -548,7 +548,7 @@ fun TutorialPage(scrollState: ScrollState, navigate: (String) -> Unit) {
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "建议：把 xmu助手 加入电池不限制 / 允许后台运行白名单，保持通知开启；重要签到请同时手动确认，不要只依赖自动签到。",
+                "建议：把 虾大助手 加入电池不限制 / 允许后台运行白名单，保持通知开启；重要签到请同时手动确认，不要只依赖自动签到。",
                 color = themeWarning(),
                 fontWeight = FontWeight.Bold,
             )

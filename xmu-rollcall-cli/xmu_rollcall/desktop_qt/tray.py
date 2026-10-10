@@ -36,7 +36,7 @@ class TrayMixin:
             return
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(app_icon())
-        self.tray_icon.setToolTip("xmu助手")
+        self.tray_icon.setToolTip("虾大助手")
         self.tray_menu = QMenu(self)
         self.tray_status_action = QAction("状态：未登录", self)
         self.tray_status_action.setEnabled(False)
@@ -44,7 +44,7 @@ class TrayMixin:
         self.tray_last_check_action.setEnabled(False)
         self.tray_toggle_monitor_action = QAction("启动监控", self)
         self.tray_toggle_monitor_action.triggered.connect(self._toggle_monitor_from_tray)
-        show_action = QAction("打开 xmu助手", self)
+        show_action = QAction("打开 虾大助手", self)
         show_action.triggered.connect(self._show_from_tray)
         quit_action = QAction("退出", self)
         quit_action.triggered.connect(self._quit_from_tray)
@@ -118,6 +118,6 @@ class TrayMixin:
         if self.tray_icon and not self.quitting:
             event.ignore()
             self.hide()
-            self.tray_icon.showMessage("xmu助手", "已在后台常驻，监控会继续运行。")
+            self.tray_icon.showMessage("虾大助手", "已在后台常驻，监控会继续运行。")
             return
         super().closeEvent(event)

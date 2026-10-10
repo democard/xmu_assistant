@@ -889,7 +889,7 @@ def format_log_export(lines: list[str]) -> str:
     - 行内容逐字保留（时间戳已在 self.log() 生成时写入），不改写不排序。
     """
     header = (
-        "xmu助手 运行日志导出\n"
+        "虾大助手 运行日志导出\n"
         f"导出时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"应用版本：v{__version__}\n"
         f"日志条数：{len(lines)}\n"

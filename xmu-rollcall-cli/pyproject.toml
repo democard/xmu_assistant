@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xmu-assistant"
 dynamic = ["version"]
-description = "xmu助手 for XMU TronClass rollcall monitoring"
+description = "虾大助手 - Campus Assistant desktop client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}

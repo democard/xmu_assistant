@@ -99,7 +99,7 @@ class SettingsPageMixin:
         app_panel = self._panel("应用行为")
         app_layout = QGridLayout(app_panel)
         app_layout.setContentsMargins(16, 40, 16, 16)
-        self.launch_on_startup_check = QCheckBox("开机自动启动 xmu助手")
+        self.launch_on_startup_check = QCheckBox("开机自动启动 虾大助手")
         self.launch_on_startup_check.stateChanged.connect(self._save_app_settings)
         self.launch_on_startup_status = QLabel("")
         self.launch_on_startup_status.setObjectName("StatusGood")

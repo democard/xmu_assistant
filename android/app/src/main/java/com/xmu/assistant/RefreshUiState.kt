@@ -3,14 +3,14 @@ package com.xmu.assistant
 fun refreshFailureMessage(error: Throwable): String {
     when (error) {
         is ScheduleSessionExpiredException -> return "教务登录已过期，请重新登录"
-        is ScheduleNetworkException -> return "无法连接厦大教务系统，请检查网络后重试"
+        is ScheduleNetworkException -> return "无法连接虾大教务系统，请检查网络后重试"
         is ScheduleResponseException -> return "教务课表接口返回异常，请稍后重试"
         is ScheduleTermUnavailableException -> return "没有找到可用学期，请稍后重试"
         is ScoreJsonFormatException -> return "成绩接口返回格式异常，请稍后重试"
         is ScoreSessionExpiredException -> return "教务登录已过期，请重新登录后重试"
         is ExistingScoreSessionUnavailable -> return "教务会话暂不可用，请稍后重试"
         is ExamSessionExpiredException -> return "教务登录已过期，请重新登录后查看考试安排"
-        is ExamNetworkException -> return "无法连接厦大教务系统，请检查网络后重试"
+        is ExamNetworkException -> return "无法连接虾大教务系统，请检查网络后重试"
         is ExamResponseException -> return "考试安排接口返回异常，请稍后重试"
         is ExamLoginInProgressException -> return "登录处理中，请稍候重试"
         is MainSessionExpiredException -> return "教务登录已过期，请重新登录后重试"

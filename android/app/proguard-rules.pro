@@ -1,4 +1,4 @@
-# xmu助手 release 混淆规则（保守起步，回归测试发现问题再补）
+# 虾大助手 release 混淆规则（保守起步，回归测试发现问题再补）
 
 # OkHttp/Okio 平台相关（官方建议）
 -dontwarn okhttp3.internal.platform.**

@@ -556,7 +556,7 @@ internal class XmuExamClient(
     }
 }
 
-/** 从学号提取入学年份（厦大本科学号：3 位学院码 + 4 位年份 + 7 位序号）。
+/** 从学号提取入学年份（虾大本科学号：3 位学院码 + 4 位年份 + 7 位序号）。
  *  普适：格式不匹配时返回 null（上层回退到探测窗口）。 */
 internal fun enrollmentYearFromStudentId(studentId: String): Int? {
     val match = STUDENT_ID_YEAR_PATTERN.find(studentId) ?: return null

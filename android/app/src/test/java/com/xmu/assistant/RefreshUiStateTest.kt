@@ -35,7 +35,7 @@ class RefreshUiStateTest {
             refreshFailureMessage(ScheduleSessionExpiredException()),
         )
         assertEquals(
-            "无法连接厦大教务系统，请检查网络后重试",
+            "无法连接虾大教务系统，请检查网络后重试",
             refreshFailureMessage(ScheduleNetworkException(IllegalStateException("secret"))),
         )
         assertEquals(

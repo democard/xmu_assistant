@@ -25,8 +25,8 @@
 | `absent` | 缺勤/未到场 | 既有接口契约 |
 
 - [TronClass 官方教师指南](https://support.tronclass.com/quickguidance_teacher/WGTCQuickGuidance%28teachers%29.pdf)列出迟到、早退、迟到兼早退及多个假别，不能把界面看见的所有状态压成已签/缺勤二选一。
-- [FJU 状态定义，固定提交](https://github.com/FJU-Devs/fju-aio/blob/034e54bf44cfeaf1bb519cdea78f6c128579028a/fju-aio/Models/RollcallModels.swift#L28)：迟到有精确字段映射；该项目将 `late` 视为已经完成签到。仅作为同平台兼容性证据，不宣称这些状态全部在厦大本次响应中出现。
-- 早退和其余假别尚未取得可确认的厦大接口枚举，不凭英文猜字段，不使用 `on_call_*` / `*_leave` 的宽泛前缀或后缀匹配。
+- [FJU 状态定义，固定提交](https://github.com/FJU-Devs/fju-aio/blob/034e54bf44cfeaf1bb519cdea78f6c128579028a/fju-aio/Models/RollcallModels.swift#L28)：迟到有精确字段映射；该项目将 `late` 视为已经完成签到。仅作为同平台兼容性证据，不宣称这些状态全部在虾大本次响应中出现。
+- 早退和其余假别尚未取得可确认的虾大接口枚举，不凭英文猜字段，不使用 `on_call_*` / `*_leave` 的宽泛前缀或后缀匹配。
 - 用户进一步明确：这里需要的是**明确已签人数**，不是已到场人数。迟到、请假、缺勤都不计已签。此前把迟到计入 `present` 的统计口径已纠正；个人状态和自动提交保护不由这个统计数反推。
 
 ### 最终统计规则（以此节为准）

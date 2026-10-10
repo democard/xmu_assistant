@@ -267,7 +267,7 @@ class DashboardWindow(
             )
         brand_copy = QVBoxLayout()
         brand_copy.setSpacing(1)
-        brand = QLabel("xmu助手")
+        brand = QLabel("虾大助手")
         brand.setObjectName("Brand")
         brand_copy.addWidget(brand)
         brand_row.addWidget(brand_logo)
@@ -1940,7 +1940,7 @@ class DashboardWindow(
         elif self.background_error_count < 3 or self.background_error_notified:
             return
         self.background_error_notified = True
-        message = NotificationMessage("xmu助手 监控异常", friendly)
+        message = NotificationMessage("虾大助手 监控异常", friendly)
         try:
             settings = getattr(self, "_notification_settings_cache", None) or get_notification_settings(
                 load_config()

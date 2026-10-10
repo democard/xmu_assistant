@@ -36,7 +36,7 @@ class TutorialPageMixin:
         pal = self._ui_palette()
         html = """
         <div style="font-family:'Microsoft YaHei','Segoe UI',sans-serif; color:@TUT_TEXT@; line-height:1.72;">
-          <h2 style="margin-top:0;">xmu助手教程</h2>
+          <h2 style="margin-top:0;">虾大助手教程</h2>
           <p>按下面的清单设置即可。账号、Cookie、通知 Token 和下载目录只保存在本机。</p>
           <table cellspacing="8" cellpadding="10" style="margin:4px 0 16px 0;">
             <tr>

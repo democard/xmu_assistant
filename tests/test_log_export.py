@@ -16,7 +16,7 @@ from xmu_rollcall.desktop_qt.core import format_log_export  # noqa: E402
 def test_header_contains_time_version_and_count():
     text = format_log_export(["[2026-08-27 10:00:00] 启动监控", "[2026-08-27 10:00:05] 登录成功"])
     lines = text.splitlines()
-    assert lines[0] == "xmu助手 运行日志导出"
+    assert lines[0] == "虾大助手 运行日志导出"
     assert re.match(r"导出时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", lines[1])
     assert lines[2] == f"应用版本：v{__version__}"
     assert lines[3] == "日志条数：2"

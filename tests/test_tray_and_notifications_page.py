@@ -188,7 +188,7 @@ class TestTrayMenuLogic(unittest.TestCase):
         host.closeEvent(event)
         self.assertTrue(event.ignored)
         self.assertTrue(host.hidden)
-        self.assertEqual(tray_icon.messages, [("xmu助手", "已在后台常驻，监控会继续运行。")])
+        self.assertEqual(tray_icon.messages, [("虾大助手", "已在后台常驻，监控会继续运行。")])
 
 
 class NotificationsHost(NotificationsPageMixin):

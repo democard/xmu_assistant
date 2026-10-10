@@ -136,7 +136,7 @@ class NotificationsPageMixin:
         save_button.clicked.connect(self.save_notification_settings)
         test_button = QPushButton("发送测试通知")
         test_button.clicked.connect(self.test_notifications)
-        self.notification_summary = QLabel("通知用于提醒并打开 App，签到仍由已登录的 xmu助手执行。")
+        self.notification_summary = QLabel("通知用于提醒并打开 App，签到仍由已登录的 虾大助手执行。")
         self.notification_summary.setObjectName("Subtle")
         actions.addWidget(save_button)
         actions.addWidget(test_button)
@@ -264,7 +264,7 @@ class NotificationsPageMixin:
             RollcallEvent(
                 rollcall_id="test",
                 course_title="测试课程",
-                teacher="xmu助手",
+                teacher="虾大助手",
                 rollcall_type="测试通知",
                 status="test",
                 raw={},

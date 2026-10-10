@@ -27,7 +27,7 @@ SHOW_EVENT_NAME = "xmu_assistant_dashboard_show"
 _show_event_handle = None
 # 监听 QTimer 的强引用（局部 QTimer 会被 GC 提前销毁导致不再触发）
 _active_show_timers: list[QTimer] = []
-MAIN_WINDOW_TITLE = "xmu助手"  # 与 setWindowTitle 一致，供 FindWindow 唤起已有实例
+MAIN_WINDOW_TITLE = "xmu助手"  # 跨版本 FindWindow 兼容标识，不随展示品牌改名
 
 
 def acquire_single_instance() -> bool:

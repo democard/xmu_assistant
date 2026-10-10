@@ -249,7 +249,7 @@ class XmuExamClientTest {
 
     @Test
     fun `probe falls back to local inference when student id unparsable`() {
-        // 学号格式异常（非厦大 3 位学院码 + 4 位年份）：回退本地推断 + 空白停止
+        // 学号格式异常（非虾大 3 位学院码 + 4 位年份）：回退本地推断 + 空白停止
         val transport = FakeExamTransport(
             termCodes = listOf("2025-2026-1", "2025-2026-2", "2025-2026-3"),
             termData = mapOf("2025-2026-3" to examBody("短学期考试")),

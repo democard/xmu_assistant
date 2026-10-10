@@ -53,7 +53,7 @@ class RollcallNotificationTest {
         assertEquals(NotificationManager.IMPORTANCE_DEFAULT, manager.getNotificationChannel(REMINDER_CHANNEL).importance)
         assertEquals(NotificationManager.IMPORTANCE_LOW, manager.getNotificationChannel(MONITOR_CHANNEL).importance)
         val rollcall = shadowOf(manager).getNotification(event.id.hashCode())
-        assertEquals("xmu助手 签到提醒", rollcall.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("虾大助手 签到提醒", rollcall.extras.getString(Notification.EXTRA_TITLE))
         assertEquals("xmurollcall://rollcall/${event.id}", shadowOf(rollcall.contentIntent).savedIntent.dataString)
     }
 

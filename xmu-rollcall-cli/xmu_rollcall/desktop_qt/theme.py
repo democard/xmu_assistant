@@ -1,4 +1,4 @@
-"""XMU blue and white Qt styling for xmu助手.
+"""Blue and white Qt styling for 虾大助手.
 
 支持浅色 / 深色两套主题（与 Android 端 XmuMobileTheme 对齐）。
 - 浅色：XMU 蓝白主调，海军蓝侧边栏 + 白底卡片

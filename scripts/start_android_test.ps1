@@ -82,10 +82,10 @@ Write-Step "Installing APK"
 & $Adb -s $device install -r $Apk 2>&1 | Tee-Object -FilePath $Log -Append
 if ($LASTEXITCODE -ne 0) { Fail "APK install failed" }
 
-Write-Step "Launching xmu assistant"
+Write-Step "Launching Campus Assistant"
 & $Adb -s $device shell am start -n "com.xmu.assistant/.MainActivity" 2>&1 | Tee-Object -FilePath $Log -Append
 if ($LASTEXITCODE -ne 0) { Fail "App launch failed" }
 
 Write-Step "Done"
 Write-Host ""
-Write-Host "Done. The phone emulator should now show xmu assistant."
+Write-Host "Done. The phone emulator should now show Campus Assistant."

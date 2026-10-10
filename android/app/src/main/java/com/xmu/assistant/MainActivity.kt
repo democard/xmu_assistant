@@ -598,9 +598,9 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         workScope.launch(Dispatchers.IO) {
             runCatching {
                 if (next.systemEnabled) sendLocalTestNotification(activity)
-                if (next.pushPlusEnabled) PushPlusSender(next.pushPlusToken).send("xmu助手 测试通知", "如果你收到这条消息，说明微信通知已配置成功。")
+                if (next.pushPlusEnabled) PushPlusSender(next.pushPlusToken).send("虾大助手 测试通知", "如果你收到这条消息，说明微信通知已配置成功。")
                 if (next.qqMailEnabled) QQMailSender(next.qqMailSender, next.qqMailPassword, next.qqMailRecipient, next.qqMailPorts).send(
-                    "xmu助手 测试通知",
+                    "虾大助手 测试通知",
                     "如果你收到这封邮件，说明 QQ 邮箱提醒已配置成功。",
                 )
                 if (!next.pushPlusEnabled && !next.qqMailEnabled && !next.systemEnabled) error("请先开启一种通知方式")

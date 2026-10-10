@@ -238,12 +238,12 @@ class RollcallMonitorService : Service() {
     internal fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "xmu助手后台监控", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, "虾大助手后台监控", NotificationManager.IMPORTANCE_LOW)
         )
         // 旧通道已创建为 LOW，Android 不允许应用直接提升其重要性。提醒使用独立 ID，
         // 常驻服务仍保持安静；后续创建不会覆盖用户对提醒通道的静音/禁用选择。
         manager.createNotificationChannel(
-            NotificationChannel(REMINDER_CHANNEL_ID, "xmu助手签到与监控提醒", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel(REMINDER_CHANNEL_ID, "虾大助手签到与监控提醒", NotificationManager.IMPORTANCE_DEFAULT)
         )
     }
 
@@ -262,7 +262,7 @@ class RollcallMonitorService : Service() {
         // 本地通知（快速、无网络）：留在 gate 互斥区内，保证登出/暂停时不会漏发本地提醒
         val localPosted = postReminderNotification(event.id.hashCode(), notify.systemEnabled) {
             Notification.Builder(this, REMINDER_CHANNEL_ID)
-                .setContentTitle("xmu助手 签到提醒")
+                .setContentTitle("虾大助手 签到提醒")
                 .setContentText("${event.courseTitle} / ${event.type}")
                 .setStyle(Notification.BigTextStyle().bigText(rollcallNotificationBody(event, actionUrl)))
                 .setSmallIcon(R.drawable.ic_notification)
@@ -282,13 +282,13 @@ class RollcallMonitorService : Service() {
                 // token/授权码失效后该通道会长期静默死亡，无日志则完全无法察觉。
                 if (notify.pushPlusEnabled) {
                     runCatching {
-                        PushPlusSender(notify.pushPlusToken).send("xmu助手 签到提醒", rollcallNotificationBody(event, actionUrl))
+                        PushPlusSender(notify.pushPlusToken).send("虾大助手 签到提醒", rollcallNotificationBody(event, actionUrl))
                     }.onFailure { Log.w(TAG, "PushPlus 推送失败：${it.message}", it) }
                 }
                 if (notify.qqMailEnabled) {
                     runCatching {
                         QQMailSender(notify.qqMailSender, notify.qqMailPassword, notify.qqMailRecipient, notify.qqMailPorts)
-                            .send("xmu助手 签到提醒", rollcallNotificationBody(event, actionUrl))
+                            .send("虾大助手 签到提醒", rollcallNotificationBody(event, actionUrl))
                     }.onFailure { Log.w(TAG, "QQ 邮箱推送失败：${it.message}", it) }
                 }
             }
@@ -303,7 +303,7 @@ class RollcallMonitorService : Service() {
         systemEnabled: Boolean = AssistantSettings(this).notifications().systemEnabled,
     ): Boolean = postReminderNotification(MONITOR_PROBLEM_NOTIFICATION_ID, systemEnabled) {
         Notification.Builder(this, REMINDER_CHANNEL_ID)
-            .setContentTitle("xmu助手 后台监控异常")
+            .setContentTitle("虾大助手 后台监控异常")
             .setContentText(message)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(mainPendingIntent())
@@ -349,7 +349,7 @@ class RollcallMonitorService : Service() {
             "监控运行中 · 最近检查：$lastCheck · 间隔 ${intervalSeconds ?: settings.rollcall().pollIntervalSeconds} 秒"
         }
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("xmu助手")
+            .setContentTitle("虾大助手")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(mainPendingIntent())

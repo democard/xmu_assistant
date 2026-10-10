@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">xmu助手</string>
+    <string name="app_name">虾大助手</string>
     <string name="schedule_widget_description">显示今日课程安排</string>
     <string name="schedule_widget_default_title">今日课程</string>
     <string name="schedule_widget_empty">今天没有课</string>
@@ -17,8 +17,8 @@
     <string name="widget_guide_ok">好的</string>
     <string name="widget_guide_open_settings">打开桌面设置</string>
     <string name="widget_guide_got_it">知道了</string>
-    <string name="widget_guide_coloros_body">受系统限制，App 没法直接把小卡片放到桌面，手动添加很简单：\n\n1. 回到桌面，长按空白处\n2. 在弹出的菜单里选「小部件」\n3. 找到「xmu助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
-    <string name="widget_guide_generic_body">系统没能直接添加成功，也可以手动添加：\n\n1. 点「打开桌面设置」进入桌面设置\n2. 回到桌面，长按空白处 → 选「小部件」\n3. 找到「xmu助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
+    <string name="widget_guide_coloros_body">受系统限制，App 没法直接把小卡片放到桌面，手动添加很简单：\n\n1. 回到桌面，长按空白处\n2. 在弹出的菜单里选「小部件」\n3. 找到「虾大助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
+    <string name="widget_guide_generic_body">系统没能直接添加成功，也可以手动添加：\n\n1. 点「打开桌面设置」进入桌面设置\n2. 回到桌面，长按空白处 → 选「小部件」\n3. 找到「虾大助手」，长按拖到桌面\n\n添加后，每次刷新课表，卡片会自动显示今天的课。</string>
     <string name="widget_permission_guide_title">需开启「桌面快捷方式」权限</string>
     <string name="widget_permission_guide_open">去开启权限</string>
     <string name="widget_permission_guide_got_it">我知道了</string>

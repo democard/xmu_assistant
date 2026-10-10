@@ -162,7 +162,7 @@ data class XmuAcademicWeek(
 )
 
 /**
- * 厦大官方校历数据表（来源：厦门大学官方校历，dblab.xmu.edu.cn 转载）。
+ * 虾大官方校历数据表（来源：虾大官方校历，dblab.xmu.edu.cn 转载）。
  *
  * 每个学期的上课日期与周数都不同（2023-2026 秋季分别是 9/11、9/2、9/1、9/7，
  * 周数 18/19），无法用公式推算，必须查表。termCode 格式：学年 4 位 + 学期 1 位
@@ -201,7 +201,7 @@ fun xmuAcademicCalendarForTerm(termCode: String): XmuAcademicCalendar? =
  * @param termCode 学期代码（用于构造 label）
  * @param currentWeek 系统返回的当前周次（1..19）
  * @param today 当天日期
- * @param totalWeeks 学期总周数（未知时默认 19：厦大秋季多为 18/19 周，
+ * @param totalWeeks 学期总周数（未知时默认 19：虾大秋季多为 18/19 周，
  *                   取 19 可避免 19 周长学期的第 19 周课程被钳制丢失）
  */
 fun xmuCalendarInferredFromCurrentWeek(
@@ -259,9 +259,9 @@ fun xmuTryInferCalendar(
     val windowDays = maxOf(maxStartAgeDays, currentWeek.coerceAtLeast(1) * 7L + 7L)
     if (daysSinceStart !in 0L..windowDays) return null
     // 开学时间窗按学期类型区分：
-    // - 秋季（...1）：9/1-10/15（厦大秋季开学均为 9 月初：9/1、9/2、9/7、9/11；
+    // - 秋季（...1）：9/1-10/15（虾大秋季开学均为 9 月初：9/1、9/2、9/7、9/11；
     //   暑假 currentZc 返回 1 时若窗口含 8 月会把 8 月误认为开学，必须排除）；
-    // - 夏季短学期（...3）：6/1-7/31（厦大短学期 6 月底-7 月底，8 月已在暑假）；
+    // - 夏季短学期（...3）：6/1-7/31（虾大短学期 6 月底-7 月底，8 月已在暑假）；
     // - 春季（...2）：1/15-4/30。
     val month = inferred.startDate.monthValue
     val inWindow = when {

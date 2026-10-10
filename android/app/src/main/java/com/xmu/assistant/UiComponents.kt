@@ -100,7 +100,7 @@ fun formatMonitorTime(millis: Long): String {
 /** 发送本机测试通知。 */
 fun sendLocalTestNotification(activity: ComponentActivity) {
     val manager = activity.getSystemService(NotificationManager::class.java)
-    manager.createNotificationChannel(NotificationChannel("xmu_assistant_test", "xmu助手通知测试", NotificationManager.IMPORTANCE_DEFAULT))
+    manager.createNotificationChannel(NotificationChannel("xmu_assistant_test", "虾大助手通知测试", NotificationManager.IMPORTANCE_DEFAULT))
     val pendingIntent = PendingIntent.getActivity(
         activity,
         2001,
@@ -110,7 +110,7 @@ fun sendLocalTestNotification(activity: ComponentActivity) {
     manager.notify(
         2001,
         Notification.Builder(activity, "xmu_assistant_test")
-            .setContentTitle("xmu助手 测试通知")
+            .setContentTitle("虾大助手 测试通知")
             .setContentText("如果你收到这条消息，说明本机通知可用。")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
@@ -257,7 +257,7 @@ fun BrandHeader(loggedIn: Boolean, page: String = "首页") {
         AppLogo(Modifier.size(38.dp), null)
         Spacer(Modifier.width(12.dp))
         Text(
-            if (page == "首页") "xmu助手" else page,
+            if (page == "首页") "虾大助手" else page,
             modifier = Modifier.weight(1f),
             color = themePrimary(),
             style = MaterialTheme.typography.titleLarge,

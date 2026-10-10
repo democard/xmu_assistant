@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 教务重定向链的凭据守卫：落点离开厦大域（或降级明文）后，从该跳起不再携带
+ * 教务重定向链的凭据守卫：落点离开虾大域（或降级明文）后，从该跳起不再携带
  * 会话 Cookie、也不再读回第三方种下的 Cookie；CAS 链的 ids.xmu.edu.cn 属校内
  * 域，照常携带。纯 JVM 测试（JwHttpBase 不依赖 Android 框架）。
  */
@@ -82,7 +82,7 @@ class JwHttpBaseRedirectTest {
         follow(JwHttpBase(transport = transport, jar = jar), "https://jw.xmu.edu.cn/login")
 
         assertEquals(
-            "CAS 跳转仍在厦大域，必须继续携带会话 Cookie（否则登录链断裂）",
+            "CAS 跳转仍在虾大域，必须继续携带会话 Cookie（否则登录链断裂）",
             "JWSESSION=secret",
             transport.requests[1].headers["Cookie"],
         )

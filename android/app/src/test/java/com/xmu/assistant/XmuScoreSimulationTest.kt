@@ -24,7 +24,7 @@ class XmuScoreSimulationTest {
         countsForCompletedCredit = countsForCompletedCredit,
     )
 
-    // ---- 换算表（厦大官方 4.0 分制）边界 ----
+    // ---- 换算表（虾大官方 4.0 分制）边界 ----
 
     @Test
     fun `grade point table band lower bounds map to their grade`() {
