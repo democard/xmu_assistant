@@ -8,11 +8,11 @@
 
 课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
 
-**当前版本：Windows 1.7.4 · Android 1.7.4（versionCode 31）**
+**当前版本：Windows 1.8.1 · Android 1.8.1（versionCode 42）**
 
-1.7.4 改善记录查询的兼容性与时间处理，安装包已按最新源码构建。Android 同版部分流程已有用户实测反馈，完整验证范围见下方说明。
+1.8.1 为 Windows 补齐雷达签到的课程坐标流程，并修复双端“达到人数 / 达到比例”不可修改的问题，安装包已按最新源码构建。
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.4)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.1)
 
 </div>
 
@@ -26,11 +26,11 @@
 
 | 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Windows | 1.7.4 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.7.4（versionCode 31） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.7.4 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.7.4.zip) |
+| Windows | 1.8.1 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe)，下载后运行，无需另装 Python |
+| Android | 1.8.1（versionCode 42） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.8.1 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.1.zip) |
 
-文件校验值见 [SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与校验文件中的同名条目核对：
+文件校验值见 [SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与校验文件中的同名条目核对：
 
 ```powershell
 Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
@@ -78,7 +78,17 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 ## 本版更新
 
-### 1.7.4 · 当前公开版本
+### 1.8.1 · 当前公开版本
+
+- **Windows 雷达签到**：新增「雷达坐标」页，按课程保存地点并指定首选；自动与手动雷达签到只提交该课程的首选坐标一次，未配置时不提交并提示原因，不再使用固定探测坐标盲提交。预置翔安校区地点随包分发。
+- **等待策略（双端）**：Android 策略页补上「达到人数 / 达到比例」输入框并真正写入设置；Windows 将人数与比例改为常显并按模式启用，切换模式后不再出现“改不了”的情况。
+- **Android 成绩模拟**：模拟成绩四项并排显示「当前 → 计入后」，平均与加权都会随输入实时变化。
+- **Android 课表与坐标**：课表恢复完整 11 节布局并支持横向滑动、课程安排可本地修改；坐标管理只列出本学期课程，旧学期坐标保留但隐藏；现场采点改为 GPS 与网络并行采样并设超时。
+- **签到与首页**：签到页移除“最近一次签到”大卡片；首页自动签到模块新增雷达坐标管理入口。
+
+本版安装包已重新构建、核对版本和校验值，APK 签名保持兼容，Windows 隔离启动检查通过。详见 [发布说明](documentation/releases/v1.8.1.md)。
+
+### 1.7.4 · 历史版本
 
 - 改善双端记录详情查询的兼容性。
 - 修复跨时区、跨日期记录的时间处理。
@@ -86,7 +96,7 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 - 统一公开文字与界面展示文案，保留原有图像、接口及旧版兼容标识。
 - 补充回归用例，保留现有个人策略与状态核实流程。
 
-本版安装包已重新构建、核对版本和校验值，APK 签名保持兼容，Windows 隔离启动检查通过。用户已反馈此前同版 Android 测试包部分流程成功；不将该反馈等同于新发布包全功能验收。详见 [发布说明](documentation/releases/v1.7.4.md)与[验证记录](documentation/verification-1.7.4.md)。
+该版本安装包已核对版本和校验值，APK 签名保持兼容。详见 [发布说明](documentation/releases/v1.7.4.md)与[验证记录](documentation/verification-1.7.4.md)。
 
 ### 1.7.3 · 历史版本
 

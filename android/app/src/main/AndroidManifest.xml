@@ -7,6 +7,9 @@
          本应用不在 Play 上架，specialUse 无需审核；API 29-34 仍走 dataSync（无超时）。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 现场采点仅在用户主动点击时读取一次位置；保存前转换为平台使用的 GCJ-02。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 考试强提醒：精确闹钟（Android 12+ 需授权）+ 全屏通知（Android 14+ 需授权） -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />

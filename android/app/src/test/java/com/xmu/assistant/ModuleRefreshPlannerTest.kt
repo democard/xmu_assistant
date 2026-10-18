@@ -15,6 +15,7 @@ class ModuleRefreshPlannerTest {
         assertEquals(RefreshModule.SCORES, refreshModuleForPage("成绩"))
         assertEquals(RefreshModule.COURSES, refreshModuleForPage("课程课件"))
         assertEquals(RefreshModule.COURSES, refreshModuleForPage("缓存课件"))
+        assertEquals(RefreshModule.COURSES, refreshModuleForPage("课程坐标"))
     }
 
     @Test

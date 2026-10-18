@@ -88,7 +88,13 @@ class SettingsPageMixin:
         panel_layout.addWidget(
             self.wait_before_answer_mode_combo, 2, 1, Qt.AlignmentFlag.AlignCenter
         )
+        # 人数/比例始终可见：此前按模式切换可见性，切到对应模式后输入框要么被隐藏、
+        # 要么被挤到面板外，用户会以为"改不了"。改为常显 + 未选中时禁用。
+        self.wait_before_answer_count_spin.setToolTip("选择“已签人数达到”后生效。")
+        self.wait_before_answer_percent_spin.setToolTip("选择“已签比例达到”后生效。")
+        panel_layout.addWidget(QLabel("达到人数"), 3, 0)
         panel_layout.addWidget(self.wait_before_answer_count_spin, 3, 1, Qt.AlignmentFlag.AlignCenter)
+        panel_layout.addWidget(QLabel("达到比例"), 4, 0)
         panel_layout.addWidget(self.wait_before_answer_percent_spin, 4, 1, Qt.AlignmentFlag.AlignCenter)
         wait_tip = QLabel("人数与比例只使用完整、状态明确的签到名单；资料暂不可用时继续等待。")
         wait_tip.setObjectName("Subtle")
@@ -142,7 +148,8 @@ class SettingsPageMixin:
 
     def _refresh_wait_strategy_controls(self, *_args) -> None:
         mode = self.wait_before_answer_mode_combo.currentData()
-        self.wait_before_answer_count_spin.setVisible(mode == "count")
-        self.wait_before_answer_percent_spin.setVisible(mode == "percent")
+        # 常显，避免切换模式后控件"消失"；未选中时禁用并说明原因。
+        self.wait_before_answer_count_spin.setEnabled(mode == "count")
+        self.wait_before_answer_percent_spin.setEnabled(mode == "percent")
         if hasattr(self, "poll_interval_status"):
             self.poll_interval_status.clear()

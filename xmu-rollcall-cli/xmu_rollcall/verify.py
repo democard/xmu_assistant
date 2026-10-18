@@ -1,10 +1,12 @@
 import math
+import re
 import uuid
 
 import requests
 
 from .number_code import complete_number_code, find_number_code  # re-export legacy helper
 from .request_probe import classify_status
+from .radar_geometry import solve_spherical_candidates
 from .utils import (
     API_TIMEOUT,
     SessionExpiredError,
@@ -29,7 +31,7 @@ def _raise_if_session_expired(response):
         raise SessionExpiredError("登录已过期，请重新登录")
 
 
-# 雷达签到双点定位几何（自 send_radar 体内提升为模块级纯函数，函数体逐字未动，便于直测；Android 侧 RollcallEngine 有同构实现）
+# 平面辅助函数保留兼容旧调用；生产雷达路径通过 solve_two_points 使用球面交会。
 def latlon_to_xy(lat, lon, lat0, lon0):
     radius = 6371000
     x = math.radians(lon - lon0) * radius * math.cos(math.radians(lat0))
@@ -64,16 +66,7 @@ def circle_intersections(x1, y1, d1, x2, y2, d2):
     )
 
 def solve_two_points(lat1, lon1, lat2, lon2, d1, d2):
-    lat0 = (lat1 + lat2) / 2
-    lon0 = (lon1 + lon2) / 2
-    x1, y1 = latlon_to_xy(lat1, lon1, lat0, lon0)
-    x2, y2 = latlon_to_xy(lat2, lon2, lat0, lon0)
-    solutions = circle_intersections(x1, y1, d1, x2, y2, d2)
-    if solutions is None:
-        return None
-    point_1 = xy_to_latlon(solutions[0][0], solutions[0][1], lat0, lon0)
-    point_2 = xy_to_latlon(solutions[1][0], solutions[1][1], lat0, lon0)
-    return point_1, point_2
+    return solve_spherical_candidates(lat1, lon1, lat2, lon2, d1, d2)
 
 
 def send_code(in_session, rollcall_id, number_code="", *, course_id="", rollcall_time="", course_title=""):
@@ -123,106 +116,151 @@ def send_code(in_session, rollcall_id, number_code="", *, course_id="", rollcall
         return False
 
 
-def send_radar(in_session, rollcall_id):
-    """雷达签到应答：两次打点求距离 → 圆相交解算候选坐标 → 依次提交候选。
-    失败路径统一返回 False（不发异常）；会话过期除外——SessionExpiredError
-    透传交由上层分流失效路径（过期页落在 200 登录页，仅看状态码会假成功）。
-    """
+def radar_response_detail(code, data):
+    """保留可诊断的拒绝原因，不记录请求凭据、坐标或整个响应体。"""
+    reason = ""
+    if isinstance(data, dict):
+        for key in ("message", "msg", "error", "detail", "code"):
+            value = data.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                reason = str(value).strip()
+                if reason:
+                    break
+    reason = re.sub(r"(?i)bearer\s+\S+", "Bearer [redacted]", reason)
+    reason = re.sub(
+        r"(?i)(password|token|cookie|authorization)\s*[:=]\s*[^\s;,]+",
+        r"\1=[redacted]", reason,
+    )
+    reason = " ".join(reason.split())[:200]
+    return f"HTTP {code}" + (f"，{reason}" if reason else "")
+
+
+def send_radar(in_session, rollcall_id, *, on_failure=None):
+    """两次距离查询和球面交会；写请求回执不明时停止，不盲重放。"""
     url = f"{base_url}/api/rollcall/{rollcall_id}/answer"
-    # 与 send_code 一致：用会话自身的 headers（含该账号的 token 头），而非模块级 headers
-    request_headers = in_session.headers
-    lat_1, lat_2 = 24.3, 24.6
-    lon_1, lon_2 = 118.0, 118.2
+    device_id = str(uuid.uuid4())
+    last_detail = ""
 
-    def payload(lat, lon):
-        return {
-            "accuracy": 35,
-            "altitude": 0,
-            "altitudeAccuracy": None,
-            "deviceId": str(uuid.uuid4()),
-            "heading": None,
-            "latitude": lat,
-            "longitude": lon,
-            "speed": None,
+    def fail(detail):
+        if on_failure is not None:
+            on_failure(f"雷达签到失败：{detail}")
+        return False
+
+    def submit(lat, lon, stage):
+        nonlocal last_detail
+        body = {
+            "accuracy": 35, "altitude": 0, "altitudeAccuracy": None,
+            "deviceId": device_id, "heading": None,
+            "latitude": lat, "longitude": lon, "speed": None,
         }
+        try:
+            response = retry_request(
+                lambda: in_session.put(
+                    url, json=body, headers=in_session.headers,
+                    timeout=API_TIMEOUT, allow_redirects=False,
+                ),
+                max_attempts=1, delay=2, label="radar",
+            )
+            _raise_if_session_expired(response)
+        except requests.RequestException:
+            last_detail = f"{stage}网络回执未收到，提交结果未知；请核实本人记录"
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        last_detail = f"{stage}：{radar_response_detail(response.status_code, data)}"
+        # 登录页已在上面分流；其它 HTML 网关页也不能当作成功。
+        text = (getattr(response, "text", "") or "").strip()
+        content_type = str(getattr(response, "headers", {}).get("Content-Type", "")).lower()
+        html = data is None and (text.startswith("<") or (text and "text/html" in content_type))
+        return response.status_code == 200 and not html, data
+
+    distances = []
+    for index, (lat, lon) in enumerate(((24.3, 118.0), (24.6, 118.2)), 1):
+        result = submit(lat, lon, f"第{index}次距离查询")
+        if result is None:
+            return fail(last_detail)
+        success, data = result
+        if success:
+            return True
+        distance = data.get("distance") if isinstance(data, dict) else None
+        if (
+            isinstance(distance, bool) or not isinstance(distance, (int, float))
+            or not math.isfinite(distance) or distance < 0
+        ):
+            return fail(f"{last_detail}；缺少有效的数值 distance")
+        distances.append(distance)
+
+    candidates = solve_two_points(24.3, 118.0, 24.6, 118.2, *distances)
+    if not candidates:
+        return fail("两次距离无法形成球面交点，请核对距离单位和返回规则")
+    seen = set()
+    for index, (lat, lon) in enumerate(candidates, 1):
+        if (lat, lon) in seen:
+            continue
+        seen.add((lat, lon))
+        result = submit(lat, lon, f"候选位置{index}提交")
+        if result is None:
+            return fail(last_detail)
+        if result[0]:
+            return True
+    return fail(last_detail)
+
+
+def send_radar_at(in_session, rollcall_id, latitude, longitude, *, on_failure=None):
+    """按已配置的课程坐标提交一次，不发送任何探测坐标。
+
+    与 Android 端 answerRadarAt 同语义：未配置坐标的课程不会被提交，避免先写入
+    记录再回头修正。坐标必须是有限数值，调用方负责取课程首选地点。
+    """
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError):
+        latitude = longitude = float("nan")
+    if (
+        not (math.isfinite(latitude) and math.isfinite(longitude))
+        or not -90.0 <= latitude <= 90.0
+        or not -180.0 <= longitude <= 180.0
+    ):
+        if on_failure is not None:
+            on_failure("雷达签到失败：课程坐标无效")
+        return False
+
+    url = f"{base_url}/api/rollcall/{rollcall_id}/answer"
+    body = {
+        "accuracy": 35, "altitude": 0, "altitudeAccuracy": None,
+        "deviceId": str(uuid.uuid4()), "heading": None,
+        "latitude": latitude, "longitude": longitude, "speed": None,
+    }
+
+    def fail(detail):
+        if on_failure is not None:
+            on_failure(f"雷达签到失败：{detail}")
+        return False
 
     try:
-        # payload 在 lambda 外构造一次：同一签到的多次打点/重试必须保持同一
-        # deviceId（设备指纹一致），lambda 内构造会每次重试换 uuid，徒增风控嫌疑。
-        body_1 = payload(lat_1, lon_1)
-        res_1 = retry_request(
-            lambda: in_session.put(url, json=body_1, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
-            delay=2,
-            label="radar_1",
+        response = retry_request(
+            lambda: in_session.put(
+                url, json=body, headers=in_session.headers,
+                timeout=API_TIMEOUT, allow_redirects=False,
+            ),
+            # 写请求不盲重试：超时可能只是回执丢失，重复 PUT 会造成重复签到。
+            max_attempts=1, delay=2, label="radar",
         )
-        _raise_if_session_expired(res_1)
+        _raise_if_session_expired(response)
     except requests.RequestException:
-        # 与 send_code 契约一致：网络层失败按 False 返回，不向外抛异常打断调用方；
-        # SessionExpiredError（RuntimeError 子类）仍透传交由上层分流失效路径。
-        return False
-    if res_1.status_code == 200:
-        return True
+        return fail("网络回执未收到，提交结果未知；请核实本人记录")
+
     try:
-        data_1 = res_1.json()
+        data = response.json()
     except ValueError:
-        # 非 200 且返回 HTML 错误页（登录页/网关错误）时 .json() 会抛 ValueError，
-        # 无兜底会让整个自动雷达签到流程以未处理异常告终
-        return False
-
-    try:
-        body_2 = payload(lat_2, lon_2)
-        res_2 = retry_request(
-            lambda: in_session.put(url, json=body_2, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
-            delay=2,
-            label="radar_2",
-        )
-        _raise_if_session_expired(res_2)
-    except requests.RequestException:
-        return False
-    if res_2.status_code == 200:
+        data = None
+    detail = radar_response_detail(response.status_code, data)
+    text = (getattr(response, "text", "") or "").strip()
+    content_type = str(getattr(response, "headers", {}).get("Content-Type", "")).lower()
+    html = data is None and (text.startswith("<") or (text and "text/html" in content_type))
+    if response.status_code == 200 and not html:
         return True
-    try:
-        data_2 = res_2.json()
-    except ValueError:
-        return False
-
-    if not isinstance(data_1, dict) or not isinstance(data_2, dict):
-        return False
-    distance_1 = data_1.get("distance")
-    distance_2 = data_2.get("distance")
-    if not isinstance(distance_1, (int, float)) or not isinstance(distance_2, (int, float)):
-        # 缺 distance 字段时 d1 ** 2 会抛 TypeError；此时无法解算，按失败返回
-        return False
-
-    resolutions = solve_two_points(lat_1, lon_1, lat_2, lon_2, distance_1, distance_2)
-    if not resolutions:
-        return False
-    (sol_x_1, sol_y_1), (sol_x_2, sol_y_2) = resolutions
-    # 与前两次 PUT 同一重试策略：候选坐标提交也可能遇到抖动，不重试会白白放弃
-    try:
-        body_3 = payload(sol_x_1, sol_y_1)
-        res_3 = retry_request(
-            lambda: in_session.put(url, json=body_3, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
-            delay=2,
-            label="radar_3",
-        )
-        _raise_if_session_expired(res_3)
-    except requests.RequestException:
-        return False
-    if res_3.status_code == 200:
-        return True
-    try:
-        body_4 = payload(sol_x_2, sol_y_2)
-        res_4 = retry_request(
-            lambda: in_session.put(url, json=body_4, headers=request_headers, timeout=API_TIMEOUT),
-            max_attempts=3,
-            delay=2,
-            label="radar_4",
-        )
-        _raise_if_session_expired(res_4)
-    except requests.RequestException:
-        return False
-    return res_4.status_code == 200
+    return fail(detail)

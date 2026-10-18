@@ -101,6 +101,8 @@ a = Analysis(
         # 必能加载），mark.png 同时兼任 PNG 兜底。icon/logo 两张纯兜底图不再打包
         # （实测省 ~0.73MB，app_icon 的回退链 mark 仍在，行为不变）。
         ('assets/xmu-assistant-mark.png', 'assets'),
+        # 雷达坐标页的翔安校区预置地点（随包分发，离线可用）
+        ('xmu-rollcall-cli/xmu_rollcall/data/xiang_an_coordinates_gcj02.json', 'xmu_rollcall/data'),
     ],
     hiddenimports=['win32crypt']
                + collect_submodules('xmu_rollcall')

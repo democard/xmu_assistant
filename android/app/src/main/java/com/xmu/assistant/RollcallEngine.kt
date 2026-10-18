@@ -2,18 +2,11 @@ package com.xmu.assistant
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.IOException
 import java.util.UUID
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.hypot
-import kotlin.math.pow
-import kotlin.math.sqrt
 
 private val defaultRollcallAnswerTransport: QueryHttpTransport by lazy {
-    // 数字签到 PUT 的响应可能丢失；关闭 OkHttp 的连接失败自动重放，确保引擎每次
+    // 签到 PUT 的响应可能丢失；关闭 OkHttp 的连接失败自动重放，确保引擎每次
     // 调用只发送一次写请求。后续是否重试由监控读取本人明细后显式决定。
     OkHttpQueryTransport(XmuHttpClients.query.newBuilder().retryOnConnectionFailure(false).build())
 }
@@ -22,9 +15,13 @@ class RollcallEngine internal constructor(
     private val cookieHeader: String,
     private val statusTransport: QueryHttpTransport = OkHttpQueryTransport(),
     private val answerTransport: QueryHttpTransport = defaultRollcallAnswerTransport,
+    private val radarCoordinateProvider: ((RollcallEvent) -> RadarCoordinate?)? = null,
 ) {
     private val baseUrl = "https://lnt.xmu.edu.cn"
     private val numberCodeLookup = RollcallNumberCodeLookup(cookieHeader, statusTransport)
+    var lastRadarFailure: String? = null
+        private set
+    private var lastRadarRejectedCode: Int? = null
 
     fun pollOnce(): List<RollcallEvent> {
         val json = getStatusJson("$baseUrl/api/radar/rollcalls")
@@ -160,61 +157,103 @@ class RollcallEngine internal constructor(
     }
 
     fun answerRadar(rollcallId: String): Boolean {
+        lastRadarFailure = null
+        lastRadarRejectedCode = null
         val url = "$baseUrl/api/rollcall/$rollcallId/answer"
-        val lat1 = 24.3
-        val lon1 = 118.0
-        val lat2 = 24.6
-        val lon2 = 118.2
-        val first = putJsonWithResponse(url, radarPayload(lat1, lon1))
-        if (first.first) return true
-        val second = putJsonWithResponse(url, radarPayload(lat2, lon2))
-        if (second.first) return true
-        // org.json 的 optDouble 对缺失键返回 NaN 而非 null，?: 拦不住；必须显式
-        // has + isFinite，否则 NaN 贯穿 solveRadarCandidates（NaN 所有比较均 false）
-        // 生成含 NaN 的候选坐标 → JSON 序列化抛异常 → 该签到每轮重试无限漏答（审查 MEDIUM）。
-        val distance1 = first.second
-            ?.takeIf { it.has("distance") }
-            ?.optDouble("distance")
-            ?.takeIf { it.isFinite() } ?: return false
-        val distance2 = second.second
-            ?.takeIf { it.has("distance") }
-            ?.optDouble("distance")
-            ?.takeIf { it.isFinite() } ?: return false
-        val candidates = solveRadarCandidates(lat1, lon1, lat2, lon2, distance1, distance2) ?: return false
-        return candidates.any { (lat, lon) -> putJson(url, radarPayload(lat, lon)) }
+        val deviceId = UUID.randomUUID().toString()
+        fun submit(lat: Double, lon: Double, stage: String): RadarReply? {
+            val reply = try {
+                putRadarAnswer(url, radarPayload(lat, lon, deviceId))
+            } catch (_: IOException) {
+                lastRadarRejectedCode = null
+                lastRadarFailure = "雷达签到失败：${stage}网络回执未收到，提交结果未知；请核实本人记录"
+                return null
+            }
+            lastRadarFailure = "雷达签到失败：$stage：${reply.detail}"
+            lastRadarRejectedCode = reply.code.takeIf { it in setOf(400, 403, 404, 409, 422, 429) }
+            return reply
+        }
+        val distances = mutableListOf<Double>()
+        listOf(24.3 to 118.0, 24.6 to 118.2).forEachIndexed { index, (lat, lon) ->
+            val reply = submit(lat, lon, "第${index + 1}次距离查询") ?: return false
+            if (reply.success) { lastRadarFailure = null; return true }
+            val distance = (reply.data?.opt("distance") as? Number)?.toDouble()
+            if (distance == null || !distance.isFinite() || distance < 0) {
+                lastRadarFailure = "${lastRadarFailure.orEmpty()}；缺少有效的数值 distance"
+                return false
+            }
+            distances += distance
+        }
+        val candidates = solveRadarCandidates(24.3, 118.0, 24.6, 118.2, distances[0], distances[1])
+        if (candidates == null) {
+            lastRadarFailure = "雷达签到失败：两次距离无法形成球面交点，请核对距离单位和返回规则"
+            return false
+        }
+        candidates.distinct().forEachIndexed { index, (lat, lon) ->
+            val reply = submit(lat, lon, "候选位置${index + 1}提交") ?: return false
+            if (reply.success) { lastRadarFailure = null; return true }
+        }
+        return false
+    }
+
+    /**
+     * Production radar path: submit the course's selected location exactly once. Unlike the
+     * legacy distance solver, this never sends probe coordinates and therefore cannot mutate an
+     * attendance record before the user has configured the course.
+     */
+    internal fun answerRadarAt(rollcallId: String, coordinate: RadarCoordinate): Boolean {
+        lastRadarFailure = null
+        lastRadarRejectedCode = null
+        val reply = try {
+            putRadarAnswer(
+                "$baseUrl/api/rollcall/$rollcallId/answer",
+                radarPayload(coordinate.latitude, coordinate.longitude),
+            )
+        } catch (_: IOException) {
+            lastRadarFailure = "雷达签到失败：网络回执未收到，提交结果未知；请核实本人记录"
+            return false
+        }
+        if (reply.success) return true
+        lastRadarRejectedCode = reply.code.takeIf { it in setOf(400, 403, 404, 409, 422, 429) }
+        lastRadarFailure = "雷达签到失败：${reply.detail}"
+        return false
     }
 
     fun answer(event: RollcallEvent): Boolean = when (event.type) {
         "数字签到" -> answerNumber(event)
-        "雷达签到" -> answerRadar(event.id)
+        "雷达签到" -> if (
+            if (radarCoordinateProvider == null) {
+                // 保留给兼容性测试和旧调用方；应用监控始终注入课程坐标提供器。
+                answerRadar(event.id)
+            } else {
+                val coordinate = radarCoordinateProvider.invoke(event)
+                    ?: error("雷达签到未提交：${event.courseTitle}尚未配置课程坐标")
+                answerRadarAt(event.id, coordinate)
+            }
+        ) true else {
+            val detail = lastRadarFailure ?: "雷达签到提交失败"
+            val code = lastRadarRejectedCode
+            if (code != null) throw RollcallAnswerRejectedException(code, detail)
+            else error(detail)
+        }
         else -> false
     }
 
-    private fun putJson(url: String, body: JSONObject): Boolean = putJsonWithResponse(url, body).first
+    private data class RadarReply(val success: Boolean, val data: JSONObject?, val detail: String, val code: Int)
 
-    private fun putJsonWithResponse(url: String, body: JSONObject): Pair<Boolean, JSONObject?> {
-        // 雷达链路保持原实现和原错误语义；本轮只修数字签到。
-        val conn = open(url)
-        try {
-            conn.requestMethod = "PUT"
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
-            val code = conn.responseCode
-            if (code == 401 || code == 403) throw MainSessionExpiredException()
-            if (code in 300..399 && isIdentityRedirect(url, conn.getHeaderField("Location"))) {
-                throw MainSessionExpiredException()
-            }
-            val text = runCatching {
-                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-                stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            }.getOrDefault("")
-            val parsed = text.takeIf { it.isNotBlank() }
-                ?.let { value -> runCatching { JSONObject(value) }.getOrNull() }
-            return Pair(code in 200..299, parsed)
-        } finally {
-            conn.disconnect()
-        }
+    private fun putRadarAnswer(url: String, body: JSONObject): RadarReply {
+        val response = executePut(url, body)
+        if (response.code == 401 ||
+            (response.code in 300..399 && isIdentityRedirect(response.url, response.location)) ||
+            isKnownLoginForm(response.body)
+        ) throw MainSessionExpiredException()
+        val parsed = runCatching { JSONObject(response.body) }.getOrNull()
+        val contentType = response.headers.entries.firstOrNull { it.key.equals("Content-Type", true) }
+            ?.value?.joinToString().orEmpty()
+        val text = response.body.trim()
+        val html = parsed == null && (text.startsWith("<") ||
+            (text.isNotEmpty() && contentType.contains("text/html", true)))
+        return RadarReply(response.code == 200 && !html, parsed, radarResponseDetail(response.code, parsed), response.code)
     }
 
     /** 数字签到需要把明确的 HTTP 拒绝与回执不明（transport 抛异常）分开。 */
@@ -257,29 +296,21 @@ class RollcallEngine internal constructor(
         )
     }
 
-    private fun open(url: String): HttpURLConnection {
-        return (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8000
-            readTimeout = 15000
-            instanceFollowRedirects = false
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36")
-            setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
-            if (cookieHeader.isNotBlank()) setRequestProperty("Cookie", cookieHeader)
-        }
-    }
 }
 
-internal class RollcallAnswerRejectedException(val responseCode: Int) :
-    IllegalStateException("数字签到提交失败：平台返回 $responseCode")
+internal class RollcallAnswerRejectedException(
+    val responseCode: Int,
+    detail: String = "数字签到提交失败：平台返回 $responseCode",
+) : IllegalStateException(detail)
 
 internal class RollcallAnswerUncertainException(val responseCode: Int) :
     IllegalStateException("数字签到提交结果未知：平台返回 $responseCode")
 
-fun radarPayload(lat: Double, lon: Double): JSONObject = JSONObject()
+fun radarPayload(lat: Double, lon: Double, deviceId: String = UUID.randomUUID().toString()): JSONObject = JSONObject()
     .put("accuracy", 35)
     .put("altitude", 0)
     .put("altitudeAccuracy", JSONObject.NULL)
-    .put("deviceId", UUID.randomUUID().toString())
+    .put("deviceId", deviceId)
     .put("heading", JSONObject.NULL)
     .put("latitude", lat)
     .put("longitude", lon)
@@ -292,39 +323,19 @@ fun solveRadarCandidates(
     lon2: Double,
     distance1: Double,
     distance2: Double,
-): List<Pair<Double, Double>>? {
-    val lat0 = (lat1 + lat2) / 2
-    val lon0 = (lon1 + lon2) / 2
-    val p1 = latLonToXY(lat1, lon1, lat0, lon0)
-    val p2 = latLonToXY(lat2, lon2, lat0, lon0)
-    val d = hypot(p2.first - p1.first, p2.second - p1.second)
-    if (d > distance1 + distance2 || d < abs(distance1 - distance2) || d == 0.0) return null
-    val along = (distance1.pow(2) - distance2.pow(2) + d.pow(2)) / (2 * d)
-    val h2 = distance1.pow(2) - along.pow(2)
-    if (h2 < 0) return null
-    val height = sqrt(h2)
-    val midX = p1.first + along * (p2.first - p1.first) / d
-    val midY = p1.second + along * (p2.second - p1.second) / d
-    val offX = -(p2.second - p1.second) * height / d
-    val offY = (p2.first - p1.first) * height / d
-    return listOf(
-        xyToLatLon(midX + offX, midY + offY, lat0, lon0),
-        xyToLatLon(midX - offX, midY - offY, lat0, lon0),
-    )
-}
+): List<Pair<Double, Double>>? =
+    solveSphericalRadarCandidates(lat1, lon1, lat2, lon2, distance1, distance2)
 
-private fun latLonToXY(lat: Double, lon: Double, lat0: Double, lon0: Double): Pair<Double, Double> {
-    val radius = 6371000.0
-    val x = Math.toRadians(lon - lon0) * radius * cos(Math.toRadians(lat0))
-    val y = Math.toRadians(lat - lat0) * radius
-    return Pair(x, y)
-}
-
-private fun xyToLatLon(x: Double, y: Double, lat0: Double, lon0: Double): Pair<Double, Double> {
-    val radius = 6371000.0
-    val lat = lat0 + Math.toDegrees(y / radius)
-    val lon = lon0 + Math.toDegrees(x / (radius * cos(Math.toRadians(lat0))))
-    return Pair(lat, lon)
+internal fun radarResponseDetail(code: Int, data: JSONObject?): String {
+    var reason = listOf("message", "msg", "error", "detail", "code")
+        .firstNotNullOfOrNull { key ->
+            val value = data?.opt(key)
+            if (value is String || value is Number) value.toString().trim().takeIf(String::isNotEmpty) else null
+        }.orEmpty()
+    reason = reason.replace(Regex("bearer\\s+\\S+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
+        .replace(Regex("(password|token|cookie|authorization)\\s*[:=]\\s*[^\\s;,]+", RegexOption.IGNORE_CASE), "\$1=[redacted]")
+        .replace(Regex("\\s+"), " ").take(200)
+    return "HTTP $code" + if (reason.isEmpty()) "" else "，$reason"
 }
 
 fun firstString(json: JSONObject, vararg keys: String): String =

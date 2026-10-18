@@ -29,6 +29,7 @@ internal fun RollcallRecordCard(
     modifier: Modifier = Modifier,
     numberCode: String? = null,
     numberCodeInFacts: Boolean = false,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     InfoCard(modifier) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -64,6 +65,7 @@ internal fun RollcallRecordCard(
         if (!numberCodeInFacts && numberCode != null) {
             RollcallCode(numberCode, Modifier.fillMaxWidth(), TextAlign.Start, showCopy = true)
         }
+        footer?.invoke()
     }
 }
 

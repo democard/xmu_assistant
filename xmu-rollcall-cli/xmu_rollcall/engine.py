@@ -5,12 +5,19 @@ from __future__ import annotations
 from .rollcall_models import ROLLCALLS_URL, RollcallEvent, build_rollcall_event
 from .request_probe import classify_status
 from .utils import API_TIMEOUT, SessionExpiredError, headers, response_session_expired
-from .verify import send_code, send_radar
+from .verify import send_code, send_radar, send_radar_at
 
 
 class RollcallEngine:
-    def __init__(self, session):
+    def __init__(self, session, radar_coordinates=None):
         self.session = session
+        self.last_answer_detail = ""
+        # 传入课程坐标库后，雷达签到改为「按课程首选坐标提交一次」；
+        # 不传时保留旧的两次距离探测实现（供兼容性测试与旧调用方使用）。
+        self.radar_coordinates = radar_coordinates
+        # 课程上下文：调用方可直接传参，也可在 answer() 前设置，
+        # 便于旧调用点保持三个位置参数的签名不变。
+        self.course_context: tuple[str, str] = ("", "")
 
     def poll_payload(self) -> dict:
         """拉取原始 rollcalls payload：请求 + 会话过期判定 + 非 JSON 兜底。
@@ -59,11 +66,42 @@ class RollcallEngine:
         return bool(send_code(self.session, rollcall_id, number_code))
 
     def answer_radar(self, rollcall_id: str) -> bool:
-        return bool(send_radar(self.session, rollcall_id))
+        self.last_answer_detail = ""
+        def record_failure(detail):
+            self.last_answer_detail = detail
+        return bool(send_radar(self.session, rollcall_id, on_failure=record_failure))
 
-    def answer(self, rollcall_type: str, rollcall_id: str, number_code: str = "") -> bool:
+    def answer_radar_at(self, rollcall_id: str, latitude: float, longitude: float) -> bool:
+        """按课程坐标提交一次，不发送任何探测坐标。"""
+        self.last_answer_detail = ""
+        def record_failure(detail):
+            self.last_answer_detail = detail
+        return bool(
+            send_radar_at(
+                self.session, rollcall_id, latitude, longitude, on_failure=record_failure
+            )
+        )
+
+    def answer(
+        self,
+        rollcall_type: str,
+        rollcall_id: str,
+        number_code: str = "",
+        *,
+        course_title: str | None = None,
+        course_id: str | None = None,
+    ) -> bool:
         if rollcall_type == "数字签到":
             return self.answer_number(rollcall_id, number_code)
         if rollcall_type == "雷达签到":
-            return self.answer_radar(rollcall_id)
+            if self.radar_coordinates is None:
+                return self.answer_radar(rollcall_id)
+            context_title, context_id = self.course_context
+            title = context_title if course_title is None else course_title
+            course = context_id if course_id is None else course_id
+            coordinate = self.radar_coordinates.preferred_for(course, title)
+            if coordinate is None:
+                # 与 Android 同语义：没有配置就不提交，并明确告知原因。
+                raise RuntimeError(f"雷达签到未提交：{title or '该课程'}尚未配置课程坐标")
+            return self.answer_radar_at(rollcall_id, coordinate.latitude, coordinate.longitude)
         return False

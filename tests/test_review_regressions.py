@@ -37,7 +37,7 @@ class _FakePutSession:
         self.exc = exc
         self.calls = 0
 
-    def put(self, url, json=None, headers=None, timeout=None):
+    def put(self, url, json=None, headers=None, timeout=None, allow_redirects=True):
         self.calls += 1
         if self.behavior == "network_error":
             raise self.exc
@@ -254,7 +254,7 @@ class _FakeSubmitSession:
     def get(self, url, headers=None, timeout=None):
         return self._get_response
 
-    def put(self, url, json=None, headers=None, timeout=None):
+    def put(self, url, json=None, headers=None, timeout=None, allow_redirects=True):
         return self._put_response
 
 

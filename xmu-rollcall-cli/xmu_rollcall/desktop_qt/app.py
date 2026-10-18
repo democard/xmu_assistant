@@ -38,6 +38,7 @@ from .tutorial_page import TutorialPageMixin
 from .overview_page import OverviewPageMixin
 from .courseware_page import CoursewarePageMixin
 from .courses_page import CoursesPageMixin
+from .radar_coordinates_page import RadarCoordinatesPageMixin
 from .single_instance import (
     acquire_single_instance,
     activate_existing_instance,
@@ -65,6 +66,7 @@ from ..courseware import (
 )
 from .. import login_persistence
 from ..engine import RollcallEngine
+from ..radar_coordinates import RadarCoordinateStore
 from ..rollcall_progress import RollcallProgress, summarize_rollcall_progress, wait_before_answer_satisfied
 from ..rollcall_models import rollcall_is_expired
 from ..verify import find_number_code
@@ -137,6 +139,7 @@ class DashboardWindow(
     UiSnapshotMixin,
     OverviewPageMixin,
     CoursewarePageMixin,
+    RadarCoordinatesPageMixin,
     CoursesPageMixin,
     QMainWindow,
 ):
@@ -183,6 +186,8 @@ class DashboardWindow(
         self.event_order: list[str] = []
         self.course_records: list[CourseRollcallRecord] = []
         self.courseware_courses: list[CourseSummary] = []
+        # 雷达签到坐标：按课程保存，自动/手动雷达签到只提交首选地点。
+        self.radar_coordinates = RadarCoordinateStore()
         self.courseware_items: list[CoursewareItem] = []
         self.courseware_course_by_display: dict[str, CourseSummary] = {}
         self.courseware_download_status: dict[str, str] = {}
@@ -209,7 +214,7 @@ class DashboardWindow(
         self.log_messages: list[str] = []
         self.background_error_count = 0
         self.background_error_notified = False
-        self.nav_titles = ("首页", "签到情况", "课程课件", "通知", "教程", "策略")
+        self.nav_titles = ("首页", "签到情况", "课程课件", "雷达坐标", "通知", "教程", "策略")
 
         self._build_ui()
         self._setup_tray()
@@ -314,6 +319,7 @@ class DashboardWindow(
         self.pages.addWidget(self._build_overview_page())
         self.pages.addWidget(self._build_courses_page())
         self.pages.addWidget(self._build_courseware_page())
+        self.pages.addWidget(self._build_radar_coordinates_page())
         self.pages.addWidget(self._build_notifications_page())
         self.pages.addWidget(self._build_tutorial_page())
         self.pages.addWidget(self._build_settings_page())
@@ -1050,10 +1056,17 @@ class DashboardWindow(
                     ))
                     return
                 number_code = checked_code or number_code
-            ok = RollcallEngine(session).answer(
+            answer_engine = RollcallEngine(
+                session, radar_coordinates=getattr(self, "radar_coordinates", None)
+            )
+            answer_engine.course_context = (
+                str(getattr(event, "course_title", "") or ""),
+                str(getattr(event, "course_id", "") or ""),
+            )
+            ok = answer_engine.answer(
                 event.rollcall_type, event.rollcall_id, number_code
             )
-            detail = "提交成功" if ok else "提交失败"
+            detail = "提交成功" if ok else (getattr(answer_engine, "last_answer_detail", "") or "提交失败")
         except Exception as exc:
             ok = False
             detail, session_expired = answer_failure_detail(exc)
@@ -1694,6 +1707,8 @@ class DashboardWindow(
             self.courseware_courses_refresh_in_progress = False
             self._set_courseware_courses(event[1], event[2])
             self._update_nav_badges()
+            # 雷达坐标页复用同一份课程列表，避免再打一次课程接口。
+            self.refresh_radar_course_options()
             self._save_ui_snapshot()
         else:
             self.log("忽略晚到的课件课程列表结果（账号已切换或已登出）。")

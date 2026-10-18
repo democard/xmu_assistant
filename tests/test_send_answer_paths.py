@@ -2,7 +2,7 @@
 
 此前守护集中在会话过期分流（test_review_regressions 的 3 用例）；成功路径
 零断言——数字码提取后提交载荷、雷达打点顺序/候选提交顺序/短路行为、
-「每次打点独立 deviceId、同一打点重试共用同一 body」的指纹语义均未锁定。
+同一雷达流程保持 deviceId，写请求回执不明时不盲重放。
 全部走 ScriptedSession 注入，零真实网络。
 """
 
@@ -134,9 +134,9 @@ class SendRadarPathTests(unittest.TestCase):
         # 候选坐标来自圆交解算，不等于任何打点
         self.assertNotEqual((candidate["latitude"], candidate["longitude"]), (24.3, 118.0))
         self.assertNotEqual((candidate["latitude"], candidate["longitude"]), (24.6, 118.2))
-        # 每次打点独立 deviceId（现行为锁定：跨打点换指纹、同一 body 内重试不换）
+        # 两个探测点和候选位置属于同一设备、同一次应答流程。
         device_ids = {first["deviceId"], second["deviceId"], candidate["deviceId"]}
-        self.assertEqual(len(device_ids), 3)
+        self.assertEqual(len(device_ids), 1)
 
     def test_second_ping_success_stops_before_solving(self):
         session = ScriptedSession(
@@ -156,7 +156,7 @@ class SendRadarPathTests(unittest.TestCase):
             ]
         )
         self.assertFalse(send_radar(session, "r1"))
-        self.assertEqual(len(session.puts), 2)
+        self.assertEqual(len(session.puts), 1)
 
 
 if __name__ == "__main__":

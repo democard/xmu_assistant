@@ -1,0 +1,359 @@
+{
+  "campus": "厦门大学翔安校区",
+  "coordinateSystem": "GCJ-02",
+  "generatedOn": "2026-10-18",
+  "locations": [
+    {
+      "id": "osm-relation-20411770",
+      "name": "学武楼",
+      "zone": "主楼群",
+      "latitude": 24.605515,
+      "longitude": 118.314094,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411769",
+      "name": "坤銮楼",
+      "zone": "主楼群",
+      "latitude": 24.605607,
+      "longitude": 118.313093,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411771",
+      "name": "文宣楼",
+      "zone": "主楼群",
+      "latitude": 24.605273,
+      "longitude": 118.309745,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411772",
+      "name": "主楼群5号楼",
+      "zone": "主楼群",
+      "latitude": 24.604889,
+      "longitude": 118.309338,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935752686",
+      "name": "正信楼",
+      "zone": "西部片区",
+      "latitude": 24.603545,
+      "longitude": 118.300389,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-935752685",
+      "name": "学信楼",
+      "zone": "西部片区",
+      "latitude": 24.604231,
+      "longitude": 118.299801,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-1324616684",
+      "name": "益海嘉里楼",
+      "zone": "西部片区",
+      "latitude": 24.604573,
+      "longitude": 118.300961,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-935752684",
+      "name": "启信楼",
+      "zone": "西部片区",
+      "latitude": 24.60533,
+      "longitude": 118.300236,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-1467927766",
+      "name": "智信楼",
+      "zone": "西部片区",
+      "latitude": 24.60554,
+      "longitude": 118.301474,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-1324616687",
+      "name": "睿信楼",
+      "zone": "西部片区",
+      "latitude": 24.606475,
+      "longitude": 118.300429,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-935786419",
+      "name": "一期综合楼",
+      "zone": "公共教学",
+      "latitude": 24.610409,
+      "longitude": 118.316865,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935737659",
+      "name": "佘明培游泳馆",
+      "zone": "公共教学",
+      "latitude": 24.611441,
+      "longitude": 118.312025,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411776",
+      "name": "公共卫生学院（曾宪梓楼）",
+      "zone": "医学与生命",
+      "latitude": 24.606251,
+      "longitude": 118.306991,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935730238",
+      "name": "分子影像大楼（曾辉楼）",
+      "zone": "医学与生命",
+      "latitude": 24.60704,
+      "longitude": 118.306529,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-947167731",
+      "name": "嘉庚创新实验室1#楼",
+      "zone": "东部科研",
+      "latitude": 24.605158,
+      "longitude": 118.318813,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-947167730",
+      "name": "嘉庚创新实验室2#楼",
+      "zone": "东部科研",
+      "latitude": 24.605694,
+      "longitude": 118.318969,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-relation-20081030",
+      "name": "嘉庚创新实验室3#楼",
+      "zone": "东部科研",
+      "latitude": 24.606324,
+      "longitude": 118.318646,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-947167726",
+      "name": "嘉庚创新实验室4#楼",
+      "zone": "东部科研",
+      "latitude": 24.60676,
+      "longitude": 118.31898,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-947167725",
+      "name": "嘉庚创新实验室5#楼",
+      "zone": "东部科研",
+      "latitude": 24.607333,
+      "longitude": 118.318814,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-relation-20411775",
+      "name": "国家传染病诊断试剂与疫苗工程技术研究中心（椭圆楼）",
+      "zone": "医学与生命",
+      "latitude": 24.604996,
+      "longitude": 118.306407,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-1494630009",
+      "name": "天文台",
+      "zone": "北部科研",
+      "latitude": 24.60724,
+      "longitude": 118.307313,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935759349",
+      "name": "学生活动中心（林积灿楼）",
+      "zone": "公共教学",
+      "latitude": 24.609215,
+      "longitude": 118.315953,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935730235",
+      "name": "实验动物中心",
+      "zone": "医学与生命",
+      "latitude": 24.608873,
+      "longitude": 118.30768,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-947167734",
+      "name": "实验动物中心二期",
+      "zone": "医学与生命",
+      "latitude": 24.609623,
+      "longitude": 118.307986,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935741253",
+      "name": "成义楼",
+      "zone": "医学与生命",
+      "latitude": 24.604558,
+      "longitude": 118.304982,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935741254",
+      "name": "成伟楼",
+      "zone": "医学与生命",
+      "latitude": 24.603902,
+      "longitude": 118.305343,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935741252",
+      "name": "成智楼",
+      "zone": "医学与生命",
+      "latitude": 24.605289,
+      "longitude": 118.30512,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-947171132",
+      "name": "新工科大楼",
+      "zone": "北部科研",
+      "latitude": 24.614611,
+      "longitude": 118.31041,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-way-1503330499",
+      "name": "气体供应站",
+      "zone": "北部科研",
+      "latitude": 24.615217,
+      "longitude": 118.311158,
+      "confidence": "medium_high"
+    },
+    {
+      "id": "osm-relation-20411767",
+      "name": "海洋与地球学院（希平楼）",
+      "zone": "公共教学",
+      "latitude": 24.605524,
+      "longitude": 118.31756,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935741251",
+      "name": "爱礼楼",
+      "zone": "医学与生命",
+      "latitude": 24.606118,
+      "longitude": 118.305496,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935752698",
+      "name": "爱秋体育馆",
+      "zone": "公共教学",
+      "latitude": 24.611551,
+      "longitude": 118.310506,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411773",
+      "name": "环境与生态学院（金泉楼）",
+      "zone": "东部科研",
+      "latitude": 24.606991,
+      "longitude": 118.315626,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411774",
+      "name": "生命科学学院（黄朝阳楼）",
+      "zone": "医学与生命",
+      "latitude": 24.604438,
+      "longitude": 118.307309,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20081029",
+      "name": "电子科学与技术学院（南存钿楼）",
+      "zone": "东部科研",
+      "latitude": 24.604402,
+      "longitude": 118.318846,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-947169899",
+      "name": "细胞应激生物学国家重点实验室（跃进楼）",
+      "zone": "医学与生命",
+      "latitude": 24.605958,
+      "longitude": 118.307647,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935752721",
+      "name": "综合实验楼",
+      "zone": "北部科研",
+      "latitude": 24.615273,
+      "longitude": 118.310233,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935795701",
+      "name": "能源学院（和木楼）",
+      "zone": "东部科研",
+      "latitude": 24.606527,
+      "longitude": 118.317545,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-947167733",
+      "name": "航空航天学院",
+      "zone": "北部科研",
+      "latitude": 24.608628,
+      "longitude": 118.311066,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-way-935730236",
+      "name": "药学院（庄瑾楼）",
+      "zone": "医学与生命",
+      "latitude": 24.607696,
+      "longitude": 118.308228,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20411768",
+      "name": "近海海洋环境科学国家重点实验室（周隆泉楼）",
+      "zone": "东部科研",
+      "latitude": 24.605432,
+      "longitude": 118.315561,
+      "confidence": "high"
+    },
+    {
+      "id": "osm-relation-20081871",
+      "name": "醇醚酯化工清洁生产国家工程实验室",
+      "zone": "东部科研",
+      "latitude": 24.607398,
+      "longitude": 118.317074,
+      "confidence": "high"
+    },
+    {
+      "id": "xmu-official-383099",
+      "name": "一期操场",
+      "zone": "公共教学",
+      "latitude": 24.608959,
+      "longitude": 118.318712,
+      "confidence": "high"
+    },
+    {
+      "id": "xmu-official-384265",
+      "name": "二期操场",
+      "zone": "公共教学",
+      "latitude": 24.609394,
+      "longitude": 118.302687,
+      "confidence": "high"
+    }
+  ]
+}

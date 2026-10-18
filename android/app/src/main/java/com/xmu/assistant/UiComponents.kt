@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -141,31 +142,31 @@ fun XmuMobileTheme(themeMode: String = THEME_MODE_SYSTEM, content: @Composable (
         val colorScheme = remember(dark) {
             if (dark) {
                 darkColorScheme(
-                    primary = Color(0xFF6FA8DC),
-                    secondary = Color(0xFF8FBCE8),
-                    surface = Color(0xFF12171D),
-                    surfaceVariant = Color(0xFF1C2530),
-                    onPrimary = Color(0xFF082B4A),
-                    onSurface = Color(0xFFE3EBF3),
-                    onSurfaceVariant = Color(0xFF9FB0C0),
-                    background = Color(0xFF0D1117),
-                    onBackground = Color(0xFFE3EBF3),
-                    outline = Color(0xFF8294A6),
-                    outlineVariant = Color(0xFF2D3C4B),
+                    primary = Color(0xFF8FAEC8),
+                    secondary = Color(0xFFA8C1D4),
+                    surface = Color(0xFF17232D),
+                    surfaceVariant = Color(0xFF223542),
+                    onPrimary = Color(0xFF14212A),
+                    onSurface = Color(0xFFEBF2F6),
+                    onSurfaceVariant = Color(0xFF9BAAB5),
+                    background = Color(0xFF111A22),
+                    onBackground = Color(0xFFEBF2F6),
+                    outline = Color(0xFF8FA1AE),
+                    outlineVariant = Color(0xFF2C3C49),
                 )
             } else {
                 lightColorScheme(
-                    primary = Color(0xFF0B4F8A),
-                    secondary = Color(0xFF2B6EA6),
-                    surface = Color.White,
-                    surfaceVariant = Color(0xFFEAF2FA),
+                    primary = Color(0xFF6683A0),
+                    secondary = Color(0xFF7D95AD),
+                    surface = Color(0xFFDEE4E7),
+                    surfaceVariant = Color(0xFFC4D2DB),
                     onPrimary = Color.White,
-                    onSurface = Color(0xFF082B4A),
-                    onSurfaceVariant = Color(0xFF55708A),
-                    background = Color(0xFFF6F8FA),
-                    onBackground = Color(0xFF082B4A),
-                    outline = Color(0xFF73879A),
-                    outlineVariant = Color(0xFFDDE6EE),
+                    onSurface = Color(0xFF293C4C),
+                    onSurfaceVariant = Color(0xFF637583),
+                    background = Color(0xFFCAD5DC),
+                    onBackground = Color(0xFF293C4C),
+                    outline = Color(0xFF607583),
+                    outlineVariant = Color(0xFFB0BEC7),
                 )
             }
         }
@@ -176,16 +177,16 @@ fun XmuMobileTheme(themeMode: String = THEME_MODE_SYSTEM, content: @Composable (
     }
 }
 
-internal val AppPrimary = Color(0xFF083B6F)
+internal val AppPrimary = Color(0xFF4B6884)
 internal val AppHeaderBrush = Brush.linearGradient(
-    listOf(Color(0xFF083B6F), Color(0xFF0E5D7A), Color(0xFF18636F)),
+    listOf(Color(0xFF657F9A), Color(0xFF7D95AD)),
 )
-internal val AppSuccess = Color(0xFF087443)
+internal val AppSuccess = Color(0xFF6D8C80)
 
 /** 深色模式下把浅色功能底换成深色变体，避免深色界面出现刺眼亮块。 */
 @Composable
 internal fun themeSoftGreen(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF1E3A32) else Color(0xFFE6F6EE)
+    if (LocalXmuDarkTheme.current) Color(0xFF1D332B) else Color(0xFFD2DED8)
 
 /** 未登录/警示底色：深色模式换深红变体，避免深色界面出现刺眼亮块。 */
 @Composable
@@ -195,20 +196,20 @@ internal fun themeSoftRed(): Color =
 /** 品牌角标（XMU）底色：深色模式换深琥珀变体，避免刺眼亮块。 */
 @Composable
 internal fun themeSoftAmber(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF3A3020) else Color(0xFFFFF1C7)
+    if (LocalXmuDarkTheme.current) Color(0xFF362B22) else Color(0xFFE3D8CE)
 
 /** 品牌角标（XMU）文字色：深色下用更亮的琥珀保证深底可读。 */
 @Composable
 internal fun themeOnAmber(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFFFFD580) else Color(0xFF6F4A00)
+    if (LocalXmuDarkTheme.current) Color(0xFFDDB68E) else Color(0xFF7F5F48)
 
 @Composable
 internal fun themeSurface(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF1C2530) else Color(0xFFFFFFFF)
+    if (LocalXmuDarkTheme.current) Color(0xFF17232D) else Color(0xFFDEE4E7)
 
 @Composable
 internal fun themePrimarySoft(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF1E2A3A) else Color(0xFFE7F0FA)
+    if (LocalXmuDarkTheme.current) Color(0xFF223542) else Color(0xFFC4D2DB)
 
 /** 警示文字色：深色模式下用更亮的红，保证深底上的可读性。 */
 @Composable
@@ -218,12 +219,12 @@ internal fun themeWarning(): Color =
 /** 成功文字色：深色模式下用更亮的绿，保证深底上的可读性。 */
 @Composable
 internal fun themeSuccess(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF6FCF97) else Color(0xFF067647)
+    if (LocalXmuDarkTheme.current) Color(0xFF9FC8B9) else Color(0xFF58776C)
 
 /** 顶部标签选中底色：深色模式下用浅蓝（AppPrimary 深海军蓝在深底上区分度不足）。 */
 @Composable
 internal fun themeSelectedTab(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF2B4A6E) else AppPrimary
+    if (LocalXmuDarkTheme.current) Color(0xFF456B86) else AppPrimary
 
 /** 课表/日程选中的 chip 底色：与 themeSelectedTab 同源，深色下用浅蓝区分深底。 */
 @Composable
@@ -232,29 +233,42 @@ internal fun themeSelectedChip(): Color = themeSelectedTab()
 /** 主色文字变体：深色模式下用浅蓝，避免深海军蓝 AppPrimary 在深底上不可读。 */
 @Composable
 internal fun themePrimary(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF6FA8DC) else Color(0xFF083B6F)
+    if (LocalXmuDarkTheme.current) Color(0xFF8FAEC8) else Color(0xFF4B6884)
 
 @Composable
 internal fun themeTodayColumn(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF22303F) else Color(0xFFF7FBFF)
+    if (LocalXmuDarkTheme.current) Color(0xFF223441) else Color(0xFFE3EDF2)
 
 @Composable
 internal fun themeInfoCard(): Color =
-    if (LocalXmuDarkTheme.current) Color(0xFF1C2530) else Color(0xFFF8FBFE)
+    if (LocalXmuDarkTheme.current) Color(0xFF1B2B36) else Color(0xFFF2F6F8)
 
 @Composable
 internal fun themeFailedCard(): Color =
     if (LocalXmuDarkTheme.current) Color(0xFF3A2323) else Color(0xFFFFEDEA)
 
 @Composable
-fun BrandHeader(loggedIn: Boolean, page: String = "首页") {
+fun BrandHeader(
+    loggedIn: Boolean,
+    page: String = "首页",
+    showBack: Boolean = false,
+    onBack: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 2.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppLogo(Modifier.size(38.dp), null)
+        if (showBack) {
+            Surface(onClick = onBack, color = themePrimarySoft(), shape = RoundedCornerShape(10.dp)) {
+                Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+                    Text("‹", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else {
+            AppLogo(Modifier.size(34.dp), null)
+        }
         Spacer(Modifier.width(12.dp))
         Text(
             if (page == "首页") "虾大助手" else page,
@@ -265,7 +279,7 @@ fun BrandHeader(loggedIn: Boolean, page: String = "首页") {
         )
         Surface(
             color = if (loggedIn) themeSoftGreen() else themeSoftRed(),
-            shape = RoundedCornerShape(999.dp),
+            shape = RoundedCornerShape(10.dp),
         ) {
             Text(
                 if (loggedIn) "已登录" else "未登录",
@@ -392,11 +406,11 @@ fun SectionCard(title: String, showTitle: Boolean = true, content: @Composable C
     val line = MaterialTheme.colorScheme.outlineVariant
     Card(
         colors = CardDefaults.cardColors(containerColor = surface),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, line),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (showTitle) Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             content()
         }
@@ -475,11 +489,79 @@ fun ScoreSummaryPanel(summary: XmuScoreSummary) {
     }
 }
 
-/** 模拟成绩结果面板：与顶部统计面板同款四项布局，按需求不显示已修总学分。 */
+/** 四项统计的公共两行布局：平均与加权各自成行，顶部概览与模拟面板共用。 */
 @Composable
-fun ScoreSimulationSummaryPanel(summary: XmuScoreSummary) {
+private fun ScoreSummaryMetricRows(summary: XmuScoreSummary) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ScoreMetric("平均绩点", scoreMetricText(summary.averageGpa), Modifier.weight(1f))
+        ScoreMetric("加权绩点", scoreMetricText(summary.weightedGpa), Modifier.weight(1f))
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ScoreMetric("平均分数", scoreMetricText(summary.averageScore), Modifier.weight(1f))
+        ScoreMetric("加权分数", scoreMetricText(summary.weightedScore), Modifier.weight(1f))
+    }
+}
+
+/**
+ * 模拟成绩面板：每项并排显示「当前 → 计入模拟课程后」，四项都会随输入变化。
+ * 平均按课程等权、加权按学分；模拟课不计入已修学分。
+ */
+@Composable
+fun ScoreSimulationSummaryPanel(current: XmuScoreSummary, simulated: XmuScoreSummary) {
     ScoreSummaryPanelSurface {
-        ScoreSummaryMetricRows(summary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SimulationDeltaMetric("平均绩点", current.averageGpa, simulated.averageGpa, "sim-avg-gpa", Modifier.weight(1f))
+            SimulationDeltaMetric("加权绩点", current.weightedGpa, simulated.weightedGpa, "sim-weighted-gpa", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SimulationDeltaMetric("平均分数", current.averageScore, simulated.averageScore, "sim-avg-score", Modifier.weight(1f))
+            SimulationDeltaMetric("加权分数", current.weightedScore, simulated.weightedScore, "sim-weighted-score", Modifier.weight(1f))
+        }
+        Text(
+            "箭头左侧为当前成绩，右侧为计入模拟课程后的结果；模拟课不计入已修总学分。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 单项：左值当前、右值计入模拟后；两值并排显示，较小变化也不会被误读成未生效。 */
+@Composable
+private fun SimulationDeltaMetric(
+    label: String,
+    before: Double?,
+    after: Double?,
+    afterTag: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier.height(68.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    scoreMetricText(before),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                Text("→", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    scoreMetricText(after),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier.testTag(afterTag),
+                )
+            }
+        }
     }
 }
 
@@ -493,18 +575,6 @@ private fun ScoreSummaryPanelSurface(content: @Composable ColumnScope.() -> Unit
         verticalArrangement = Arrangement.spacedBy(8.dp),
         content = content,
     )
-}
-
-@Composable
-private fun ScoreSummaryMetricRows(summary: XmuScoreSummary) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        ScoreMetric("平均绩点", scoreMetricText(summary.averageGpa), Modifier.weight(1f))
-        ScoreMetric("加权绩点", scoreMetricText(summary.weightedGpa), Modifier.weight(1f))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        ScoreMetric("平均分数", scoreMetricText(summary.averageScore), Modifier.weight(1f))
-        ScoreMetric("加权分数", scoreMetricText(summary.weightedScore), Modifier.weight(1f))
-    }
 }
 
 @Composable
@@ -540,15 +610,22 @@ fun TermHeader(term: String, count: Int) {
 
 @Composable
 fun ScoreRecordCard(record: XmuScoreRecord) {
-    InfoCard(container = themeSurface()) {
-        Text(
-            record.courseName,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(scoreRecordDetail(record), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    PreviewCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+            Surface(color = if ((record.score ?: 0.0) >= 90.0) themeSoftGreen() else themePrimarySoft(), shape = RoundedCornerShape(11.dp)) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    Text(record.score?.let(::scoreMetricText) ?: scoreResultText(record), fontWeight = FontWeight.Bold, color = if ((record.score ?: 0.0) >= 90.0) themeSuccess() else themePrimary())
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(record.courseName, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${scoreMetricText(record.credit)} 学分 · 绩点 ${scoreMetricText(record.gradePoint)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

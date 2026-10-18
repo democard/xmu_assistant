@@ -138,7 +138,13 @@ class RollcallMonitorService : Service() {
                     if (liveCookie.isBlank()) error("登录已过期，请重新登录")
                     // 运行中换号/重登：seen 与新账号不匹配，退出循环，由重登流程重启监控
                     if (liveCookie != cookieSnapshot) return
-                    val engine = RollcallEngine(liveCookie)
+                    val coordinateStore = RadarCoordinateStore(this)
+                    val engine = RollcallEngine(
+                        liveCookie,
+                        radarCoordinateProvider = { event ->
+                            coordinateStore.preferredFor(event.courseId, event.courseTitle)
+                        },
+                    )
                     // 同一轮详情 GET 同时供进度门槛、本人状态和数字码使用。
                     val allEvents = engine.pollWithDetails(settings.username)
                     // 自适应轮询节奏（与桌面端 MonitorWorker 对齐）：存在进行中的签到

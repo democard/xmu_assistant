@@ -28,8 +28,8 @@ include = ["xmu_rollcall*"]
 
 [tool.setuptools.package-data]
 # The wheel must retain the icon fallback used when the repository-level
-# assets directory is absent after installation.
-xmu_rollcall = ["assets/*.ico", "assets/*.png"]
+# assets directory is absent after installation; data/ holds radar presets.
+xmu_rollcall = ["assets/*.ico", "assets/*.png", "data/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "xmu_rollcall.__version__"}

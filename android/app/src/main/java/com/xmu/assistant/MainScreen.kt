@@ -30,11 +30,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -250,6 +253,19 @@ internal fun MainScreen(
     val (toast, toastSeverity, busy, downloadingCount) = status
     // 设置页写入的是 prefs，不是 Compose State；递增此值让课表页重读校准周次。
     val manualWeekRevision = remember { mutableIntStateOf(0) }
+    val radarCoordinateStore = remember(activity) { RadarCoordinateStore(activity) }
+    var coordinateTarget by remember { mutableStateOf<CourseSummary?>(null) }
+    val currentSemesterCoordinateCourses = remember(courses, schedule.termCode, schedule.entries) {
+        currentTermCoordinateCourses(courses, schedule.termCode, schedule.entries)
+    }
+    val currentTermCoordinateTarget = remember(coordinateTarget, currentSemesterCoordinateCourses) {
+        coordinateTarget?.let { target ->
+            currentSemesterCoordinateCourses.firstOrNull { course ->
+                (course.id.isNotBlank() && course.id == target.id) ||
+                    normalizeCourseTitle(course.title) == normalizeCourseTitle(target.title)
+            }
+        }
+    }
 
     // 桌面小卡片 pin 结果延时校验（批次四·两段重复 postDelayed 合并 + 可取消化）：
     // 3 秒后 widget 实例数未增加即判定失败并触发对应回退引导。
@@ -290,10 +306,17 @@ internal fun MainScreen(
                         .widthIn(max = 760.dp)
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 13.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    BrandHeader(loggedIn = loggedIn, page = page)
+                    BrandHeader(
+                        loggedIn = loggedIn,
+                        page = if (page == "课程坐标" && currentTermCoordinateTarget != null) {
+                            "${currentTermCoordinateTarget.title} · 课程坐标"
+                        } else page,
+                        showBack = page != "首页" && primaryDestinations.none { it.page == page },
+                        onBack = { onModuleEntered(parentPage(page)) },
+                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -312,11 +335,40 @@ internal fun MainScreen(
                                 historyError = rollcall.historyError,
                                 historyUpdatedAtMillis = rollcall.historyUpdatedAtMillis,
                                 loggedIn = loggedIn,
+                                coordinateStore = radarCoordinateStore,
+                                onManageCoordinates = { courseId, courseTitle ->
+                                    coordinateTarget = CourseSummary(courseId, courseTitle)
+                                    onModuleEntered("课程坐标")
+                                },
                                 onRefresh = {
                                     // 顶部按钮一键刷两块（独立互斥门，可并行）
                                     rollcall.refresh()
                                     rollcall.refreshHistory()
                                 },
+                            )
+                            "课程坐标" -> CourseCoordinatePage(
+                                courses = currentSemesterCoordinateCourses,
+                                initialCourse = currentTermCoordinateTarget,
+                                store = radarCoordinateStore,
+                                show = show,
+                                onCourseSelected = { coordinateTarget = it },
+                                onAddPlace = { onModuleEntered("添加地点") },
+                                onCapture = { onModuleEntered("现场采点") },
+                            )
+                            "添加地点" -> AddRadarPlacePage(
+                                courses = currentSemesterCoordinateCourses,
+                                initialCourse = currentTermCoordinateTarget,
+                                store = radarCoordinateStore,
+                                show = show,
+                                onSaved = { onModuleEntered("课程坐标") },
+                                onCapture = { onModuleEntered("现场采点") },
+                            )
+                            "现场采点" -> OnsiteRadarCapturePage(
+                                courses = currentSemesterCoordinateCourses,
+                                initialCourse = currentTermCoordinateTarget,
+                                store = radarCoordinateStore,
+                                show = show,
+                                onSaved = { onModuleEntered("课程坐标") },
                             )
                             "成绩" -> ScorePage(
                                 records = scores.scoreRecords,
@@ -330,18 +382,17 @@ internal fun MainScreen(
                                 onOpenRank = { onModuleEntered("专业排名") },
                             )
                             "专业排名" -> RankPage(scores.ranking) { onModuleEntered("成绩") }
-                            "考试安排" -> ExamPage(
+                            "考试安排" -> ExamPreviewPage(
                                 summary = exam.summary,
                                 validTerms = exam.validTerms,
                                 selectedTerm = exam.selectedTerm,
                                 loading = exam.loading,
                                 refreshError = exam.refreshError,
-                                autoUpdated = exam.autoUpdated,
                                 loggedIn = loggedIn,
                                 onSelectTerm = exam::selectTerm,
                                 onRefresh = exam::refresh,
                             )
-                            "课程课件" -> CoursewarePage(
+                            "课程课件" -> CoursewarePreviewPage(
                                 courses = courses,
                                 selectedCourse = selectedCourse,
                                 coursewareItems = courseware.coursewareItems,
@@ -359,12 +410,10 @@ internal fun MainScreen(
                                 downloadLoading = courseware.downloadLoading,
                                 coursesLoading = coursesLoading,
                                 coursesRefreshError = coursesRefreshError,
-                                coursesUpdatedAtMillis = coursesUpdatedAtMillis,
                                 coursewareLoading = selectedCourse?.id in courseware.loadingIds,
                                 coursewareRefreshError = selectedCourse?.id
                                     ?.let { courseware.refreshErrors[it] }
                                     .orEmpty(),
-                                coursewareUpdatedAtMillis = coursewareUpdatedAtMillis,
                                 loggedIn = loggedIn,
                             )
                             else -> key(page) {
@@ -394,12 +443,12 @@ internal fun MainScreen(
                                                 settings.manualAcademicWeek(schedule.termCode)
                                             },
                                         )
-                                        "通知" -> NotificationSettingsPage(settings, notificationSettings, testNotifications) {
+                                        "通知" -> NotificationSettingsPreviewPage(settings, notificationSettings, testNotifications) {
                                             onNotificationSettingsSaved(it)
                                             show("通知设置已保存")
                                         }
                                         "教程" -> TutorialPage(pageScrollState, onModuleEntered)
-                                        "策略" -> StrategyPage(
+                                        "策略" -> StrategyPreviewPage(
                                             settings,
                                             schedule.termCode,
                                             rollcallSettings,
@@ -513,7 +562,6 @@ internal fun MainScreen(
                                             monitorFailureCount = monitorConsecutiveFailures,
                                             monitorLastError = monitorLastError,
                                             rollcallSettings = rollcallSettings,
-                                            recentEvent = rollcall.events.firstOrNull(),
                                             onUsername = setUsername,
                                             onPassword = setPassword,
                                             onLogin = { homeActions.onLogin(username, password, accountTransitionInProgress, monitor.monitorTransitionId) },

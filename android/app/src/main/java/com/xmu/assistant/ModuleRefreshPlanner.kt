@@ -45,7 +45,7 @@ class PendingModuleRefresh {
 fun refreshModuleForPage(page: String): RefreshModule = when (page) {
     "签到情况" -> RefreshModule.ROLLCALL
     "成绩" -> RefreshModule.SCORES
-    "课程课件", "缓存课件" -> RefreshModule.COURSES
+    "课程课件", "缓存课件", "课程坐标" -> RefreshModule.COURSES
     // 课表不自动刷新：课表按学期基本不变，点击标签一律直接展示缓存，
     // 需要最新数据时由用户点课表页的「刷新」按钮手动拉取。
     else -> RefreshModule.NONE

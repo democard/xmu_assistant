@@ -47,13 +47,18 @@ internal val moreDestinations = listOf(
     AppDestination("通知", "通知", R.drawable.ic_nav_bell, "系统、微信与邮件提醒"),
     AppDestination("策略", "策略与外观", R.drawable.ic_nav_settings, "监控策略 · 主题 · 桌面小卡片"),
     AppDestination("教程", "使用教程", R.drawable.ic_nav_help, "功能说明与常见问题"),
+    AppDestination("课程坐标", "课程坐标", R.drawable.ic_nav_location, "管理自动签到使用的地点"),
 )
 
 internal fun primaryPage(page: String): String =
     if (page == "专业排名") "成绩" else if (primaryDestinations.any { it.page == page }) page else "更多"
 
 internal fun parentPage(page: String): String =
-    if (page == "专业排名") "成绩" else if (moreDestinations.any { it.page == page }) "更多" else "首页"
+    when (page) {
+        "专业排名" -> "成绩"
+        "添加地点", "现场采点" -> "课程坐标"
+        else -> if (moreDestinations.any { it.page == page }) "更多" else "首页"
+    }
 
 /** Keep each page's small UI state while its composition is absent; discard it on account changes. */
 @Composable
@@ -77,7 +82,7 @@ internal fun AppNavigationBar(
     onSelected: (String) -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(0.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         NavigationBar(
@@ -128,25 +133,23 @@ internal fun MorePage(
     downloadingCount: Int,
     onSelected: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("校园工具", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("学习工具与偏好设置", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("学习工具与偏好设置", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         moreDestinations.forEach { destination ->
             Surface(
                 onClick = { onSelected(destination.page) },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(13.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Surface(shape = RoundedCornerShape(14.dp), color = themePrimarySoft()) {
-                        Icon(painterResource(destination.icon), null, tint = themePrimary(), modifier = Modifier.padding(12.dp).size(24.dp))
-                    }
+                    PreviewIconBox(destination.icon)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(destination.label, fontWeight = FontWeight.Bold)
                         Text(destination.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

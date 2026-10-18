@@ -36,7 +36,7 @@ class HomePageUiTest {
                     username = "123456789", password = "", loggedIn = loggedIn, monitorRunning = running,
                     accountTransitionInProgress = false, monitorTransitionInProgress = busy,
                     monitorStatus = if (running) "运行中" else "未启动", monitorLastCheck = "10:00:00",
-                    monitorFailureCount = 0, monitorLastError = "", rollcallSettings = settings, recentEvent = null,
+                    monitorFailureCount = 0, monitorLastError = "", rollcallSettings = settings,
                     onUsername = {}, onPassword = {}, onLogin = {}, onLogout = logout,
                     onStartMonitor = start, onStopMonitor = stop, onAutoChanged = autoChanged,
                     onOpenBackgroundSettings = {}, onNavigate = navigate,
@@ -122,6 +122,8 @@ class HomePageUiTest {
         }
         composeRule.onNodeWithText("调整类型与人数条件").performScrollTo().performClick()
         composeRule.runOnIdle { assertEquals("策略", destination) }
+        composeRule.onNodeWithText("雷达签到坐标管理").performScrollTo().performClick()
+        composeRule.runOnIdle { assertEquals("课程坐标", destination) }
         composeRule.onNodeWithText("自动签到快捷开关").performScrollTo().performClick()
         composeRule.runOnIdle { assertEquals(false, enabled) }
     }

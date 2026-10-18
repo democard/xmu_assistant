@@ -157,7 +157,7 @@ internal fun ScheduleWeekGrid(
         }
     }
     Text(
-        "固定 11 节课 · 左右滑动查看一周 · 点击课程查看详情",
+        "固定 11 节课 · 左右滑动查看一周 · 点击课程可修改安排",
         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

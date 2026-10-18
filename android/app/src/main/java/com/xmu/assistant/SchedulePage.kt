@@ -21,9 +21,11 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import java.io.File
@@ -124,6 +127,7 @@ fun SchedulePage(
     manualWeek: Int = 0,
 ) {
     val today = LocalDate.now()
+    val context = LocalContext.current
     // 每分钟刷新当前时刻：跨过下课时刻后「正在上课」高亮/下一节课判断/置灰
     // 才能随时间自动更新（此前只在重组时取一次，页面停留期间状态陈旧）。
     var nowValue by remember {
@@ -182,18 +186,31 @@ fun SchedulePage(
         }
         lastDefaultWeek = defaultWeek
     }
+    val overrideStore = remember(context) { ScheduleOverrideStore(context) }
+    var overrideRevision by rememberSaveable(termCode) { mutableIntStateOf(0) }
     // 绑定 termCode：切换学期时清掉上一学期点开的课程详情，避免残留旧数据
     var selectedCourse by rememberSaveable(termCode, stateSaver = scheduleGroupListSaver) {
         mutableStateOf<XmuScheduleGroup?>(null)
     }
-    fun selectCourseAndReveal(group: XmuScheduleGroup) {
-        selectedCourse = group
+    var selectedBaseCourse by rememberSaveable("base-$termCode", stateSaver = scheduleGroupListSaver) {
+        mutableStateOf<XmuScheduleGroup?>(null)
     }
+    var coursePickerExpanded by remember { mutableStateOf(false) }
 
     val clampedWeek = selectedWeek.coerceIn(1, totalWeeks)
     val weekIndex = remember(entries) { indexXmuScheduleByWeek(entries) }
-    val weekGroups = remember(entries, weekIndex, clampedWeek) {
+    val rawWeekGroups = remember(entries, weekIndex, clampedWeek) {
         (weekIndex[clampedWeek] ?: emptyList()).groupForDisplay()
+    }
+    val weekGroupPairs = remember(rawWeekGroups, termCode, overrideRevision) {
+        rawWeekGroups.map { base -> base to overrideStore.apply(termCode, base) }
+    }
+    val weekGroups = remember(weekGroupPairs) {
+        weekGroupPairs.map { it.second }.sortedWith(compareBy<XmuScheduleGroup> { it.weekday }.thenBy { it.startSection }.thenBy { it.courseName })
+    }
+    fun selectCourseAndReveal(group: XmuScheduleGroup) {
+        selectedBaseCourse = weekGroupPairs.firstOrNull { it.second == group }?.first ?: group
+        selectedCourse = group
     }
     val selectedWeekStart = remember(calendar, clampedWeek) { xmuWeekStart(calendar, clampedWeek) }
     val selectedIsCurrent = academicWeek.week == clampedWeek
@@ -201,7 +218,6 @@ fun SchedulePage(
 
     // ICS 导出走 cacheDir → FileProvider → 系统分享（日历/邮件应用均可导入）；
     // 文件很小（<200KB），生成与落盘放 IO 协程只为规避主线程磁盘 StrictMode 告警。
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
     fun exportScheduleIcs() {
@@ -241,9 +257,28 @@ fun SchedulePage(
     }
 
     selectedCourse?.let { group ->
-        ModalBottomSheet(onDismissRequest = { selectedCourse = null }, containerColor = MaterialTheme.colorScheme.surface) {
+        val base = selectedBaseCourse ?: group
+        fun closeDetails() {
+            selectedCourse = null
+            selectedBaseCourse = null
+        }
+        ModalBottomSheet(onDismissRequest = ::closeDetails, containerColor = MaterialTheme.colorScheme.surface) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
-                SelectionContainer { ScheduleCourseDetails(group, onClose = { selectedCourse = null }) }
+                ScheduleCourseDetails(
+                    group = group,
+                    hasLocalOverride = overrideStore.has(termCode, base),
+                    onClose = ::closeDetails,
+                    onSave = { value ->
+                        overrideStore.save(termCode, base, value)
+                        overrideRevision += 1
+                        selectedCourse = applyScheduleOverride(base, value)
+                    },
+                    onRestoreOfficial = {
+                        overrideStore.remove(termCode, base)
+                        overrideRevision += 1
+                        selectedCourse = base
+                    },
+                )
             }
         }
     }
@@ -266,6 +301,7 @@ fun SchedulePage(
             onWeekSelected = {
                 selectedWeek = it
                 selectedCourse = null
+                selectedBaseCourse = null
                 if (academicWeek.week == it) selectedDay = todayWeekday
             },
         )
@@ -279,8 +315,34 @@ fun SchedulePage(
                 selectedDay = todayWeekday
                 viewModeName = ScheduleViewMode.AGENDA.name
                 selectedCourse = null
+                selectedBaseCourse = null
             }, enabled = academicWeek.week != null) {
                 Text("今天")
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "点击课程可修改教室、星期、节次和周次",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Box {
+                TextButton(onClick = { coursePickerExpanded = true }, enabled = weekGroups.isNotEmpty()) {
+                    Text("修改安排")
+                }
+                DropdownMenu(expanded = coursePickerExpanded, onDismissRequest = { coursePickerExpanded = false }) {
+                    weekGroups.forEach { group ->
+                        DropdownMenuItem(
+                            text = { Text("${group.courseName} · ${weekdayName(group.weekday)} ${group.startSection}—${group.endSection}节") },
+                            onClick = {
+                                coursePickerExpanded = false
+                                selectCourseAndReveal(group)
+                            },
+                        )
+                    }
+                }
             }
         }
 
@@ -700,54 +762,146 @@ private fun ScheduleAgendaView(
 @Composable
 private fun ScheduleCourseDetails(
     group: XmuScheduleGroup,
+    hasLocalOverride: Boolean,
     onClose: () -> Unit,
+    onSave: (ScheduleCourseOverride) -> Unit,
+    onRestoreOfficial: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var editing by rememberSaveable(group.courseName, group.weekday, group.startSection, group.endSection) { mutableStateOf(false) }
+    var room by remember(group) { mutableStateOf(scheduleLocationSummary(group).takeUnless { it == "教室未标注" }.orEmpty()) }
+    var teacher by remember(group) { mutableStateOf(group.teachers.joinToString("、")) }
+    var weeks by remember(group) { mutableStateOf(group.weeks) }
+    var weekdayText by remember(group) { mutableStateOf(group.weekday.toString()) }
+    var startSectionText by remember(group) { mutableStateOf(group.startSection.toString()) }
+    var endSectionText by remember(group) { mutableStateOf(group.endSection.toString()) }
+    var validationError by remember { mutableStateOf("") }
+
     InfoCard(container = themeInfoCard(), modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                group.courseName,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "收起",
-                color = themePrimary(),
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable(onClick = onClose)
-                    .defaultMinSize(minHeight = 48.dp)
-                    .padding(10.dp),
-            )
+            Column(Modifier.weight(1f)) {
+                Text(group.courseName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("我的上课安排", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { if (editing) editing = false else editing = true }) {
+                Text(if (editing) "取消编辑" else "修改安排")
+            }
         }
-        Text("${weekdayName(group.weekday)} · ${formatXmuTime(group.startTime)}—${formatXmuTime(group.endTime)}")
-        Text("节次：${group.startSection}—${group.endSection}节")
-        Text("周次：${group.weeks.ifBlank { "未标注" }}")
-        if (group.variants.size > 1) {
-            Text("教学班安排：${group.variants.size} 个")
-            group.variants.forEach { variant ->
-                Text(
-                    "· ${variant.weeks.ifBlank { "周次未标注" }} · " +
-                        "${variant.room.ifBlank { "教室未标注" }} · " +
-                        "${variant.teacher.ifBlank { "教师未标注" }}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+        if (!editing) {
+            if (hasLocalOverride) PreviewBadge("已修改", PreviewBadgeTone.GREEN)
+            Text("${weekdayName(group.weekday)} · ${formatXmuTime(group.startTime)}—${formatXmuTime(group.endTime)}")
+            Text("节次：${group.startSection}—${group.endSection}节")
+            Text("周次：${group.weeks.ifBlank { "未标注" }}")
+            Text("教室：${scheduleLocationSummary(group)}")
+            Text("教师：${group.teachers.joinToString("、").ifBlank { "未标注" }}")
+            Text(
+                "教室、星期、节次和周次都可以修改。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (hasLocalOverride) {
+                OutlinedButton(onClick = onRestoreOfficial, modifier = Modifier.fillMaxWidth()) {
+                    Text("恢复教务系统安排")
+                }
             }
         } else {
-            Text("教室：\n${scheduleLocationSummary(group)}")
-            Text("教师：${group.teachers.joinToString("、").ifBlank { "未标注" }}")
+            OutlinedTextField(
+                value = room,
+                onValueChange = { room = it },
+                label = { Text("教室或地点") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = weekdayText,
+                    onValueChange = { weekdayText = it.filter(Char::isDigit).take(1) },
+                    label = { Text("星期 1—7") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = startSectionText,
+                    onValueChange = { startSectionText = it.filter(Char::isDigit).take(2) },
+                    label = { Text("开始节次") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = endSectionText,
+                    onValueChange = { endSectionText = it.filter(Char::isDigit).take(2) },
+                    label = { Text("结束节次") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            OutlinedTextField(
+                value = weeks,
+                onValueChange = { weeks = it },
+                label = { Text("周次") },
+                placeholder = { Text("例如：第 1—16 周") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = teacher,
+                onValueChange = { teacher = it },
+                label = { Text("教师与教学班") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (validationError.isNotBlank()) {
+                Text(
+                    validationError,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Button(
+                onClick = {
+                    val weekday = weekdayText.toIntOrNull()
+                    val start = startSectionText.toIntOrNull()
+                    val end = endSectionText.toIntOrNull()
+                    validationError = when {
+                        weekday == null || weekday !in 1..7 -> "星期请输入 1—7"
+                        start == null || start !in 1..11 -> "开始节次请输入 1—11"
+                        end == null || end !in start..11 -> "结束节次不能早于开始节次"
+                        else -> ""
+                    }
+                    if (validationError.isEmpty()) {
+                        onSave(
+                            ScheduleCourseOverride(
+                                weekday = weekday!!,
+                                startSection = start!!,
+                                endSection = end!!,
+                                room = room,
+                                teacher = teacher,
+                                weeks = weeks,
+                            ),
+                        )
+                        editing = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("保存")
+            }
         }
+        TextButton(onClick = onClose, modifier = Modifier.align(Alignment.End)) { Text("关闭") }
     }
 }
 
 private val SCHEDULE_COLOR_PALETTE = listOf(
-    Color(0xFF2F6FA3),
-    Color(0xFF16866A),
-    Color(0xFF9B5C22),
-    Color(0xFF7654A8),
-    Color(0xFFB34F64),
-    Color(0xFF397C8C),
+    Color(0xFF8EA9BE),
+    Color(0xFF91AE9F),
+    Color(0xFFC09A7A),
+    Color(0xFF9B94B6),
+    Color(0xFFB28E98),
+    Color(0xFF7F9FA7),
 )
 
 internal fun scheduleCourseColor(courseName: String): Color {

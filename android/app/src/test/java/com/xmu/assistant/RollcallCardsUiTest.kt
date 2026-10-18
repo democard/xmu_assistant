@@ -10,8 +10,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -32,7 +34,7 @@ class RollcallCardsUiTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun `regular width shows count percentage code and explicit missing progress`() {
+    fun `regular width keeps active cards compact and preserves number code`() {
         composeRule.setContent {
             XmuMobileTheme {
                 Box(Modifier.width(390.dp).height(1600.dp).testTag("page")) {
@@ -48,17 +50,15 @@ class RollcallCardsUiTest {
                 }
             }
         }
-        composeRule.onNodeWithText("18 / 40 人").assertExists()
-        composeRule.onNodeWithText("45%").assertExists()
+        composeRule.onNodeWithText("18 / 40 人已签到").assertExists()
         composeRule.onNodeWithText("签到码 001204").assertExists()
-        composeRule.onNodeWithText("签到进度").assertExists()
-        composeRule.onNodeWithText("暂未获取").assertExists()
-        val activeTitle = composeRule.onNodeWithText("高等数学").fetchSemanticsNode().boundsInRoot
-        val activeCount = composeRule.onNodeWithText("18 / 40 人").fetchSemanticsNode().boundsInRoot
+        composeRule.onAllNodesWithText("签到进度").assertCountEquals(0)
+        composeRule.onNodeWithText("暂未获取").assertDoesNotExist()
+        val activeCount = composeRule.onNodeWithText("18 / 40 人已签到").fetchSemanticsNode().boundsInRoot
         val activeTeacher = composeRule.onNodeWithText("发起人：陈老师").fetchSemanticsNode().boundsInRoot
         val activeCode = composeRule.onNodeWithText("签到码 001204").fetchSemanticsNode().boundsInRoot
-        assertTrue(activeCount.left >= activeTitle.right)
-        assertTrue(activeCode.top >= activeTeacher.bottom)
+        assertTrue(activeCount.top >= activeTeacher.bottom)
+        assertTrue(activeCode.left > activeCount.left)
     }
 
     @Test

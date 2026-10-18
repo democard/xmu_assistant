@@ -44,12 +44,10 @@ internal fun RankPage(state: RankSectionState, onBack: () -> Unit) {
     }
     val result = state.cache.result
     val pending = state.cache.pending
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("‹ 返回成绩") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         if (state.stale) Text("成绩已变化，以下为上次排名，待重新获取。", color = themeWarning(), style = MaterialTheme.typography.bodySmall)
-        Surface(color = themePrimarySoft(), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("GPA 专业排名", color = themePrimary())
+        PreviewCard {
+                Text("本次计算结果", color = themePrimary(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(result?.position?.toString() ?: "—", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = themePrimary())
                     Text(result?.participants?.let { "/ $it 人" } ?: "尚无排名结果", modifier = Modifier.padding(bottom = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -81,7 +79,6 @@ internal fun RankPage(state: RankSectionState, onBack: () -> Unit) {
                         else -> "获取专业排名"
                     })
                 }
-            }
         }
         if (state.error.isNotBlank()) Text(state.error, color = themeWarning(), style = MaterialTheme.typography.bodyMedium)
         if (pending != null && !state.loading) {
@@ -89,22 +86,26 @@ internal fun RankPage(state: RankSectionState, onBack: () -> Unit) {
             TextButton(onClick = { abandonDialog = true }) { Text("结束本次等待") }
         }
         if (result != null) {
-            Text("计算范围：${result.rangeName}", style = MaterialTheme.typography.bodyMedium)
-            HorizontalDivider()
-            Text("绩点证明", fontWeight = FontWeight.Bold)
-            if (result.pdfBase64.isBlank()) Text("本地 PDF 已清理。排名与日期仍保留，已导出的副本不受影响。", style = MaterialTheme.typography.bodySmall)
-            else {
-                Text("与上方排名对应的原始 PDF", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        exportRecord = result.recordId
-                        export.launch("绩点证明-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.CHINA).format(Date(result.obtainedAt))}.pdf")
-                    }, modifier = Modifier.weight(1f), enabled = !state.loading) { Text("导出绩点证明") }
-                    TextButton(onClick = { clearDialog = true }, enabled = !state.loading) { Text("清理 PDF") }
+            PreviewCard {
+                PreviewSectionHeader("计算范围", result.rangeName)
+                Text("绩点证明", fontWeight = FontWeight.Bold)
+                if (result.pdfBase64.isBlank()) Text("本地 PDF 已清理。排名与日期仍保留，已导出的副本不受影响。", style = MaterialTheme.typography.bodySmall)
+                else {
+                    Text("与上方排名对应的原始 PDF", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            exportRecord = result.recordId
+                            export.launch("绩点证明-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.CHINA).format(Date(result.obtainedAt))}.pdf")
+                        }, modifier = Modifier.weight(1f), enabled = !state.loading) { Text("导出证明") }
+                        TextButton(onClick = { clearDialog = true }, enabled = !state.loading) { Text("清理 PDF") }
+                    }
                 }
             }
         }
-        Text("排名以本次计算范围和时间为准；成绩变化只会标记待更新，不会自动申请。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        PreviewCard(soft = true) {
+            Text("需要更新排名？", fontWeight = FontWeight.Bold)
+            Text("重新获取会提交新的绩点计算申请，请按需操作。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
     if (clearDialog) AlertDialog(onDismissRequest = { clearDialog = false }, title = { Text("清理本地 PDF？") },
         text = { Text("仅删除应用内保存的证明，保留排名和日期。已导出的文件不会删除；清理后无法再次导出这份本地证明。") },
