@@ -141,7 +141,7 @@ internal fun RollcallStatusPage(
 }
 
 @Composable
-internal fun ActiveRollcallPreviewCard(
+private fun ActiveRollcallPreviewCard(
     event: RollcallEvent,
     preferred: RadarCoordinate?,
     onManageCoordinates: () -> Unit,

@@ -11,8 +11,8 @@ android {
         applicationId = "com.xmu.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "1.8.2"
+        versionCode = 44
+        versionName = "1.8.3"
         buildConfigField("boolean", "NETWORK_METRICS", "false")
     }
 

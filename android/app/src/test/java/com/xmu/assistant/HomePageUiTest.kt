@@ -37,8 +37,7 @@ class HomePageUiTest {
                             stop: () -> Unit = {}, logout: () -> Unit = {}, autoChanged: (Boolean) -> Unit = {},
                             navigate: (String) -> Unit = {}, events: List<RollcallEvent> = emptyList(),
                             rollcallLoading: Boolean = false, rollcallError: String = "",
-                            updatedAt: Long = 0L, refreshRollcalls: () -> Unit = {},
-                            manageCoordinates: (String, String) -> Unit = { _, _ -> }) {
+                            updatedAt: Long = 0L) {
         XmuMobileTheme {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 HomePage(
@@ -51,22 +50,23 @@ class HomePageUiTest {
                     onOpenBackgroundSettings = {}, onNavigate = navigate,
                     currentRollcalls = events, rollcallLoading = rollcallLoading,
                     rollcallError = rollcallError, rollcallUpdatedAtMillis = updatedAt,
-                    onRefreshRollcalls = refreshRollcalls, onManageCoordinates = manageCoordinates,
                 )
             }
         }
     }
 
-    @Test fun `home shows current number and radar rollcalls and clears ended events`() {
+    @Test fun `home uses the legacy inline summary and clears ended events`() {
         val events = mutableStateOf(listOf(
             RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知", numberCode = "001204"),
             RollcallEvent("r2", "数学建模", "李老师", "雷达签到", "未知", courseId = "c2"),
         ))
         composeRule.setContent { HomeFixture(events = events.value, updatedAt = 1L) }
         composeRule.onNodeWithText("当前签到").performScrollTo().assertExists()
-        composeRule.onNodeWithText("签到码 001204").performScrollTo().assertExists()
-        composeRule.onNodeWithText("数学建模").performScrollTo().assertExists()
-        composeRule.onNodeWithText("未配置课程坐标").assertExists()
+        composeRule.onNodeWithText("高等数学 / 数字签到 · 共 2 项").assertExists()
+        composeRule.onNodeWithText("签到码 001204").assertDoesNotExist()
+        composeRule.onNodeWithText("未配置课程坐标").assertDoesNotExist()
+        composeRule.onNodeWithText("刷新签到").assertDoesNotExist()
+        composeRule.onNodeWithText("详情 ›").assertDoesNotExist()
         composeRule.onNodeWithText("当前签到").performScrollTo()
         saveCurrentRender("home-current-rollcalls.png")
         composeRule.runOnIdle { events.value = emptyList() }
@@ -75,24 +75,20 @@ class HomePageUiTest {
         composeRule.onNodeWithText("数学建模").assertDoesNotExist()
     }
 
-    @Test fun `home refresh detail and radar coordinate actions retain their targets`() {
-        var refreshes = 0
+    @Test fun `legacy summary detail and existing coordinate button retain navigation`() {
         var destination = ""
-        var coordinateTarget = ""
         composeRule.setContent {
             HomeFixture(
                 events = listOf(RollcallEvent("r2", "数学建模", "李老师", "雷达签到", "未知", courseId = "c2")),
-                refreshRollcalls = { refreshes++ }, navigate = { destination = it },
-                manageCoordinates = { id, title -> coordinateTarget = "$id/$title" },
+                navigate = { destination = it },
             )
         }
-        composeRule.onNodeWithText("刷新签到").performScrollTo().performClick()
-        composeRule.onNodeWithText("详情 ›").performScrollTo().performClick()
-        composeRule.onNodeWithText("坐标管理 ›").performScrollTo().performClick()
+        composeRule.onNodeWithText("数学建模 / 雷达签到").performScrollTo().assertExists()
+        composeRule.onNodeWithText("查看签到详情").performScrollTo().performClick()
+        composeRule.runOnIdle { assertEquals("签到情况", destination) }
+        composeRule.onNodeWithText("雷达签到坐标管理").performScrollTo().performClick()
         composeRule.runOnIdle {
-            assertEquals(1, refreshes)
-            assertEquals("签到情况", destination)
-            assertEquals("c2/数学建模", coordinateTarget)
+            assertEquals("课程坐标", destination)
         }
     }
 
@@ -103,18 +99,18 @@ class HomePageUiTest {
                 rollcallError = "网络连接失败",
             )
         }
-        composeRule.onNodeWithText("签到码 0099").performScrollTo().assertExists()
+        composeRule.onNodeWithText("高等数学 / 数字签到").performScrollTo().assertExists()
         composeRule.onNodeWithText("暂无进行中的签到").assertDoesNotExist()
         composeRule.onNodeWithText("网络连接失败", substring = true).performScrollTo().assertExists()
     }
 
-    @Test fun `home hides private rollcalls when logged out and disables refresh while loading`() {
+    @Test fun `home hides private rollcalls when logged out and keeps summary while loading`() {
         val loggedIn = mutableStateOf(true)
         composeRule.setContent {
             HomeFixture(loggedIn = loggedIn.value, rollcallLoading = true,
                 events = listOf(RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知")))
         }
-        composeRule.onNodeWithText("刷新中").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("高等数学 / 数字签到").performScrollTo().assertExists()
         composeRule.runOnIdle { loggedIn.value = false }
         composeRule.onNodeWithText("当前签到").assertDoesNotExist()
         composeRule.onNodeWithText("高等数学").assertDoesNotExist()

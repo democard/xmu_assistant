@@ -8,11 +8,11 @@
 
 课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
 
-**当前版本：Windows 1.8.1 · Android 1.8.2（versionCode 43）**
+**当前版本：Windows 1.8.1 · Android 1.8.3（versionCode 44）**
 
-Android 1.8.2 修复有进行中签到时签到页闪退的问题，并恢复首页“当前签到”的展示与刷新；Windows 继续使用 1.8.1。
+Android 1.8.3 修复有进行中签到时签到页闪退的问题，并按老版方式在首页原有监控区域恢复签到摘要，不新增独立模块；Windows 继续使用 1.8.1。
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.2/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.2)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.3)
 
 </div>
 
@@ -27,10 +27,10 @@ Android 1.8.2 修复有进行中签到时签到页闪退的问题，并恢复首
 | 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
 | Windows | 1.8.1 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.8.2（versionCode 43） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.2/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.8.2 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.2.zip) |
+| Android | 1.8.3（versionCode 44） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.8.3 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.3.zip) |
 
-文件校验值分别见 [Android 1.8.2 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.2/SHA256SUMS.txt) 与 [Windows 1.8.1 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
+文件校验值分别见 [Android 1.8.3 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/SHA256SUMS.txt) 与 [Windows 1.8.1 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
 
 ```powershell
 Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
@@ -78,13 +78,13 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 ## 本版更新
 
-### 1.8.2 · Android 当前公开版本
+### 1.8.3 · Android 当前公开版本
 
 - 修复同一签到同时出现在进行中与历史记录中导致签到页闪退的问题。
-- 首页恢复“当前签到”，与签到页共享数字码、雷达坐标及刷新状态；页面在前台时自动更新，支持手动刷新和跳转详情。
+- 首页按老版“监控与提醒”内摘要行的方式恢复“当前签到”和“查看签到详情”；不新增独立模块，也不重复展示签到详情卡片。数据在前台自动刷新，手动刷新仍在签到详情页。
 - 沿用现有签名，可覆盖安装；Windows 保持 1.8.1。
 
-787 项 Android 测试通过，Lint 0 错误，Release 构建与签名验证通过。详见 [发布说明](documentation/releases/v1.8.2.md)和[验证记录](documentation/verification-1.8.2.md)。
+此次首页与签到页 16 项界面回归通过；其余模块沿用前一候选的 787 项全量测试证据。详见 [发布说明](documentation/releases/v1.8.3.md)和[验证记录](documentation/verification-1.8.3.md)。
 
 ### 1.8.1 · Windows 当前版本 / Android 历史版本
 

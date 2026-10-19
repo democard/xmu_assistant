@@ -39,7 +39,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun HomePage(
+fun HomePage(
     username: String,
     password: String,
     loggedIn: Boolean,
@@ -64,9 +64,6 @@ internal fun HomePage(
     rollcallLoading: Boolean = false,
     rollcallError: String = "",
     rollcallUpdatedAtMillis: Long = 0L,
-    coordinateStore: RadarCoordinateStore? = null,
-    onRefreshRollcalls: () -> Unit = {},
-    onManageCoordinates: (String, String) -> Unit = { _, _ -> onNavigate("课程坐标") },
 ) {
     val focus = LocalFocusManager.current
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
@@ -162,38 +159,6 @@ internal fun HomePage(
         }
 
         if (loggedIn) {
-            PreviewCard {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("当前签到", fontWeight = FontWeight.Bold)
-                        Text(
-                            when {
-                                rollcallLoading -> "正在读取"
-                                rollcallUpdatedAtMillis > 0L -> "上次更新 ${formatMonitorTime(rollcallUpdatedAtMillis)}"
-                                else -> "尚未刷新"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    TextButton(onClick = onRefreshRollcalls, enabled = !rollcallLoading && !accountTransitionInProgress) {
-                        Text(if (rollcallLoading) "刷新中" else "刷新签到")
-                    }
-                    TextButton(onClick = { onNavigate("签到情况") }) { Text("详情 ›") }
-                }
-                if (rollcallLoading || rollcallError.isNotBlank()) {
-                    RefreshStateBanner(rollcallLoading, rollcallError, currentRollcalls.isNotEmpty())
-                } else if (currentRollcalls.isEmpty() && rollcallUpdatedAtMillis > 0L) {
-                    Text("暂无进行中的签到", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            currentRollcalls.forEach { event ->
-                ActiveRollcallPreviewCard(
-                    event = event,
-                    preferred = if (event.type == "雷达签到") coordinateStore?.preferredFor(event.courseId, event.courseTitle) else null,
-                    onManageCoordinates = { onManageCoordinates(event.courseId, event.courseTitle) },
-                )
-            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 HomeShortcut("课程课件", "查找与下载资料", Modifier.weight(1f)) { onNavigate("课程课件") }
                 HomeShortcut("考试安排", "查看时间与考场", Modifier.weight(1f)) { onNavigate("考试安排") }
@@ -231,6 +196,20 @@ internal fun HomePage(
                 }
                 if (monitorFailureCount > 0) {
                     RefreshStateBanner(false, monitorLastError.ifBlank { "最近检查失败，请检查网络与后台设置。" }, false)
+                }
+                // 沿用美化前“监控与提醒”内的摘要行，不另建签到模块或重复详情卡片。
+                val current = currentRollcalls.firstOrNull()
+                if (current != null) {
+                    val count = if (currentRollcalls.size > 1) " · 共 ${currentRollcalls.size} 项" else ""
+                    StatusRow("当前签到", "${current.courseTitle} / ${current.type}$count")
+                    TextButton(onClick = { onNavigate("签到情况") }) { Text("查看签到详情") }
+                } else if (rollcallLoading) {
+                    StatusRow("当前签到", "正在读取…")
+                } else if (rollcallUpdatedAtMillis > 0L && rollcallError.isBlank()) {
+                    StatusRow("当前签到", "暂无进行中的签到")
+                }
+                if (rollcallError.isNotBlank()) {
+                    RefreshStateBanner(false, rollcallError, currentRollcalls.isNotEmpty())
                 }
                 OutlinedButton(onClick = { onNavigate("策略") }, modifier = Modifier.fillMaxWidth()) { Text("调整类型与人数条件") }
                 OutlinedButton(onClick = { onNavigate("课程坐标") }, modifier = Modifier.fillMaxWidth()) { Text("雷达签到坐标管理") }
