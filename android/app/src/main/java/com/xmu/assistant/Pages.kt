@@ -103,7 +103,8 @@ internal fun RollcallStatusPage(
         }
         if (events.isNotEmpty()) {
             item { PreviewSectionHeader("正在签到", "${events.size} 项") }
-            items(events, key = { it.id }) { event ->
+            // 同一签到也会出现在最近记录中，LazyColumn 的 key 必须跨区块唯一。
+            items(events, key = { "active:${it.id}" }) { event ->
                 val preferred = if (event.type == "雷达签到") {
                     coordinateStore?.preferredFor(event.courseId, event.courseTitle)
                 } else null
@@ -126,7 +127,7 @@ internal fun RollcallStatusPage(
                 else EmptyState("暂无签到记录", "点击顶部刷新即可读取最近记录。")
             }
         } else {
-            items(historyItems, key = { it.rollcallId }) { item ->
+            items(historyItems, key = { "history:${it.rollcallId}" }) { item ->
                 CompactRollcallHistoryCard(
                     item = item,
                     preferred = if (item.type == "雷达签到") {
@@ -140,7 +141,7 @@ internal fun RollcallStatusPage(
 }
 
 @Composable
-private fun ActiveRollcallPreviewCard(
+internal fun ActiveRollcallPreviewCard(
     event: RollcallEvent,
     preferred: RadarCoordinate?,
     onManageCoordinates: () -> Unit,

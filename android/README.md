@@ -2,9 +2,9 @@
 
 虾大助手的 Android 原生客户端，使用 Kotlin 和 Jetpack Compose，提供课程、课表、学习记录与日常提醒等功能。与 Windows 端独立运行，登录态和业务缓存保存在设备本地。
 
-当前公开版本 **1.7.4 / versionCode 31**。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35。安装包按最新源码构建，沿用既有包名和签名。
+当前公开版本 **1.8.2 / versionCode 43**：修复签到页重复列表标识导致的闪退，恢复首页“当前签到”与前台自动刷新。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35，沿用既有包名和签名。
 
-[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.7.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.7.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.8.2/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.2) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 使用入口
 
@@ -12,7 +12,7 @@
 
 | 入口 | 可以做什么 |
 | --- | --- |
-| 首页 | 登录、查看近期状态、管理后台提醒与个人策略 |
+| 首页 | 登录、查看当前签到和数字码、刷新或跳转签到详情、管理后台提醒与个人策略 |
 | 课表 | 周课表 / 日程视图、查看今天、跳转周次、复制详情、导出日历 |
 | 成绩 | 成绩与学分统计、GPA / 均分、模拟成绩计算、长图分享、专业排名与证明 |
 | 签到 | 查看近期学习记录与本人状态 |

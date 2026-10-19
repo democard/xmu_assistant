@@ -81,6 +81,7 @@ class RollcallHistorySectionStateTest {
     private fun newHarness(
         transport: StubTransport,
         loggedIn: Boolean = true,
+        messages: MutableList<String> = mutableListOf(),
     ): Harness {
         val gate = RequestGate()
         val epoch = SessionEpoch()
@@ -93,7 +94,7 @@ class RollcallHistorySectionStateTest {
             sessionEpoch = epoch,
             sessionOwner = owner,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-            show = {},
+            show = { messages += it },
             requireLogin = { loggedIn },
             loggedIn = { loggedIn },
             cookieHeader = { "session=fixture" },
@@ -217,6 +218,23 @@ class RollcallHistorySectionStateTest {
         assertTrue(await { !harness.state.loading })
         assertEquals("0042", harness.state.events.single().numberCode)
         assertEquals(50.0, harness.state.events.single().progress?.percentage ?: -1.0, 0.0)
+        assertTrue(transport.requests.all { it.method == "GET" })
+    }
+
+    @Test
+    fun `silent foreground refresh updates shared events without a repeated toast or submission`() {
+        val transport = StubTransport(
+            rollcallsPayload = """{"rollcalls":[{"rollcall_id":"r1","is_number":true,"status":"unsigned"}]}""",
+            detailPayload = """{"number_code":"0042","student_rollcalls":[{"user_no":"u1","status":"on_call"}]}""",
+        )
+        val messages = mutableListOf<String>()
+        val harness = newHarness(transport, messages = messages)
+        assertTrue(harness.state.refresh(showFeedback = false))
+        assertTrue(await { !harness.state.loading })
+        assertEquals("0042", harness.state.events.single().numberCode)
+        assertTrue(harness.state.updatedAtMillis > 0L)
+        assertTrue(messages.isEmpty())
+        assertTrue(transport.requests.isNotEmpty())
         assertTrue(transport.requests.all { it.method == "GET" })
     }
 }

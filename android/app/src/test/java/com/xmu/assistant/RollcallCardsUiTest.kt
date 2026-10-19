@@ -34,6 +34,29 @@ class RollcallCardsUiTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
+    fun `active rollcall can also appear in recent history without duplicate lazy keys`() {
+        val active = event("高等数学", "数字签到", progress(18, 40), "001204")
+        composeRule.setContent {
+            XmuMobileTheme {
+                Box(Modifier.width(390.dp).height(1600.dp)) {
+                    RollcallStatusPage(
+                        events = listOf(active),
+                        openedEventId = "", loading = false, refreshError = "", updatedAtMillis = 0,
+                        historyItems = listOf(
+                            RollcallHistoryItem(active.id, "course-1", "高等数学历史记录", "数字签到",
+                                "10-19 10:00", null, STATUS_SIGNED, numberCode = "001204"),
+                        ),
+                        historyLoading = false, historyError = "", historyUpdatedAtMillis = 0,
+                        loggedIn = true, onRefresh = {},
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithText("18 / 40 人已签到").assertExists()
+        composeRule.onNodeWithText("高等数学历史记录").assertExists()
+    }
+
+    @Test
     fun `regular width keeps active cards compact and preserves number code`() {
         composeRule.setContent {
             XmuMobileTheme {

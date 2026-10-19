@@ -11,6 +11,7 @@ class ModuleRefreshPlannerTest {
 
     @Test
     fun `maps each business page to its refresh module`() {
+        assertEquals(RefreshModule.ROLLCALL, refreshModuleForPage("首页"))
         assertEquals(RefreshModule.ROLLCALL, refreshModuleForPage("签到情况"))
         assertEquals(RefreshModule.SCORES, refreshModuleForPage("成绩"))
         assertEquals(RefreshModule.COURSES, refreshModuleForPage("课程课件"))
@@ -21,7 +22,7 @@ class ModuleRefreshPlannerTest {
     @Test
     fun `maps non business blank and unknown pages to none`() {
         // 课表不自动刷新：点击标签直接展示缓存，由用户手动点刷新
-        listOf("课表", "首页", "通知", "教程", "策略", "", "未知页面").forEach { page ->
+        listOf("课表", "通知", "教程", "策略", "", "未知页面").forEach { page ->
             assertEquals(RefreshModule.NONE, refreshModuleForPage(page))
         }
     }

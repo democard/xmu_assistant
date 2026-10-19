@@ -399,8 +399,15 @@ internal fun OnsiteRadarCapturePage(
             if (notifyFailure) show(message)
         }
 
+        fun locationRequestFailed() {
+            pending -= 1
+            if (pending == 0 && best == null) {
+                finish("读取位置失败，请检查定位权限", notifyFailure = true)
+            }
+        }
+
         providers.zip(signals).forEach { (provider, signal) ->
-            runCatching {
+            try {
                 LocationManagerCompat.getCurrentLocation(
                     manager,
                     provider,
@@ -425,11 +432,10 @@ internal fun OnsiteRadarCapturePage(
                         else finish("暂时无法取得位置，请到室外或窗边重试", notifyFailure = true)
                     }
                 }
-            }.onFailure {
-                pending -= 1
-                if (pending == 0 && best == null) {
-                    finish("读取位置失败，请检查定位权限", notifyFailure = true)
-                }
+            } catch (_: SecurityException) {
+                locationRequestFailed()
+            } catch (_: Throwable) {
+                locationRequestFailed()
             }
         }
         scope.launch {

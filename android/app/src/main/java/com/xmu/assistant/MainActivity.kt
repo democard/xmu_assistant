@@ -30,6 +30,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -868,6 +869,23 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
                 inferredCalendar = cached.inferredCalendars[cached.termCode],
                 manualWeek = settings.manualAcademicWeek(cached.termCode),
             )
+        }
+    }
+
+    // 首页与签到页共用只读数据。首次登录、回到前台及停留期间均按已有新鲜度刷新；
+    // 离开这两页或进入后台即停止轮询，不启动监控服务，也不提交签到。
+    LaunchedEffect(page, startupSessionReady, loggedIn, accountTransitionInProgress) {
+        if (page !in setOf("首页", "签到情况") || !startupSessionReady ||
+            !loggedIn || accountTransitionInProgress) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                if (moduleRefreshTracker.shouldRefresh(
+                        RefreshModule.ROLLCALL, rollcall.updatedAtMillis, System.currentTimeMillis(),
+                    )) {
+                    rollcall.refresh(showFeedback = false)
+                }
+                kotlinx.coroutines.delay(moduleFreshnessMillis(RefreshModule.ROLLCALL))
+            }
         }
     }
 

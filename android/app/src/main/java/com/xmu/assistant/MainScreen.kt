@@ -593,6 +593,16 @@ internal fun MainScreen(
                                             },
                                             onOpenBackgroundSettings = onOpenBackgroundSettings,
                                             onNavigate = onModuleEntered,
+                                            currentRollcalls = rollcall.events,
+                                            rollcallLoading = rollcall.loading,
+                                            rollcallError = rollcall.refreshError,
+                                            rollcallUpdatedAtMillis = rollcall.updatedAtMillis,
+                                            coordinateStore = radarCoordinateStore,
+                                            onRefreshRollcalls = { rollcall.refresh() },
+                                            onManageCoordinates = { courseId, courseTitle ->
+                                                coordinateTarget = CourseSummary(courseId, courseTitle)
+                                                onModuleEntered("课程坐标")
+                                            },
                                         )
                                     }
                                 }

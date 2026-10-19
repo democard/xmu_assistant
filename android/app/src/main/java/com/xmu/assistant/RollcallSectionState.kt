@@ -80,7 +80,7 @@ internal class RollcallSectionState(
         private set
 
     /** 强制刷新签到列表。 */
-    fun refresh(alreadyRetriedAfterRecovery: Boolean = false): Boolean {
+    fun refresh(alreadyRetriedAfterRecovery: Boolean = false, showFeedback: Boolean = true): Boolean {
         if (!requireLogin()) return false
         if (!requestGate.tryStart("rollcall")) return false
         refreshError = ""
@@ -97,7 +97,7 @@ internal class RollcallSectionState(
                     refreshError = ""
                     events = list
                     updatedAtMillis = System.currentTimeMillis()
-                    show(if (list.isEmpty()) "暂未检测到签到" else "已读取 ${list.size} 条签到")
+                    if (showFeedback) show(if (list.isEmpty()) "暂未检测到签到" else "已读取 ${list.size} 条签到")
                 }
                 result.onFailure { error ->
                     if (sessionExpiryAction(error, alreadyRetriedAfterRecovery) == SessionExpiryAction.RECOVER_ONCE) {
@@ -105,7 +105,7 @@ internal class RollcallSectionState(
                         setPendingSessionRetry(ModuleReadRetry(ModuleReadRequest.ROLLCALL))
                     } else {
                         refreshError = refreshFailureMessage(error)
-                        showError("签到读取失败：$refreshError")
+                        if (showFeedback) showError("签到读取失败：$refreshError")
                     }
                 }
             },
