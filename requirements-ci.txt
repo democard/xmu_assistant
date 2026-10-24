@@ -1,0 +1,5 @@
+# CI/test environment; run from the repository root.
+-c constraints-windows-py314.txt
+-r xmu-rollcall-cli/requirements.txt
+pytest
+ruff

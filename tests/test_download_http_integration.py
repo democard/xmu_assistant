@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 from xmu_rollcall.courseware import (
     CoursewareItem,
     _download_url,
+    _courseware_resource_key,
+    _write_resume_metadata,
     download_courseware,
 )
 from xmu_rollcall.utils import clone_session
@@ -100,15 +102,18 @@ class DownloadHttpIntegrationTests(unittest.TestCase):
         complete = bytes(range(256)) * 2600  # More than two 256 KiB download chunks.
         prefix_length = 65537
         tail = complete[prefix_length:]
-        response = (206, tail, {"Content-Range": f"bytes {prefix_length}-{len(complete) - 1}/{len(complete)}"})
+        response = (206, tail, {"Content-Range": f"bytes {prefix_length}-{len(complete) - 1}/{len(complete)}", "ETag": '"fixture-v1"'})
         with tempfile.TemporaryDirectory() as directory, loopback_server([response]) as (url, recorded):
             destination = Path(directory)
             partial = destination / "file.pdf.part"
             partial.write_bytes(complete[:prefix_length])
+            _write_resume_metadata(partial, _courseware_resource_key(direct_item(url)), '"fixture-v1"')
             with local_session() as (session, responses):
                 target = download_courseware(session, direct_item(url), destination)
                 self.assertEqual(target.read_bytes(), complete)
                 self.assertEqual([request[1].get("Range") for request in recorded], [f"bytes={prefix_length}-"])
+                self.assertEqual(recorded[0][1].get("If-Range"), '"fixture-v1"')
+                self.assertEqual(recorded[0][1].get("Accept-Encoding"), "identity")
                 self.assertEqual(len(responses), 1)
                 self.assertTrue(responses[0].raw.closed)
             self.assertEqual(list(destination.iterdir()), [target])

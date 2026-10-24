@@ -254,7 +254,7 @@ internal fun MainScreen(
     // 设置页写入的是 prefs，不是 Compose State；递增此值让课表页重读校准周次。
     val manualWeekRevision = remember { mutableIntStateOf(0) }
     val radarCoordinateStore = remember(activity) { RadarCoordinateStore(activity) }
-    var coordinateTarget by remember { mutableStateOf<CourseSummary?>(null) }
+    var coordinateTarget by remember(username, loggedIn) { mutableStateOf<CourseSummary?>(null) }
     val currentSemesterCoordinateCourses = remember(courses, schedule.termCode, schedule.entries) {
         currentTermCoordinateCourses(courses, schedule.termCode, schedule.entries)
     }

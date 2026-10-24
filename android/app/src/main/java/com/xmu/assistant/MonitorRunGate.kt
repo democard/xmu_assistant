@@ -233,6 +233,10 @@ internal fun processRollcallMonitorPoll(
             ) return
         } catch (error: MainSessionExpiredException) {
             throw error
+        } catch (error: RollcallAnswerNotSubmittedException) {
+            // 本地校验失败没有发出写请求，不消耗回执不明/拒绝重试预算。
+            hasUnresolvedAnswerFailure = true
+            if (firstAnswerFailure == null) firstAnswerFailure = error
         } catch (error: RollcallAnswerRejectedException) {
             if (!runIfActive {
                     recordAnswerAttempt(answerAttempts, event.id, AnswerAttemptOutcome.REJECTED)

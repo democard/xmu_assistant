@@ -56,21 +56,31 @@ class PushPlusSender(
     }
 }
 
-class QQMailSender(
+class QQMailSender internal constructor(
     private val sender: String,
     private val password: String,
     private val recipient: String,
-    private val ports: String = "465,587",
+    private val ports: String,
+    private val connectionFactory: SmtpConnectionFactory,
 ) {
+    constructor(sender: String, password: String, recipient: String, ports: String = "465,587") :
+        this(sender, password, recipient, ports, JavaMailSmtpConnectionFactory)
+
     fun send(title: String, body: String) {
         require(sender.isNotBlank() && password.isNotBlank() && recipient.isNotBlank()) {
             "QQ mail settings are incomplete"
         }
         val errors = mutableListOf<String>()
         for (port in parseSmtpPorts(ports)) {
-            runCatching { sendWithPort(port, title, body) }
-                .onSuccess { return }
-                .onFailure { errors += "$port: ${it.message}" }
+            try {
+                sendWithPort(port, title, body)
+                return
+            } catch (error: SmtpSubmissionUncertainException) {
+                // DATA may already have been accepted. A fallback port would duplicate the mail.
+                throw error
+            } catch (error: Exception) {
+                errors += "$port: ${error.message}"
+            }
         }
         error(errors.joinToString("；"))
     }
@@ -90,9 +100,52 @@ class QQMailSender(
             setSubject(title, "UTF-8")
             setText(body, "UTF-8")
         }
-        Transport.send(message)
+        var connection: SmtpConnection? = null
+        var submissionStarted = false
+        try {
+            connection = connectionFactory.open(props, sender, password)
+            submissionStarted = true
+            connection.send(message)
+        } catch (error: Exception) {
+            if (submissionStarted) throw SmtpSubmissionUncertainException("邮件提交结果未知：${error.message}", error)
+            throw error
+        } finally {
+            // A close/QUIT failure after a successful DATA response must never trigger another submission.
+            runCatching { connection?.close() }
+        }
     }
 }
+
+internal interface SmtpConnection {
+    fun send(message: MimeMessage)
+    fun close()
+}
+
+internal fun interface SmtpConnectionFactory {
+    /** Returns only after TLS negotiation and authentication have completed. */
+    fun open(properties: Properties, sender: String, password: String): SmtpConnection
+}
+
+internal object JavaMailSmtpConnectionFactory : SmtpConnectionFactory {
+    override fun open(properties: Properties, sender: String, password: String): SmtpConnection {
+        val session = Session.getInstance(properties, object : javax.mail.Authenticator() {
+            override fun getPasswordAuthentication(): PasswordAuthentication = PasswordAuthentication(sender, password)
+        })
+        val transport = session.getTransport("smtp")
+        transport.connect(
+            properties.getProperty("mail.smtp.host"),
+            properties.getProperty("mail.smtp.port").toInt(),
+            sender,
+            password,
+        )
+        return object : SmtpConnection {
+            override fun send(message: MimeMessage) = transport.sendMessage(message, message.allRecipients)
+            override fun close() = transport.close()
+        }
+    }
+}
+
+internal class SmtpSubmissionUncertainException(message: String, cause: Throwable) : IllegalStateException(message, cause)
 
 fun smtpProperties(port: Int): Properties = Properties().apply {
     put("mail.smtp.auth", "true")
@@ -106,7 +159,10 @@ fun smtpProperties(port: Int): Properties = Properties().apply {
         put("mail.smtp.ssl.enable", "true")
     } else {
         put("mail.smtp.starttls.enable", "true")
+        put("mail.smtp.starttls.required", "true")
     }
+    // JavaMail verifies the peer hostname for both implicit TLS and STARTTLS.
+    put("mail.smtp.ssl.checkserveridentity", "true")
 }
 
 private const val SMTP_TIMEOUT_MILLIS = 15_000

@@ -265,6 +265,18 @@ class XmuScheduleModelsTest {
     }
 
     @Test
+    fun `schedule parser and term parser ignore explicit json null fields`() {
+        val termBody = """{"datas":{"kfdxnxqcx":{"rows":[{"XNXQDM":null},{"XNXQDM":"20261"}]}}}"""
+        assertEquals(listOf("20261"), parseXmuTermCodes(termBody))
+
+        val scheduleBody = """{"success":true,"pkjgList":[{"XQ":1,"KSJCDM":1,"JSJCDM":2,"KSSJ":800,"JSSJ":940,"KCMC":null,"KCM":"线上通识课","JASMC":null,"JSXM":null,"ZCMC":"1-16周"}]}"""
+        val entry = parseXmuScheduleEntries(scheduleBody, "20261").single()
+        assertEquals("线上通识课", entry.courseName)
+        assertEquals("", entry.room)
+        assertEquals("", entry.teacher)
+    }
+
+    @Test
     fun `formats hhmm values`() {
         assertEquals("08:00", formatXmuTime(800))
         assertEquals("09:40", formatXmuTime(940))

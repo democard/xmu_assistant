@@ -487,16 +487,16 @@ internal class XmuExamClient(
             // optRealString：显式 null 的 KSRWID 会被读成 "null"，多场考试共享该去重键（体检 P1-5）
             val id = row.optRealString("KSRWID").ifBlank { row.optRealString("KSDM") }
             if (id.isBlank()) return@mapNotNull null
-            val date = row.optString("KSRQ")
-            val timeRange = parseTimeRange(row.optString("KSSJMS"))
+            val date = row.optRealString("KSRQ")
+            val timeRange = parseTimeRange(row.optRealString("KSSJMS"))
             XmuExam(
                 id = id,
-                courseName = row.optString("KCM").ifBlank { row.optString("YWKCM") },
+                courseName = row.optRealString("KCM").ifBlank { row.optRealString("YWKCM") },
                 date = date,
                 timeRange = timeRange,
-                room = row.optString("JASMC").ifBlank { "线上考试" },
-                mode = row.optString("KSXS_DISPLAY").ifBlank { "线下" },
-                examName = row.optString("KSMC").ifBlank { "考试" },
+                room = row.optRealString("JASMC").ifBlank { "线上考试" },
+                mode = row.optRealString("KSXS_DISPLAY").ifBlank { "线下" },
+                examName = row.optRealString("KSMC").ifBlank { "考试" },
             )
         }
     }
@@ -506,7 +506,7 @@ internal class XmuExamClient(
         val rows = rowsOf(root, "cxyxkwapkwdkc")
         return (0 until rows.length()).mapNotNull { index ->
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
-            val name = row.optString("KCM").ifBlank { row.optString("KCMC").ifBlank { row.optString("courseName") } }
+            val name = row.optRealString("KCM").ifBlank { row.optRealString("KCMC").ifBlank { row.optRealString("courseName") } }
             if (name.isBlank()) return@mapNotNull null
             XmuExamUnarranged(courseName = name)
         }
@@ -516,7 +516,7 @@ internal class XmuExamClient(
         val root = parseRoot(body)
         val rows = rowsOf(root, "xnxqcx")
         return (0 until rows.length()).mapNotNull { index ->
-            rows.optJSONObject(index)?.optString("DM")?.takeIf { it.isNotBlank() }
+            rows.optJSONObject(index)?.optRealString("DM")?.takeIf { it.isNotBlank() }
         }
     }
 

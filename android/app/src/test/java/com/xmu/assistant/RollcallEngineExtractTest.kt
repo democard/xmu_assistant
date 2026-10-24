@@ -130,6 +130,23 @@ class RollcallEngineExtractTest {
     }
 
     @Test
+    fun `pollRollcalls falls back across explicit json null course title and teacher fields`() {
+        val transport = QueryHttpTransport { request ->
+            QueryHttpResponse(
+                url = request.url,
+                code = 200,
+                location = null,
+                body = """{"rollcalls":[{"rollcall_id":"r1","course_title":null,"course_name":"高等数学","department_name":null,"created_by_name":"李老师","is_number":true,"status":null}]}""",
+                headers = emptyMap(),
+            )
+        }
+        val event = RollcallEngine("session=fixture", transport).pollOnce().single()
+        assertEquals("高等数学", event.courseTitle)
+        assertEquals("李老师", event.teacher)
+        assertEquals("未知", event.status)
+    }
+
+    @Test
     fun `radar payload generates fresh device id per call`() {
         assertNotEquals(
             radarPayload(0.0, 0.0).getString("deviceId"),

@@ -44,6 +44,7 @@ class BackgroundErrorNotifyTest(unittest.TestCase):
             # _ev_error 已加登出守卫：登录态（session 非空）下走记录分支
             session=object(),
         )
+        host.logout = mock.Mock()
         host.log = host.logs.append
         host._show_system_notification = lambda *a, **k: host.system_notifications.append(a)
         host._send_external_notification = lambda *a, **k: host.external_notifications.append(a)

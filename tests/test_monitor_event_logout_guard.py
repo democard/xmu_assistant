@@ -29,6 +29,8 @@ class MonitorEventLogoutGuardTest(unittest.TestCase):
             logs=[],
             metric_texts={},
         )
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
 
         def make_metric(name):
@@ -128,6 +130,8 @@ class MonitorStatusPauseMappingTest(unittest.TestCase):
             monitor_stop_event=stop_event,
             logs=[],
         )
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.metric_monitor = types.SimpleNamespace(texts=[])
         host.metric_monitor.setText = host.metric_monitor.texts.append
@@ -230,6 +234,8 @@ class DownloadProgressLogoutGuardTest(unittest.TestCase):
 
     def _host(self, session):
         host = types.SimpleNamespace(session=session, logs=[])
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.courseware_download_status = {}
         host._refresh_courseware_table = lambda: host.logs.append("table")
@@ -284,6 +290,8 @@ class DownloadLoginGenerationGuardTest(unittest.TestCase):
             courseware_download_in_progress=True, courseware_download_batch_token=object(),
             started_at=object(),
         )
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.stop_monitor = lambda: None
         host._reset_background_error_state = lambda: None
@@ -301,6 +309,8 @@ class DownloadLoginGenerationGuardTest(unittest.TestCase):
         host.cancelled_answers = []
         host._cancel_all_pending_answers = lambda: host.cancelled_answers.append(True)
         host.courseware_summary = types.SimpleNamespace(setText=lambda *_: None)
+        host.password_input = types.SimpleNamespace(clear=lambda: None)
+        host.refresh_radar_course_options = lambda: None
         host.courseware_combo = types.SimpleNamespace(blockSignals=lambda *_: None, clear=lambda: None)
         for name in ("metric_last_result", "metric_rollcall_count", "metric_last_check", "metric_runtime"):
             setattr(host, name, types.SimpleNamespace(setText=lambda *_: None))
@@ -516,6 +526,8 @@ class ErrorEventLogoutGuardTest(unittest.TestCase):
         from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
 
         host = types.SimpleNamespace(session=None, logs=[], recorded=[])
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host._record_background_error = lambda *a, **k: host.recorded.append(a)
         DW._ev_error(host, ("error", "轮询失败：登录已过期，请重新登录"))
@@ -532,6 +544,8 @@ class AnswerResultLogoutGuardTest(unittest.TestCase):
         from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
 
         host = types.SimpleNamespace(session=None, logs=[])
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.metric_last_result = types.SimpleNamespace(texts=[])
         host.metric_last_result.setText = host.metric_last_result.texts.append
@@ -549,6 +563,8 @@ class AnswerResultLogoutGuardTest(unittest.TestCase):
         from xmu_rollcall.desktop_qt.app import DashboardWindow as DW
 
         host = types.SimpleNamespace(session=object(), logs=[], events_by_id={})
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.metric_last_result = types.SimpleNamespace(texts=[])
         host.metric_last_result.setText = host.metric_last_result.texts.append
@@ -597,6 +613,8 @@ class NotificationResultLogoutGuardTest(unittest.TestCase):
 
     def _host(self, session):
         host = types.SimpleNamespace(session=session, logs=[])
+        host._refresh_guard_status = lambda: None
+        host._cancel_all_pending_answers = lambda: None
         host.log = host.logs.append
         host.notification_summary = types.SimpleNamespace(texts=[])
         host.notification_summary.setText = host.notification_summary.texts.append

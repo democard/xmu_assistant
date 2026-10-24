@@ -106,8 +106,8 @@ class XmuScoreAutoQueryClient internal constructor(
         if (jar.header().isBlank()) throw ExistingScoreSessionUnavailable()
         val terms = runCatching { fetchTerms() }.getOrElse { throw ExistingScoreSessionUnavailable() }
             .mapNotNull { term ->
-                val termCode = term.optString("XNXQDM")
-                termCode.takeIf { it.isNotBlank() }?.let { ScoreTerm(it, term.optString("XNXQDM_DISPLAY")) }
+                val termCode = term.optRealString("XNXQDM")
+                termCode.takeIf { it.isNotBlank() }?.let { ScoreTerm(it, term.optRealString("XNXQDM_DISPLAY").ifBlank { it }) }
             }
         val results = fetchTermWave(terms)
         if (results.any { it.error != null }) throw ExistingScoreSessionUnavailable()
@@ -119,9 +119,9 @@ class XmuScoreAutoQueryClient internal constructor(
     internal fun fetchScores(): ScoreFetchResult {
         val terms = termsWithSessionFallback()
             .mapNotNull { term ->
-                val termCode = term.optString("XNXQDM")
+                val termCode = term.optRealString("XNXQDM")
                 termCode.takeIf { it.isNotBlank() }?.let {
-                    ScoreTerm(termCode, term.optString("XNXQDM_DISPLAY"))
+                    ScoreTerm(termCode, term.optRealString("XNXQDM_DISPLAY").ifBlank { termCode })
                 }
             }
         val firstWave = fetchTermWave(terms)
@@ -199,12 +199,12 @@ class XmuScoreAutoQueryClient internal constructor(
         // Copied from docs/vendor/XMUScoreAutoQuery/app.py:
         // if score['DJCJLXDM_DISPLAY'] == '百分制' and ...
         val isPercentScore = optString("DJCJLXDM_DISPLAY") == "百分制"
-        val rawScore = optString("ZCJ").trim()
+        val rawScore = optRealString("ZCJ").trim()
         val numericScore = rawScore.toDoubleOrNull()
         val officialPoint = optString("XFJD").trim().toDoubleOrNull()
         return XmuScoreRecord(
-            courseCode = optString("KCH"),
-            courseName = optString("KCM"),
+            courseCode = optRealString("KCH"),
+            courseName = optRealString("KCM"),
             term = termName,
             termCode = termCode,
             credit = optString("XF").toDoubleOrNull() ?: 0.0,
@@ -215,12 +215,12 @@ class XmuScoreAutoQueryClient internal constructor(
             countsForStatistics = isPercentScore && numericScore != null && officialPoint != null,
             countsForCompletedCredit = earnsCompletedCredit(this, rawScore),
             // 课序号：同学期同课程多次开课/重修/补考用 KXH 区分（去重键依赖，避免误删合法记录）
-            courseSeq = optString("KXH"),
+            courseSeq = optRealString("KXH"),
         )
     }
 
     private fun nonPercentResultText(score: JSONObject, rawScore: String): String {
-        if (isTwoLevelMode(score.optString("DJCJLXDM_DISPLAY"))) {
+        if (isTwoLevelMode(score.optRealString("DJCJLXDM_DISPLAY"))) {
             return if (earnsCompletedCredit(score, rawScore)) "P" else "NP"
         }
         val candidates = listOf(
@@ -232,13 +232,13 @@ class XmuScoreAutoQueryClient internal constructor(
             "CJ",
         )
         val officialText = candidates.firstNotNullOfOrNull { key ->
-            score.optString(key).trim().takeIf { it.isNotBlank() && it.toDoubleOrNull() == null }
+            score.optRealString(key).trim().takeIf { it.isNotBlank() && it.toDoubleOrNull() == null }
         }
-        return officialText ?: score.optString("DJCJLXDM_DISPLAY").ifBlank { rawScore.ifBlank { "已通过" } }
+        return officialText ?: score.optRealString("DJCJLXDM_DISPLAY").ifBlank { rawScore.ifBlank { "已通过" } }
     }
 
     private fun scoreGradeMode(score: JSONObject): String {
-        val mode = score.optString("DJCJLXDM_DISPLAY")
+        val mode = score.optRealString("DJCJLXDM_DISPLAY")
         return if (isTwoLevelMode(mode)) "P/NP" else mode
     }
 

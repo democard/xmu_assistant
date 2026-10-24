@@ -105,7 +105,6 @@ class SecretsWarnChannelTests(unittest.TestCase):
 
         blocking = self.config_dir / "diag.log"
         blocking.write_text("", encoding="utf-8")
-        real_open = open
 
         def bad_open(*args, **kwargs):
             raise OSError("disk unavailable")

@@ -400,6 +400,30 @@ class XmuExamClientTest {
     }
 
     @Test
+    fun `explicit json null in exam room and unarranged fields falls back instead of literal null`() {
+        val examRows = """[{"KSRWID":"exam-online-1","KCM":null,"YWKCM":"Online English","KSRQ":"2026-01-02","KSSJMS":null,"JASMC":null,"KSXS_DISPLAY":null,"KSMC":null}]"""
+        val unarrangedRows = """[{"KCM":null,"KCMC":"大学体育"},{"KCM":null,"KCMC":null,"courseName":null}]"""
+        val transport = FakeExamTransport(
+            termData = mapOf(
+                "2025-2026-2" to """{"code":"0","datas":{"cxxsksap":{"totalSize":1,"rows":$examRows}}}""",
+                "2025-2026-2-unarranged" to """{"code":"0","datas":{"cxyxkwapkwdkc":{"totalSize":2,"rows":$unarrangedRows}}}""",
+            ),
+        )
+        val client = XmuExamClient(cookieHeader = "saved=session", transport = transport)
+
+        val summary = client.fetchTermExams("2025-2026-2")
+
+        assertNotNull(summary)
+        val exam = summary!!.exams.single()
+        assertEquals("Online English", exam.courseName)
+        assertEquals("线上考试", exam.room)
+        assertEquals("线下", exam.mode)
+        assertEquals("考试", exam.examName)
+        assertEquals("", exam.timeRange)
+        assertEquals(listOf("大学体育"), summary.unarranged.map { it.courseName })
+    }
+
+    @Test
     fun `exams changed detects add remove and status moves`() {
         val old = summaryOf(
             exams = listOf(

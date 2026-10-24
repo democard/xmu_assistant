@@ -315,7 +315,7 @@ internal class RollcallHistoryClient internal constructor(
         }
 
         fun firstString(obj: JSONObject, vararg keys: String): String =
-            keys.firstNotNullOfOrNull { key -> obj.optString(key).takeIf { it.isNotBlank() } } ?: ""
+            keys.firstNotNullOfOrNull { key -> obj.optRealString(key).takeIf { it.isNotBlank() } } ?: ""
     }
 }
 
@@ -390,42 +390,48 @@ fun rollcallHistoryCacheFile(context: Context): File =
     File(context.filesDir, ROLLCALL_HISTORY_CACHE_FILE)
 
 /** 读缓存：版本不匹配或账号不匹配（防串号）一律返回 null，损坏静默兜底为 null。 */
-fun loadRollcallHistoryCache(file: File, accountId: String): RollcallHistorySnapshot? = runCatching {
-    if (!file.exists() || file.length() == 0L) return@runCatching null
-    val root = JSONObject(file.readText())
-    if (root.optInt("version", 0) != ROLLCALL_HISTORY_CACHE_VERSION) return@runCatching null
-    if (root.optString("account_id") != accountId) return@runCatching null
-    val rows = root.optJSONArray("items") ?: JSONArray()
-    val items = ArrayList<RollcallHistoryItem>(rows.length())
-    for (index in 0 until rows.length()) {
-        val obj = rows.optJSONObject(index) ?: continue
-        items += RollcallHistoryItem(
-            rollcallId = obj.optString("rollcallId"),
-            courseId = obj.optString("courseId"),
-            courseTitle = obj.optString("courseTitle"),
-            type = obj.optString("type"),
-            timeDisplay = obj.optString("timeDisplay"),
-            sortKeyMillis = if (obj.isNull("sortKeyMillis") || !obj.has("sortKeyMillis")) {
-                null
-            } else {
-                obj.optLong("sortKeyMillis")
-            },
-            ownStatus = obj.optString("ownStatus"),
-            progress = obj.optJSONObject("progress")?.let(::progressFromCache),
-            numberCode = obj.optRealString("numberCode"),
+fun loadRollcallHistoryCache(file: File, accountId: String): RollcallHistorySnapshot? = synchronized(rollcallHistoryCacheWriteLock) {
+    runCatching {
+        if (!file.exists() || file.length() == 0L) return@runCatching null
+        val root = JSONObject(file.readText())
+        if (root.optInt("version", 0) != ROLLCALL_HISTORY_CACHE_VERSION) return@runCatching null
+        if (root.optString("account_id") != accountId) return@runCatching null
+        val rows = root.optJSONArray("items") ?: JSONArray()
+        val items = ArrayList<RollcallHistoryItem>(rows.length())
+        for (index in 0 until rows.length()) {
+            val obj = rows.optJSONObject(index) ?: continue
+            items += RollcallHistoryItem(
+                rollcallId = obj.optString("rollcallId"),
+                courseId = obj.optString("courseId"),
+                courseTitle = obj.optString("courseTitle"),
+                type = obj.optString("type"),
+                timeDisplay = obj.optString("timeDisplay"),
+                sortKeyMillis = if (obj.isNull("sortKeyMillis") || !obj.has("sortKeyMillis")) {
+                    null
+                } else {
+                    obj.optLong("sortKeyMillis")
+                },
+                ownStatus = obj.optString("ownStatus"),
+                progress = obj.optJSONObject("progress")?.let(::progressFromCache),
+                numberCode = obj.optRealString("numberCode"),
+            )
+        }
+        RollcallHistorySnapshot(
+            accountId = accountId,
+            fetchedAtMillis = root.optLong("fetched_at", 0L),
+            items = items,
         )
-    }
-    RollcallHistorySnapshot(
-        accountId = accountId,
-        fetchedAtMillis = root.optLong("fetched_at", 0L),
-        items = items,
-    )
-}.getOrNull()
+    }.getOrNull()
+}
 
 private val rollcallHistoryCacheWriteLock = Any()
 
 /** 原子写入（`.tmp`+rename，rename 失败短暂重试，与 ScheduleCache 同姿势）。 */
-fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
+fun saveRollcallHistoryCache(
+    file: File,
+    snapshot: RollcallHistorySnapshot,
+    isSessionCurrent: () -> Boolean = { true },
+) {
     runCatching {
         val root = JSONObject()
             .put("version", ROLLCALL_HISTORY_CACHE_VERSION)
@@ -458,27 +464,40 @@ fun saveRollcallHistoryCache(file: File, snapshot: RollcallHistorySnapshot) {
                 }
                 obj
             }))
-        synchronized(rollcallHistoryCacheWriteLock) {
-            val temp = File(file.parentFile, "${file.name}.tmp")
-            temp.writeText(root.toString())
-            var renamed = temp.renameTo(file)
-            if (!renamed) {
-                repeat(3) {
-                    Thread.sleep(20)
-                    if (temp.renameTo(file)) {
-                        renamed = true
-                        return@repeat
-                    }
-                }
-            }
-            if (!renamed) {
-                file.delete()
-                file.writeText(root.toString())
-            }
-        }
+        writeRollcallHistoryCacheAtomically(file, root.toString(), isSessionCurrent = isSessionCurrent)
     }.onFailure {
         // 写失败原先全链路静默（与 ScheduleCache 同款欠账）：只补日志不改控制流。
         Log.w(TAG, "签到历史缓存写入失败：${it.message}", it)
+    }
+}
+
+internal fun writeRollcallHistoryCacheAtomically(
+    file: File,
+    content: String,
+    rename: (File, File) -> Boolean = { source, target ->
+        try {
+            java.nio.file.Files.move(source.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            true
+        } catch (_: java.io.IOException) { false }
+    },
+    isSessionCurrent: () -> Boolean = { true },
+    beforeLock: () -> Unit = {},
+): Boolean {
+    beforeLock()
+    return synchronized(rollcallHistoryCacheWriteLock) {
+        val temp = File(file.parentFile, "${file.name}.tmp")
+        try {
+            temp.writeText(content)
+            for (attempt in 0..3) {
+                if (!isSessionCurrent()) return@synchronized false
+                if (rename(temp, file)) return@synchronized true
+                if (attempt < 3) Thread.sleep(20)
+            }
+            error("无法原子替换签到历史缓存，已保留旧缓存")
+        } finally {
+            temp.delete()
+        }
     }
 }
 
@@ -509,10 +528,14 @@ private fun JSONObject.strictInt(name: String): Int? = when (val value = opt(nam
 
 /** 删除历史缓存（登出/换号清理调用，与课表缓存同姿势，共用同一把锁防 torn-write）。 */
 fun deleteRollcallHistoryCacheFile(context: Context) {
+    deleteRollcallHistoryCacheFile(rollcallHistoryCacheFile(context))
+}
+
+internal fun deleteRollcallHistoryCacheFile(file: File) {
     synchronized(rollcallHistoryCacheWriteLock) {
         runCatching {
-            File(context.filesDir, ROLLCALL_HISTORY_CACHE_FILE).delete()
-            File(context.filesDir, "$ROLLCALL_HISTORY_CACHE_FILE.tmp").delete()
+            file.delete()
+            File(file.parentFile, "${file.name}.tmp").delete()
         }
     }
 }

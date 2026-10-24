@@ -112,6 +112,8 @@ class TrayMixin:
     def _quit_from_tray(self):
         self.quitting = True
         self.stop_monitor()
+        if self.tray_icon:
+            self.tray_icon.hide()
         QApplication.quit()
 
     def closeEvent(self, event):

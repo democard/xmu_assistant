@@ -5,6 +5,7 @@ import android.os.Environment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -208,13 +209,13 @@ class CoursewareClient private constructor(
             )
         directory.mkdirs()
         return if (item.referenceId.isNotBlank()) {
-            val signed = getJson("$baseUrl/api/uploads/reference/${item.referenceId}/url", NetworkOperation.COURSEWARE) as? JSONObject
-            val url = signed?.optString("url").orEmpty()
+            val signed = getJson("$baseUrl/api/uploads/reference/${item.referenceId}/url", NetworkOperation.COURSEWARE, forbiddenMeansSessionExpired = false) as? JSONObject
+            val url = signed?.optRealString("url").orEmpty()
             if (!url.startsWith("http")) error("平台未提供地址")
-            downloadUrl(url, directory, item.filename.ifBlank { item.title })
+            downloadUrl(url, directory, item.filename.ifBlank { item.title }, coursewareResourceIdentity(item))
             COURSEWARE_STATUS_SUCCESS
         } else if (isDirectDownloadUrl(item.sourceUrl)) {
-            downloadUrl(item.sourceUrl, directory, item.filename.ifBlank { item.title })
+            downloadUrl(item.sourceUrl, directory, item.filename.ifBlank { item.title }, coursewareResourceIdentity(item))
             COURSEWARE_STATUS_SUCCESS
         } else {
             val url = item.sourceUrl.ifBlank { "$baseUrl/course/${item.courseId}/learning-activity#/${item.activityId}" }
@@ -255,14 +256,15 @@ class CoursewareClient private constructor(
             // URL 必败（与 rollcall_id/number_code 同款陷阱）
             val referenceId = upload.optRealString("reference_id")
             CoursewareUiItem(
-                id = "$activityId-$index-${referenceId.ifBlank { upload.optString("id") }}",
+                id = "$activityId-$index-${referenceId.ifBlank { upload.optRealString("id") }}",
                 courseId = courseId,
                 activityId = activityId,
                 title = title,
                 filename = firstString(upload, "name", "filename", "file_name").ifBlank { title },
-                type = readableType(upload.optString("type", type)),
+                type = upload.optRealString("type").takeIf { it.isNotBlank() }?.let(::readableType) ?: type,
                 moduleName = moduleName,
                 referenceId = referenceId,
+                resourceId = upload.optRealString("id").ifBlank { referenceId },
                 sourceUrl = sourceUrl,
                 downloadStatus = COURSEWARE_STATUS_AVAILABLE,
             )
@@ -285,8 +287,8 @@ class CoursewareClient private constructor(
         )
     }
 
-    private fun downloadUrl(url: String, directory: File, filename: String): String {
-        val (target, partial) = reserveDownloadFiles(directory, filename)
+    private fun downloadUrl(url: String, directory: File, filename: String, resourceIdentity: String): String {
+        val (target, partial) = reserveDownloadFiles(directory, filename, resourceIdentity)
         return try {
             val headers = linkedMapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 13) Mobile Safari/537.36",
@@ -298,7 +300,12 @@ class CoursewareClient private constructor(
             // 这类前缀伪装域也会 startsWith 命中，Cookie 会外泄给攻击者主机。
             if (cookieHeader.isNotBlank() && isSameOriginAsBaseUrl(url)) headers["Cookie"] = cookieHeader
             val result = fileDownloadTransport.download(
-                FileDownloadRequest(url = url, headers = headers, operation = NetworkOperation.DOWNLOAD),
+                FileDownloadRequest(
+                    url = url,
+                    headers = headers,
+                    operation = NetworkOperation.DOWNLOAD,
+                    resourceIdentity = resourceIdentity,
+                ),
                 partial,
             )
             // 401 = 会话确定失效（触发续登）；403 = 平台拒绝（版权保护/防盗链/无权限），
@@ -318,6 +325,7 @@ class CoursewareClient private constructor(
                 error("网络失败")
             }
             check(partial.renameTo(target)) { "课件文件保存失败" }
+            DownloadResumeMetadata.sidecar(partial).delete()
             target.absolutePath
         } catch (error: Throwable) {
             // 保留 .part：已下载字节是断点续传的依据（传输层失败分支不写脏数据）；
@@ -394,14 +402,14 @@ class CoursewareClient private constructor(
     }
 
     private fun firstString(obj: JSONObject, vararg keys: String): String =
-        keys.firstNotNullOfOrNull { key -> obj.optString(key).takeIf { it.isNotBlank() } } ?: ""
+        keys.firstNotNullOfOrNull { key -> obj.optRealString(key).takeIf { it.isNotBlank() } } ?: ""
 
     private fun firstTerm(obj: JSONObject): String {
         val year = obj.opt("academic_year")
         if (year is JSONObject) return firstString(year, "name", "code", "id")
-        return obj.optString("academic_year").ifBlank {
-            obj.optString("term_name").ifBlank {
-                obj.optString("semester_name").ifBlank { obj.optString("term") }
+        return obj.optRealString("academic_year").ifBlank {
+            obj.optRealString("term_name").ifBlank {
+                obj.optRealString("semester_name").ifBlank { obj.optRealString("term") }
             }
         }
     }
@@ -409,7 +417,7 @@ class CoursewareClient private constructor(
     private fun firstSemesterCode(obj: JSONObject, term: String): String {
         val semester = obj.opt("semester")
         if (semester is JSONObject) return firstString(semester, "code", "id", "name")
-        val raw = obj.optString("semester").ifBlank { obj.optString("semester_code") }
+        val raw = obj.optRealString("semester").ifBlank { obj.optRealString("semester_code") }
         return raw.ifBlank { term }
     }
 
@@ -444,7 +452,12 @@ class CoursewareClient private constructor(
         val stem = if (dot > 0) target.name.substring(0, dot) else target.name
         val suffix = if (dot > 0) target.name.substring(dot) else ""
         var index = 2
-        while (target.exists() || File(target.parentFile, target.name + ".part").exists()) {
+        while (target.exists() ||
+            File(target.parentFile, target.name + ".part").exists() ||
+            File(target.parentFile, target.name + ".part.meta").exists() ||
+            File(target.parentFile, target.name + ".part.meta.tmp").exists() ||
+            downloadReservationPaths(target).any { pathKey(it) in claimedDownloadPaths }
+        ) {
             target = File(directory, "$stem ($index)$suffix")
             index += 1
         }
@@ -458,32 +471,41 @@ class CoursewareClient private constructor(
             .ifBlank { "courseware" }
             .take(120)
 
-    private fun reserveDownloadFiles(directory: File, rawName: String): Pair<File, File> {
+    private fun reserveDownloadFiles(directory: File, rawName: String, resourceIdentity: String? = null): Pair<File, File> {
         // 有限重试：目录不可写（磁盘满/权限/文件系统错误）时 createNewFile 会一直失败，
         // 若 while(true) 会永久忙等并持有锁；限次后抛错让下载走失败分支。
         var attempts = 0
+        val base = File(directory, sanitizedFileName(rawName))
+        val dot = base.name.lastIndexOf('.')
+        val stem = if (dot > 0) base.name.substring(0, dot) else base.name
+        val suffix = if (dot > 0) base.name.substring(dot) else ""
         while (attempts < 50) {
             attempts += 1
-            // 探测与原子占位必须在同一临界区：若 createNewFile 在锁外，
-            // 并发批量下载同名课件时两个线程会拿到同一个 .part 路径互相覆写（TOCTOU 静默损坏）。
+            val target = if (attempts == 1) base else File(directory, "$stem ($attempts)$suffix")
+            // Reuse a numbered as well as the primary partial only when its recorded owner matches.
+            // Claim target + all metadata paths together so another valid filename cannot overwrite
+            // this download's sidecar while it is being written.
             val allocated = synchronized(FILE_ALLOCATION_LOCK) {
-                // 断点续传优先（仅首轮）：正式文件缺失而同名 .part 残留且未被在途任务持有
-                // 时复用原名接着下载——否则每次重试都因 .part 存在而换名，续传形同虚设。
-                if (attempts == 1) {
-                    val primary = File(directory, sanitizedFileName(rawName))
-                    val primaryPartial = File(primary.parentFile, primary.name + ".part")
-                    if (!primary.exists() && primaryPartial.exists() && primaryPartial.path !in claimedParts) {
-                        claimedParts += primaryPartial.path
-                        return@synchronized primary to primaryPartial
-                    }
-                }
-                val target = availableFile(directory, rawName)
                 val partial = File(target.parentFile, target.name + ".part")
-                if (partial.createNewFile()) {
-                    claimedParts += partial.path
-                    target to partial
-                } else {
+                val sidecar = DownloadResumeMetadata.sidecar(partial)
+                val sidecarTemp = File(sidecar.parentFile, sidecar.name + ".tmp")
+                val paths = downloadReservationPaths(target)
+                if (target.exists() || paths.any { pathKey(it) in claimedDownloadPaths }) {
                     null
+                } else if (partial.exists()) {
+                    val ownerMatches = resourceIdentity == null ||
+                        DownloadResumeMetadata.read(partial)?.resourceIdentity == resourceIdentity
+                    if (!ownerMatches || sidecarTemp.exists()) {
+                        null
+                    } else {
+                        paths.forEach { claimedDownloadPaths += pathKey(it) }
+                        target to partial
+                    }
+                } else if (sidecar.exists() || sidecarTemp.exists() || !partial.createNewFile()) {
+                    null
+                } else {
+                    paths.forEach { claimedDownloadPaths += pathKey(it) }
+                    target to partial
                 }
             }
             if (allocated != null) return allocated
@@ -492,18 +514,40 @@ class CoursewareClient private constructor(
     }
 
     private fun releaseReservation(partial: File) {
-        synchronized(FILE_ALLOCATION_LOCK) { claimedParts.remove(partial.path) }
+        val target = File(partial.parentFile, partial.name.removeSuffix(".part"))
+        synchronized(FILE_ALLOCATION_LOCK) { downloadReservationPaths(target).forEach { claimedDownloadPaths.remove(pathKey(it)) } }
     }
+
+    private fun downloadReservationPaths(target: File): List<File> {
+        val partial = File(target.parentFile, target.name + ".part")
+        val sidecar = DownloadResumeMetadata.sidecar(partial)
+        return listOf(target, partial, sidecar, File(sidecar.parentFile, sidecar.name + ".tmp"))
+    }
+
+    private fun pathKey(file: File): String =
+        runCatching { file.canonicalPath }.getOrDefault(file.absolutePath).lowercase(Locale.ROOT)
 
     private companion object {
         const val MAX_PARALLEL_DETAILS = 4
         const val ENDPOINT_PURPOSE_COURSES = "courses"
         val FILE_ALLOCATION_LOCK = Any()
 
-        /** 进程内在途下载占用的 .part 路径（配合 FILE_ALLOCATION_LOCK 守护）。 */
-        val claimedParts = mutableSetOf<String>()
+        /** In-flight reservations cover final target, partial, sidecar and sidecar temp paths. */
+        val claimedDownloadPaths = mutableSetOf<String>()
     }
 }
+
+/** Stable business identity: never bind a partial to a renewable signed URL. */
+internal fun coursewareResourceIdentity(item: CoursewareUiItem): String =
+    if (item.referenceId.isNotBlank()) {
+        JSONArray(listOf("reference", item.courseId, item.activityId, item.referenceId)).toString()
+    } else if (item.resourceId.isNotBlank()) {
+        JSONArray(listOf("item", item.courseId, item.activityId, item.resourceId)).toString()
+    } else {
+        JSONArray(
+            listOf("url", item.courseId, item.activityId, item.sourceUrl.substringBefore('#'), item.filename),
+        ).toString()
+    }
 
 /** True when the URL path ends in a supported downloadable extension. */
 fun isDirectCoursewareUrl(url: String): Boolean = runCatching {

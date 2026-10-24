@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import uuid
 from dataclasses import asdict, dataclass
@@ -79,13 +80,22 @@ def load_presets() -> list[RadarPreset]:
             if not isinstance(row, dict):
                 continue
             try:
+                latitude = float(row["latitude"])
+                longitude = float(row["longitude"])
+                if not (
+                    math.isfinite(latitude)
+                    and -90.0 <= latitude <= 90.0
+                    and math.isfinite(longitude)
+                    and -180.0 <= longitude <= 180.0
+                ):
+                    continue
                 presets.append(
                     RadarPreset(
                         id=str(row["id"]),
                         name=str(row["name"]),
                         zone=str(row.get("zone") or "未分组"),
-                        latitude=float(row["latitude"]),
-                        longitude=float(row["longitude"]),
+                        latitude=latitude,
+                        longitude=longitude,
                         confidence=str(row.get("confidence") or ""),
                     )
                 )
@@ -109,9 +119,13 @@ class RadarCoordinateStore:
             return list(self._items)
 
     def places_for(self, course_id: str = "", course_title: str = "") -> list[RadarCoordinate]:
+        cid = str(course_id or "")
         with self._lock:
-            matched = [item for item in self._items if _matches(item, course_id, course_title)]
-        return sorted(matched, key=lambda item: (not item.preferred, item.created_at_ms))
+            matched = [item for item in self._items if _matches(item, cid, course_title)]
+        return sorted(
+            matched,
+            key=lambda item: (item.course_id != cid, not item.preferred, item.created_at_ms),
+        )
 
     def preferred_for(self, course_id: str = "", course_title: str = "") -> RadarCoordinate | None:
         places = self.places_for(course_id, course_title)
@@ -134,20 +148,21 @@ class RadarCoordinateStore:
             raise ValueError("地点名称不能为空")
         latitude = float(latitude)
         longitude = float(longitude)
-        if not -90.0 <= latitude <= 90.0:
+        if not (math.isfinite(latitude) and -90.0 <= latitude <= 90.0):
             raise ValueError("纬度无效")
-        if not -180.0 <= longitude <= 180.0:
+        if not (math.isfinite(longitude) and -180.0 <= longitude <= 180.0):
             raise ValueError("经度无效")
         if not (course_id or course_title):
             raise ValueError("请先选择课程")
 
         with self._lock:
-            matched = [item for item in self._items if _matches(item, course_id, course_title)]
+            items = list(self._items)
+            matched = [item for item in self._items if _same_course(item, course_id, course_title)]
             preferred = make_preferred or not matched
             if preferred:
-                for index, item in enumerate(self._items):
-                    if item.preferred and _matches(item, course_id, course_title):
-                        self._items[index] = _replace(item, preferred=False)
+                for index, item in enumerate(items):
+                    if item.preferred and _same_course(item, course_id, course_title):
+                        items[index] = _replace(item, preferred=False)
             item = RadarCoordinate(
                 id=str(uuid.uuid4()),
                 course_id=str(course_id or ""),
@@ -157,11 +172,11 @@ class RadarCoordinateStore:
                 longitude=longitude,
                 source=source or "custom",
                 preferred=preferred,
-                accuracy_meters=accuracy_meters,
+                accuracy_meters=_clean_accuracy(accuracy_meters),
                 created_at_ms=_now_ms(),
             )
-            self._items.append(item)
-            self._write()
+            items.append(item)
+            self._write(items)
             return item
 
     def set_preferred(self, coordinate_id: str) -> bool:
@@ -169,10 +184,11 @@ class RadarCoordinateStore:
             target = next((item for item in self._items if item.id == coordinate_id), None)
             if target is None:
                 return False
-            for index, item in enumerate(self._items):
-                if _matches(item, target.course_id, target.course_title):
-                    self._items[index] = _replace(item, preferred=item.id == coordinate_id)
-            self._write()
+            items = list(self._items)
+            for index, item in enumerate(items):
+                if _same_course(item, target.course_id, target.course_title):
+                    items[index] = _replace(item, preferred=item.id == coordinate_id)
+            self._write(items)
             return True
 
     def delete(self, coordinate_id: str) -> bool:
@@ -180,19 +196,18 @@ class RadarCoordinateStore:
             removed = next((item for item in self._items if item.id == coordinate_id), None)
             if removed is None:
                 return False
-            self._items = [item for item in self._items if item.id != coordinate_id]
+            items = [item for item in self._items if item.id != coordinate_id]
             if removed.preferred:
-                for index, item in enumerate(self._items):
-                    if _matches(item, removed.course_id, removed.course_title):
-                        self._items[index] = _replace(item, preferred=True)
+                for index, item in enumerate(items):
+                    if _same_course(item, removed.course_id, removed.course_title):
+                        items[index] = _replace(item, preferred=True)
                         break
-            self._write()
+            self._write(items)
             return True
 
     def clear(self) -> None:
         with self._lock:
-            self._items = []
-            self._write()
+            self._write([])
 
     # ---- 持久化 ----
     def _read(self) -> list[RadarCoordinate]:
@@ -211,40 +226,70 @@ class RadarCoordinateStore:
             if not isinstance(row, dict):
                 continue
             try:
+                latitude = float(row["latitude"])
+                longitude = float(row["longitude"])
+                if not (
+                    math.isfinite(latitude)
+                    and -90.0 <= latitude <= 90.0
+                    and math.isfinite(longitude)
+                    and -180.0 <= longitude <= 180.0
+                ):
+                    continue
                 items.append(
                     RadarCoordinate(
                         id=str(row.get("id") or uuid.uuid4()),
                         course_id=str(row.get("course_id") or ""),
                         course_title=str(row.get("course_title") or ""),
                         name=str(row.get("name") or "未命名地点"),
-                        latitude=float(row["latitude"]),
-                        longitude=float(row["longitude"]),
+                        latitude=latitude,
+                        longitude=longitude,
                         source=str(row.get("source") or "custom"),
                         preferred=bool(row.get("preferred")),
-                        accuracy_meters=(
-                            float(row["accuracy_meters"])
-                            if row.get("accuracy_meters") is not None
-                            else None
-                        ),
+                        accuracy_meters=_clean_accuracy(row.get("accuracy_meters")),
                         created_at_ms=int(row.get("created_at_ms") or 0),
                     )
                 )
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
         return items
 
-    def _write(self) -> None:
-        payload = json.dumps([asdict(item) for item in self._items], ensure_ascii=False, indent=2)
+    def _write(self, items: list[RadarCoordinate]) -> None:
+        payload = json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(self._path)
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._path)
+        except OSError:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass  # 保留原写入错误，不能让清理失败掩盖原因。
+            raise
+        self._items = items
 
 
 def _matches(item: RadarCoordinate, course_id: str, course_title: str) -> bool:
     if course_id and item.course_id:
         return str(course_id) == item.course_id
     return bool(course_title) and normalize_course_title(course_title) == normalize_course_title(item.course_title)
+
+
+def _same_course(item: RadarCoordinate, course_id: str, course_title: str) -> bool:
+    cid = str(course_id or "")
+    if cid or item.course_id:
+        return bool(cid) and cid == item.course_id
+    return bool(course_title) and normalize_course_title(course_title) == normalize_course_title(item.course_title)
+
+
+def _clean_accuracy(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        accuracy = float(value)
+    except (TypeError, ValueError):
+        return None
+    return accuracy if math.isfinite(accuracy) and accuracy >= 0.0 else None
 
 
 def _replace(item: RadarCoordinate, **changes) -> RadarCoordinate:

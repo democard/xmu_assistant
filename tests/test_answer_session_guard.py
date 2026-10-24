@@ -24,6 +24,7 @@ class AnswerSessionGuardTests(unittest.TestCase):
             _auto_answer_inflight_rollcalls={}, _auto_answer_attempted_rollcalls=set(),
             _answer_cancellations={}, _answer_cancellations_lock=threading.Lock(),
         )
+        host.logout = lambda **kwargs: setattr(host, "session", None)
         host._emit = host.emitted.append
         host.log = host.logs.append
         host._update_event_result = lambda *args: host.updates.append(args)
@@ -171,7 +172,8 @@ class AnswerSessionGuardTests(unittest.TestCase):
         self._consume(host)
         self.assertEqual(len(host.errors), 1)
         self.assertTrue(host.errors[0][1]["immediate"])
-        self.assertEqual(host.updates[0][1], "失败")
+        self.assertEqual(host.updates, [])
+        self.assertIsNone(host.session)
 
 
 if __name__ == "__main__":

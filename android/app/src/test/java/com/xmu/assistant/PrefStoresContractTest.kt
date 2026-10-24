@@ -24,10 +24,12 @@ class PrefStoresContractTest {
 
     /** 源码中出现的 SharedPreferences 文件名（字面量 + 常量定义双重提取）。 */
     private fun actualFileNames(): Set<String> {
-        val files = listOf(
-            "AssistantSettings.kt", "ExamCache.kt", "ExamReminderPlan.kt", "ScheduleWidgetData.kt",
-            "RollcallMonitorService.kt", "ScheduleCache.kt", "MainActivity.kt",
-        )
+        val sourceDir = sequenceOf(
+            File("src/main/java/com/xmu/assistant"),
+            File("app/src/main/java/com/xmu/assistant"),
+            File("android/app/src/main/java/com/xmu/assistant"),
+        ).first(File::isDirectory)
+        val files = checkNotNull(sourceDir.listFiles()).filter { it.extension == "kt" }.map { it.name }
         val literal = Regex("""getSharedPreferences\("([^"]+)""")
         val encryptedLiteral = Regex("""EncryptedSharedPreferences\.create\(\s*\w+,\s*"([^"]+)""")
         val constantDefs = Regex("""(?:private )?const val \w+ = "([a-z_]+)"""")

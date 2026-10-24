@@ -152,7 +152,7 @@ class ThresholdReferenceTests(unittest.TestCase):
             }
             with patch.object(config_module, "CONFIG_DIR", Path(directory)), patch.object(
                 config_module, "CONFIG_FILE", config_path
-            ), patch.object(config_module.secrets, "protect", side_effect=lambda value: value), patch.object(
+            ), patch.object(config_module.secrets, "protect", side_effect=lambda value, **kwargs: value), patch.object(
                 config_module.secrets, "unprotect", side_effect=lambda value: value
             ):
                 config_module.save_config(value)

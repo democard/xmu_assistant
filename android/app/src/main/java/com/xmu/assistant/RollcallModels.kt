@@ -93,6 +93,8 @@ data class CoursewareUiItem(
     val sourceUrl: String = "",
     val downloadStatus: String = COURSEWARE_STATUS_AVAILABLE,
     val failureReason: String = "",
+    /** Stable upload/reference ID used to bind resumable bytes to a resource. */
+    val resourceId: String = "",
 )
 
 internal enum class KnownRollcallStatus {

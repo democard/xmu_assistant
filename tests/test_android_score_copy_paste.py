@@ -55,8 +55,8 @@ class AndroidScoreCopyPasteTests(unittest.TestCase):
         self.assertNotIn("queryTemplate(termCode).toString()", client)
         self.assertIn("成绩接口返回格式异常", client)
         self.assertIn('optString("DJCJLXDM_DISPLAY") == "百分制"', client)
-        self.assertIn('optString("KCM")', client)
-        self.assertIn('optString("ZCJ")', client)
+        self.assertIn('optRealString("KCM")', client)
+        self.assertIn('optRealString("ZCJ").trim()', client)
         self.assertIn('optString("XFJD")', client)
         self.assertIn('optString("XF")', client)
 

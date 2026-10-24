@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -35,9 +36,10 @@ def get_config_dir() -> Path:
     for directory in candidates:
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            test_file = directory / ".test_write"
-            test_file.touch()
-            test_file.unlink()
+            # 每次探测独占自己的文件；并发启动不能互相删除同名探针，
+            # 进而把可写的主目录误判为失败并分流到备用配置目录。
+            with tempfile.NamedTemporaryFile(prefix=".write-probe-", dir=directory):
+                pass
             return directory
         except (OSError, RuntimeError):
             continue
@@ -297,13 +299,13 @@ def save_config(config: dict) -> None:
         snapshot = copy.deepcopy(config)
         for account in snapshot.get("accounts", []):
             if isinstance(account, dict):
-                account["password"] = secrets.protect(_config_text(account.get("password")))
+                account["password"] = secrets.protect(_config_text(account.get("password")), force_plaintext=True)
         notif = snapshot.get("notification_settings")
         if isinstance(notif, dict):
             if isinstance(notif.get("pushplus"), dict):
-                notif["pushplus"]["token"] = secrets.protect(_config_text(notif["pushplus"].get("token")))
+                notif["pushplus"]["token"] = secrets.protect(_config_text(notif["pushplus"].get("token")), force_plaintext=True)
             if isinstance(notif.get("qq_mail"), dict):
-                notif["qq_mail"]["password"] = secrets.protect(_config_text(notif["qq_mail"].get("password")))
+                notif["qq_mail"]["password"] = secrets.protect(_config_text(notif["qq_mail"].get("password")), force_plaintext=True)
         tmp_file = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
         try:
             with open(tmp_file, "w", encoding="utf-8") as file:
@@ -400,5 +402,5 @@ def set_app_settings(config: dict, settings: dict | None) -> None:
 def get_cookies_path(account_id: int | str | None = None) -> str:
     ensure_config_dir()
     if account_id is None:
-        account_id = load_config().get("current_account_id", 1)
+        account_id = load_config().get("current_account_id") or 1
     return str(CONFIG_DIR / f"{account_id}.json")

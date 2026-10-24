@@ -2,9 +2,9 @@
 
 虾大助手的 Android 原生客户端，使用 Kotlin 和 Jetpack Compose，提供课程、课表、学习记录与日常提醒等功能。与 Windows 端独立运行，登录态和业务缓存保存在设备本地。
 
-当前公开版本 **1.8.3 / versionCode 44**：修复签到页重复列表标识导致的闪退，按老版方式在首页原有监控区域恢复当前签到摘要与详情入口，不新增独立模块。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35，沿用既有包名和签名。
+当前公开版本 **1.8.4 / versionCode 45**：改善课件安全续传、登录 Cookie 作用域、历史缓存与账号隔离，并修复邮件 TLS 和重投边界。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35，沿用既有包名和签名。
 
-[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.3) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 使用入口
 
@@ -25,15 +25,23 @@
 - **记录与提醒**：需要有效登录态、网络和后台运行条件，相关操作按个人策略启用，状态以原平台记录为准。
 - **课表**：支持七天、十一节的周网格和日程列表，重叠课程分别展示；课表右上角菜单可导出 `.ics`，按单双周和分段周次编排。
 - **今日课程小组件**：保存未来十四天课程摘要，优先展示尚未结束的课程；跨日可读本地排课，超出缓存范围需刷新。尺寸和后台刷新受系统、桌面启动器影响。
-- **专业排名**：手动查询或申请计算，已有完整记录可复用；成绩变化仅标记待更新。证明 PDF 支持系统导出和应用内清理，导出副本需自行删除。该接口尚未用真实校园账号完成联调。
+- **专业排名**：手动查询或申请计算，已有完整记录可复用；成绩变化仅标记待更新。证明 PDF 支持系统导出和应用内清理，导出副本需自行删除。
 - **考试提醒**：精确闹钟和全屏提醒受系统权限限制，请按内置教程配置；不能保证系统限制后台时仍按时触发。
-- **课件下载**：支持课程搜索、学年学期筛选和批量下载；不能直接下载的条目保留平台入口。续传会校验响应范围与长度，异常时保留断点。
+- **课件下载**：支持课程搜索、学年学期筛选和批量下载；不能直接下载的条目保留平台入口。续传校验响应范围、长度、资源身份与版本，说明见下节。
 
 v1.7.3 更新了日历事件标识。向已有旧版导入的日历再次导入可能形成重复事件，建议先移除旧导入再导入新版。
+
+### 1.8.4 下载、缓存与邮件修复
+
+下载只在资源归属与可靠版本验证器匹配时续传；缺少可靠验证器则重新全量下载。旧版无归属的 `.part` 保留，新下载另起文件名，不与其它同名课件拼接。邮件渠道要求有效 TLS 和服务器身份校验，提交后回执不明不再盲目切换端口重发。历史缓存的会话有效性检查与实际写入共用提交屏障，登出后的旧任务不得写回。
+
+更新详情见 [1.8.4 发布说明](../documentation/releases/v1.8.4.md)，修复依据见 [八项修复记录](../documentation/repair8-2026-10-24.md)。
 
 ## 数据与更新
 
 账号、Cookie 等凭据使用 EncryptedSharedPreferences 保存。业务缓存和课件不等于加密凭据；小组件摘要包含课程名、时间和地点，虽不含密码或 Cookie，仍可能涉及个人安排。历史展示缓存登出时删除；通知 / 应答去重存储保留，并按账号 Cookie 指纹隔离。
+
+课程雷达地点与本地课表修正是按课程匹配的持久设置，沿用跨账号保留行为，登出不删除。共用设备或切换账号后，请先在对应管理页检查设置；无需保留的地点和修正应主动删除。
 
 查询及用户启用的操作会连接相应服务；开启 PushPlus 或邮件通知会向所选服务发送通知。成绩长图、课表日历、证明 PDF 和日志可能包含个人信息，分享前需要检查。应用内清理不代替删除已经导出的副本。
 
@@ -57,9 +65,7 @@ cd android
 | 单元测试报告 | `app/build/reports/tests/testDebugUnitTest/index.html` |
 | Lint 报告 | `app/build/reports/lint-results-debug.html` |
 
-单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。v1.7.3 发布前共 610 项 Debug 测试通过，Lint 0 错误、6 警告；release 构建、签名及模拟器覆盖升级已验证。真实校园功能、真实通知与 Android 真机全流程不在本次验收范围，详见[测试报告](../TEST_REPORT.md)。
-
-当前 1.7.4 源码已通过 758 项 Debug 测试，Lint 0 错误、36 警告（30 条为依赖版本提示）。发布 APK 已核对版本及签名，与此前同版测试包的签名一致；用户反馈针对此前测试包，不代表新发布包全部功能或设备已验收，详见 [1.7.4 验证记录](../documentation/verification-1.7.4.md)。
+单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。1.8.4 的 Debug 全量 822 项测试通过，最终邮件定向 19 项通过；Lint 0 错误、6 警告。打包、版本与签名检查见 [1.8.4 验证记录](../documentation/verification-1.8.4.md)。
 
 仓库另带 `gradle/init.gradle` 作为可选镜像配置，可用 `-I gradle/init.gradle` 显式加载。依赖未缓存完整时，不要添加 `--offline`。
 

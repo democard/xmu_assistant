@@ -5,6 +5,15 @@ import org.junit.Test
 import java.io.IOException
 
 class RankTest {
+    @Test fun `session change before submit is not reported as uncertain`() {
+        var writes = 0
+        val client = XmuRankClient("s=old", { "" }, { false }, RankTransport { _, _, _ ->
+            writes++; error("unexpected write")
+        })
+        assertThrows(RankSessionChanged::class.java) { client.submit("scope") }
+        assertEquals(0, writes)
+    }
+
     @Test fun `rank parsing requires consistent positive rank and total`() {
         assertEquals(RankNumbers(12, 120), rankNumbersFromText("The total number of students in the major is 120,\nwith a GPA rank of 12."))
         assertNull(rankNumbersFromText("The total number of students in the major is 120, with a GPA rank of 0."))
@@ -92,12 +101,14 @@ class RankTest {
     @Test fun `records ranges and PDF are parsed conservatively`() {
         val client = XmuRankClient("s=old", { "" }, { true }, RankTransport { path, _, _ ->
             when {
-                path.endsWith("getJdjssq.do") -> reply("""{"datas":{"getJdjssq":[{"ZX":{"WID":"new","CYJSZYRS":120}}]}}""")
+                path.endsWith("getJdjssq.do") -> reply("""{"datas":{"getJdjssq":[{"ZX":{"WID":"new","CYJSZYRS":120,"JSSJ":null,"SQSJ":"2026-09-01"}}]}}""")
                 path.endsWith("cxxskxcjfw.do") -> reply("""{"datas":{"cxxskxcjfw":{"rows":[{"WID":"range","XSMC":"全部成绩"}]}}}""")
                 else -> reply("<html>not a certificate</html>")
             }
         })
-        assertEquals("new", client.records().single().id)
+        val record = client.records().single()
+        assertEquals("new", record.id)
+        assertEquals("2026-09-01", record.calculatedAt)
         assertEquals(RankRange("range", "全部成绩"), client.ranges().single())
         assertThrows(IllegalStateException::class.java) { client.certificate("new") }
     }

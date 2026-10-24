@@ -1,7 +1,11 @@
 package com.xmu.assistant
 
 import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -15,6 +19,55 @@ import org.junit.rules.TemporaryFolder
  * 本人明细判定三态、401 类型化上抛、缓存往返与账号绑定、课程复用零重复请求。
  */
 class RollcallHistoryClientTest {
+    @Test fun `logout between initial validation and cache commit prevents history resurrection`() {
+        val file = temporaryFolder.newFile("history.json").apply { writeText("old-cache") }
+        val sessionCurrent = AtomicBoolean(true)
+        val beforeLock = CountDownLatch(1)
+        val continueWrite = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            assertTrue(sessionCurrent.get()) // caller's pre-serialization check
+            val staleWrite = executor.submit<Boolean> {
+                writeRollcallHistoryCacheAtomically(
+                    file,
+                    "old-session-result",
+                    isSessionCurrent = sessionCurrent::get,
+                    beforeLock = {
+                        beforeLock.countDown()
+                        check(continueWrite.await(5, TimeUnit.SECONDS))
+                    },
+                )
+            }
+            assertTrue(beforeLock.await(5, TimeUnit.SECONDS))
+            sessionCurrent.set(false)
+            deleteRollcallHistoryCacheFile(file)
+            continueWrite.countDown()
+
+            assertFalse(staleWrite.get(5, TimeUnit.SECONDS))
+            assertFalse("logout-cleared history must not be recreated", file.exists())
+        } finally {
+            continueWrite.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun `failed atomic replacement preserves previous complete cache and cleans temporary file`() {
+        val file = temporaryFolder.newFile("history.json")
+        val old = RollcallHistorySnapshot("owner", 123)
+        saveRollcallHistoryCache(file, old)
+        var renames = 0
+        assertThrows(IllegalStateException::class.java) {
+            writeRollcallHistoryCacheAtomically(
+                file,
+                "truncated replacement",
+                rename = { _, _ -> renames++; false },
+            )
+        }
+        assertEquals(4, renames)
+        assertEquals(old, loadRollcallHistoryCache(file, "owner"))
+        assertTrue(!java.io.File(file.parentFile, "${file.name}.tmp").exists())
+    }
+
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
@@ -448,6 +501,25 @@ class RollcallHistoryClientTest {
         // 与一站式入口逐字段一致
         val oneshot = client(transport).fetchRecentRollcalls(username = "u1", preloadedCourses = fakeCourses())
         assertEquals(resolved, oneshot)
+    }
+
+    @Test
+    fun `explicit json null fields fall back to secondary keys across profile rollcalls and details`() {
+        val transport = QueryHttpTransport { request ->
+            val url = request.url
+            val body = when {
+                "/api/profile" in url -> """{"id":null,"user_id":"s1"}"""
+                "/student_rollcalls" in url -> """{"student_rollcalls":[{"user_no":null,"username":"u1","status":"on_call"}]}"""
+                else -> """{"rollcalls":[{"id":null,"rollcall_id":"r1","rollcall_time":null,"created_at":"2026-07-02T08:00:00","rollcall_type":null,"type":"number"}]}"""
+            }
+            QueryHttpResponse(url, 200, null, body, emptyMap())
+        }
+
+        val item = client(transport).fetchRecentRollcalls(username = "u1", preloadedCourses = fakeCourses()).single()
+        assertEquals("r1", item.rollcallId)
+        assertEquals("数字签到", item.type)
+        assertEquals("07-02 08:00", item.timeDisplay)
+        assertEquals(STATUS_SIGNED, item.ownStatus)
     }
 
     // ---- 夹具 ----

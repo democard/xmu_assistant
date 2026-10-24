@@ -4,12 +4,14 @@
 
 | 需要做什么 | 入口 |
 | --- | --- |
+| 查看最新八项台账修复与验证 | [2026-10-24 八项修复记录](repair8-2026-10-24.md) |
+| 查看本轮审查复核、修复及待办 | [2026-10-24 任务记录](review-2026-10-24.md) |
 | 运行、测试和打包 Windows 客户端 | [Windows 开发说明](../xmu-rollcall-cli/README.md) |
 | 构建、测试和安装 Android 客户端 | [Android 开发说明](../android/README.md) |
 | 找到功能对应的源码和测试 | [模块定位](architecture.md) |
 | 排查记录查询的兼容问题 | [接口兼容说明](number-code-compatibility.md) |
-| 查看当前 Android 源码的验证范围 | [1.8.3 验证记录](verification-1.8.3.md) |
-| 查看当前安装包的更新与下载 | [Android 1.8.3 发布说明](releases/v1.8.3.md) / [Windows 1.8.1 发布说明](releases/v1.8.1.md) |
+| 查看双端 1.8.4 的验证与打包记录 | [1.8.4 验证记录](verification-1.8.4.md) |
+| 查看当前安装包的更新与下载 | [双端 1.8.4 发布说明](releases/v1.8.4.md) |
 | 了解提交范围与目录约定 | [贡献指南](../CONTRIBUTING.md) |
 | 查阅发布时的验证记录 | [测试报告](../TEST_REPORT.md) |
 | 查阅签到统计的历史决策 | [开发记录索引](history/README.md) |

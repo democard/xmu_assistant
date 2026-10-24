@@ -244,6 +244,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         host._reset_background_error_state = lambda: None
         host._set_login_status = lambda *a, **k: None
         host.metric_account = types.SimpleNamespace(setText=lambda *_: None)
+        host.password_input = types.SimpleNamespace(clear=lambda: None)
         host._load_rollcall_settings = lambda *_: None
         host._show_toast = lambda *a, **k: None
         host._refresh_after_login = lambda: None
@@ -294,6 +295,7 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         )
         host.log = host.logs.append
         host._emit = host.events.append
+        host._show_toast = lambda *args, **kwargs: None
         host._discard_persisted_login_worker = lambda *args: DashboardWindow._discard_persisted_login_worker(host, *args)
         host._run_thread = lambda target, *args: scheduled.append((target, args))
 

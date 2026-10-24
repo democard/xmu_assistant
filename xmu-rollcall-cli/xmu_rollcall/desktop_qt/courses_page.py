@@ -49,6 +49,9 @@ from .core import (
 )
 
 
+_QUERY_SOURCE_UNSET = object()
+
+
 class CoursesPageMixin:
     REQUIRED_HOST_ATTRS: tuple[str, ...] = (
         "_academic_year_options",
@@ -131,32 +134,43 @@ class CoursesPageMixin:
     def refresh_course_rollcalls(self, silent=False):
         if not self._require_login(need_account=True, silent=silent):
             return
-        if self.course_refresh_in_progress:
+        if self.course_refresh_in_progress or self.course_verify_in_progress:
             return
         self.course_refresh_in_progress = True
+        self._update_verify_button_state()
         self.course_summary.setText("正在刷新签到情况...")
         self.log("开始刷新签到情况。")
         # Qt 控件只允许 GUI 线程访问：在此取快照传入工作线程，
         # 否则 worker 线程直接读 combo 会偶发崩溃/未定义行为
         academic_year = self.academic_year_combo.currentText().strip()
         semester = self.semester_combo.currentText().strip()
-        self._run_thread(self._course_rollcalls_worker, silent, academic_year, semester)
+        self._run_thread(
+            self._course_rollcalls_worker, silent, academic_year, semester,
+            self.session, dict(self.account or {}),
+        )
 
-    def _course_rollcalls_worker(self, silent=False, academic_year="", semester=""):
+    def _course_rollcalls_worker(
+        self, silent=False, academic_year="", semester="",
+        worker_source_session=_QUERY_SOURCE_UNSET, worker_account=None,
+    ):
         # 账号快照：登出/换号后晚到的结果据此被 handler 丢弃（体检报告 P1-2）
-        worker_account_id = str((self.account or {}).get("id") or "")
+        if worker_account is None:
+            worker_account = dict(self.account or {})
+        worker_account_id = str(worker_account.get("id") or "")
+        username = str(worker_account.get("username") or "")
         # 全程用克隆会话：requests.Session 非线程安全，登录完成后本 worker 与
         # 课件课程 worker 并发启动（_refresh_after_login），直接共用主 Session
         # 会竞争 cookiejar/连接池；而 fetch_course_rollcall_records 入口的
         # profile+课程列表请求不走其内部线程级 clone，必须在此隔离。
         # 只读 GET 用完即弃，不回写主会话。
-        worker_source_session = self.session
-        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
-        if worker_session is None:
-            self._emit(("course_rollcalls_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
-            return
+        if worker_source_session is _QUERY_SOURCE_UNSET:
+            worker_source_session = self.session
+        worker_session = None
         try:
-            username = str(self.account.get("username", "")) if self.account else ""
+            worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
+            if worker_session is None:
+                self._emit(("course_rollcalls_error", "登录状态已变更，请重新登录。", silent, worker_account_id, worker_source_session))
+                return
             records, source = fetch_course_rollcall_records(
                 worker_session,
                 username=username,
@@ -166,11 +180,11 @@ class CoursesPageMixin:
             # 事件顺序契约（真机验收教训）：必须先发首屏聚合状态、再跑阶段二
             # 核实——顺序颠倒时 verified 先落地、随后被 course_rollcalls 的
             # 全新记录整体覆盖，摘要也会卡在「正在核实…」。
-            self._emit(("course_rollcalls", records, source, worker_account_id))
+            self._emit(("course_rollcalls", records, source, worker_account_id, worker_source_session))
             verified = verify_recent_rollcall_records(worker_session, username, records)
-            self._emit(("course_records_verified", verified, worker_account_id, "auto"))
+            self._emit(("course_records_verified", verified, worker_account_id, "auto", worker_source_session))
         except Exception as exc:
-            self._emit(("course_rollcalls_error", str(exc), silent, worker_account_id))
+            self._emit(("course_rollcalls_error", str(exc), silent, worker_account_id, worker_source_session))
         finally:
             close_cloned_session(worker_session, worker_source_session)
 
@@ -178,7 +192,7 @@ class CoursesPageMixin:
         """L2 手动核实：对表格选中行按本人签到明细判定状态并原位更新。"""
         if not self._require_login(need_account=True):
             return
-        if self.course_verify_in_progress:
+        if self.course_verify_in_progress or self.course_refresh_in_progress:
             return
         rollcall_id = self._selected_course_rollcall_id()
         if not rollcall_id:
@@ -195,16 +209,23 @@ class CoursesPageMixin:
         username = str(self.account.get("username", ""))
         worker_account_id = str((self.account or {}).get("id") or "")
         # 快照传值：worker 不与 GUI 共享可变记录对象
-        self._run_thread(self._course_verify_one_worker, replace(record), username, worker_account_id)
+        self._run_thread(
+            self._course_verify_one_worker, replace(record), username, worker_account_id, self.session,
+        )
 
-    def _course_verify_one_worker(self, record: CourseRollcallRecord, username: str, worker_account_id: str):
+    def _course_verify_one_worker(
+        self, record: CourseRollcallRecord, username: str, worker_account_id: str,
+        worker_source_session=_QUERY_SOURCE_UNSET,
+    ):
         # 克隆会话：与 GUI 线程/其他 worker 隔离（同 _course_rollcalls_worker 纪律）
-        worker_source_session = self.session
-        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
-        if worker_session is None:
-            self._emit(("course_records_verify_error", "登录状态已变更，请重新登录。", worker_account_id))
-            return
+        if worker_source_session is _QUERY_SOURCE_UNSET:
+            worker_source_session = self.session
+        worker_session = None
         try:
+            worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
+            if worker_session is None:
+                self._emit(("course_records_verify_error", "登录状态已变更，请重新登录。", worker_account_id, worker_source_session))
+                return
             detail = fetch_student_rollcall_detail(
                 worker_session, record.rollcall_id,
                 number_code_fallback=record.rollcall_type == "数字签到",
@@ -215,7 +236,7 @@ class CoursesPageMixin:
             number_code = find_number_code(detail) or "" if detail else ""
         except Exception as exc:
             # 会话过期等失败走独立错误事件：GUI 侧解锁按钮并给重试横幅
-            self._emit(("course_records_verify_error", str(exc), worker_account_id))
+            self._emit(("course_records_verify_error", str(exc), worker_account_id, worker_source_session))
             return
         finally:
             close_cloned_session(worker_session, worker_source_session)
@@ -228,7 +249,7 @@ class CoursesPageMixin:
             attendance_percent=progress.rate_percent,
             number_code=number_code,
         )
-        self._emit(("course_records_verified", [updated], worker_account_id, "manual"))
+        self._emit(("course_records_verified", [updated], worker_account_id, "manual", worker_source_session))
 
     def _course_status_text(self, status: str) -> str:
         return COURSE_STATUS_DISPLAY.get(status, status or "未知")
@@ -491,7 +512,7 @@ class CoursesPageMixin:
         if not hasattr(self, "verify_selected_button"):
             return
         self.verify_selected_button.setEnabled(
-            not self.course_verify_in_progress and bool(self._selected_course_rollcall_id())
+            not self.course_verify_in_progress and not self.course_refresh_in_progress and bool(self._selected_course_rollcall_id())
         )
 
     def _apply_verified_records(self, updates) -> int:

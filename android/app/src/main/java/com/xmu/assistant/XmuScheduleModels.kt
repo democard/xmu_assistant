@@ -80,7 +80,7 @@ fun List<XmuScheduleEntry>.groupForDisplay(): List<XmuScheduleGroup> =
 internal fun parseXmuScheduleEntries(body: String, termCode: String): List<XmuScheduleEntry> {
     val root = xmuJsonRoot(body)
     if (!root.optBoolean("success", false)) {
-        error(root.optString("msg").ifBlank { "课表接口返回失败" })
+        error(root.optRealString("msg").ifBlank { "课表接口返回失败" })
     }
     val rows = root.optJSONArray("pkjgList") ?: JSONArray()
     return (0 until rows.length()).mapNotNull { index ->
@@ -136,7 +136,7 @@ private fun JSONObject.timeValue(key: String): Int {
 
 private fun JSONObject.firstNonBlank(vararg keys: String): String =
     keys.asSequence()
-        .map { optString(it).trim() }
+        .map { optRealString(it).trim() }
         .firstOrNull(String::isNotBlank)
         .orEmpty()
 
@@ -147,7 +147,7 @@ internal fun parseXmuTermCodes(body: String): List<String> {
         ?.optJSONArray("rows")
         ?: JSONArray()
     return (0 until rows.length()).mapNotNull { index ->
-        rows.optJSONObject(index)?.optString("XNXQDM")?.takeIf(String::isNotBlank)
+        rows.optJSONObject(index)?.optRealString("XNXQDM")?.takeIf(String::isNotBlank)
     }
 }
 

@@ -6,6 +6,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TronclassLoginTest {
+    @Test fun `cookie scope respects host path secure deletion and same name variants`() {
+        val jar = SimpleCookieJar()
+        jar.read(mapOf("Set-Cookie" to listOf("s=ids; Path=/; Secure", "p=narrow; Path=/auth")), "https://ids.xmu.edu.cn/auth/login")
+        jar.read(mapOf("Set-Cookie" to listOf("s=lnt; Path=/; Secure", "bad=foreign; Domain=evil.example")), "https://lnt.xmu.edu.cn/api/login")
+        assertEquals("s=lnt", jar.header("https://lnt.xmu.edu.cn/api/profile"))
+        assertEquals("p=narrow; s=ids", jar.header("https://ids.xmu.edu.cn/auth/check"))
+        assertEquals("s=ids", jar.header("https://ids.xmu.edu.cn/authentic"))
+        assertEquals("", jar.header("https://unrelated.example/"))
+        assertEquals("", jar.header("http://lnt.xmu.edu.cn/"))
+        jar.read(mapOf("Set-Cookie" to listOf("s=; Path=/; Max-Age=0")), "https://lnt.xmu.edu.cn/")
+        assertEquals("", jar.header("https://lnt.xmu.edu.cn/"))
+        assertEquals("s=ids", jar.header("https://ids.xmu.edu.cn/"))
+    }
+
     @Test
     fun `login keeps the complete seven request protocol`() {
         val responses = ArrayDeque(
@@ -32,7 +46,10 @@ class TronclassLoginTest {
 
         assertEquals(listOf("GET", "GET", "GET", "POST", "GET", "POST", "POST"), transport.requests.map { it.method })
         assertEquals(7, transport.requests.size)
-        assertEquals("session=ready", result.cookieHeader.substringAfterLast("; "))
+        assertEquals("session=ready", result.cookieHeader)
+        assertEquals("initial=one", transport.requests[1].cookieHeader)
+        assertEquals("", transport.requests[2].cookieHeader)
+        assertEquals("", transport.requests[6].cookieHeader)
         assertTrue(transport.requests[3].body.contains("username=student"))
         assertTrue(transport.requests[3].body.contains("password=fixture-encrypted-password"))
         assertFalse(transport.requests[3].body.contains("not-a-real-password"))

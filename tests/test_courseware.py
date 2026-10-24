@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "xmu-rollcall-cli"))
 
 from xmu_rollcall.courseware import (  # noqa: E402
     CoursewareItem,
+    _courseware_resource_key,
+    _write_resume_metadata,
     _get_modules_cached,
     available_path,
     download_courseware,
@@ -459,10 +461,13 @@ class ModulesCacheTests(unittest.TestCase):
 class ResumeDownloadTests(unittest.TestCase):
     """断点续传：.part 已有字节时带 Range 续传（206 追加）；服务端忽略 Range 返回 200 时全量覆盖。"""
 
+    def _known_partial(self, partial, resource=None):
+        _write_resume_metadata(partial, _courseware_resource_key(resource or self._direct_item()), '"fixture-v1"')
+
     class _BodyResponse:
         def __init__(self, status_code, body, extra_headers=None):
             self.status_code = status_code
-            self.headers = {"Content-Type": "application/pdf"}
+            self.headers = {"Content-Type": "application/pdf", "ETag": '"fixture-v1"'}
             self.headers.update(extra_headers or {})
             self._body = body
 
@@ -506,6 +511,7 @@ class ResumeDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             partial = Path(temp_dir) / "file.pdf.part"
             partial.write_bytes(b"part-one")
+            self._known_partial(partial)
             sess = self._RangeSession()
             target = download_courseware(sess, self._direct_item(), temp_dir)
             self.assertEqual(b"part-one+resumed", target.read_bytes())
@@ -566,6 +572,7 @@ class ResumeDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             partial = Path(temp_dir) / "file.pdf.part"
             partial.write_bytes(b"stale-bytes")
+            self._known_partial(partial)
             sess = self._RangeIgnoringSession()
             target = download_courseware(sess, self._direct_item(), temp_dir)
             # 200 全量覆盖：不得把旧 .part 字节重复拼接
@@ -585,6 +592,7 @@ class ResumeDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             partial = Path(temp_dir) / "file.pdf.part"
             partial.write_bytes(b"part-one")
+            self._known_partial(partial)
             with self.assertRaisesRegex(RuntimeError, "下载范围无效"):
                 download_courseware(WrongRangeSession(), self._direct_item(), temp_dir)
             self.assertEqual(partial.read_bytes(), b"part-one")
@@ -602,6 +610,7 @@ class ResumeDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             partial = Path(temp_dir) / "file.pdf.part"
             partial.write_bytes(b"part-one")
+            self._known_partial(partial)
             with self.assertRaisesRegex(RuntimeError, "未覆盖文件末尾"):
                 download_courseware(NonFinalSession(), self._direct_item(), temp_dir)
             self.assertEqual(partial.read_bytes(), b"part-one")
@@ -619,6 +628,7 @@ class ResumeDownloadTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
                 partial = Path(temp_dir) / "file.pdf.part"
                 partial.write_bytes(b"part-one")
+                self._known_partial(partial)
 
                 class InvalidResponse(ResumeDownloadTests._BodyResponse):
                     def __init__(self):
@@ -650,6 +660,7 @@ class ResumeDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             partial = Path(temp_dir) / "file.pdf.part"
             partial.write_bytes(b"part-one")
+            self._known_partial(partial)
             with self.assertRaisesRegex(RuntimeError, "压缩的断点续传"):
                 download_courseware(CompressedSession(), self._direct_item(), temp_dir)
             self.assertEqual(partial.read_bytes(), b"part-one")
@@ -695,8 +706,9 @@ class ResumeDownloadTests(unittest.TestCase):
                 return RangeResponse()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / ("a" * 240 + ".part")
+            target = Path(temp_dir) / (sanitize_filename(filename) + ".part")
             target.write_bytes(b"part-one")
+            self._known_partial(target, item)
             final = download_courseware(RangeSession(), item, temp_dir)
             self.assertEqual(final.read_bytes(), b"part-one+resumed")
             self.assertFalse(list(Path(temp_dir).glob(".xmu-download-*.chunk")))

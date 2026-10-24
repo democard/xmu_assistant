@@ -164,6 +164,7 @@ class DashboardWindow(
         # 会误删新 worker 刚登记的取消信号 → 新延迟应答无法取消、到点照常提交）。
         self._answer_cancellations: dict[str, threading.Event] = {}
         self._answer_cancellations_lock = threading.Lock()
+        self._answer_tasks: dict[tuple[int, str], dict] = {}
         self._auto_answer_epoch = 0
         self._auto_answer_inflight_rollcalls: dict[str, object] = {}
         self._auto_answer_attempted_rollcalls: set[str] = set()
@@ -662,6 +663,7 @@ class DashboardWindow(
         # UI 显示后启动账号、磁盘当前账号却是先写盘账号——重启自动恢复即漂移。
         if self._login_in_progress:
             self.log("登录已在进行中，忽略本次触发。")
+            self._show_toast("正在登录，请稍候")
             return
         self._login_in_progress = True
         try:
@@ -750,7 +752,7 @@ class DashboardWindow(
                 except Exception:
                     pass
 
-    def logout(self):
+    def logout(self, *, expired=False):
         if not self.account and not self.session:
             if self._login_in_progress:
                 # 初次登录在途时尚无 account/session：此时点退出应取消
@@ -767,7 +769,7 @@ class DashboardWindow(
             self._set_login_status("未登录", warn=True)
             self.metric_account.setText("未登录")
             return
-        if QMessageBox.question(self, "退出登录", "确定要退出登录并清除当前账号的本地 Cookie 吗？") != QMessageBox.StandardButton.Yes:
+        if not expired and QMessageBox.question(self, "退出登录", "确定要退出登录并清除当前账号的本地 Cookie 吗？") != QMessageBox.StandardButton.Yes:
             return
 
         # 取消所有在途的自动延迟应答：登出后不应再有任何提交
@@ -825,11 +827,11 @@ class DashboardWindow(
         self.courseware_download_status = {}
         self.courseware_course_by_display = {}
         self.courseware_combo.clear()
+        self.refresh_radar_course_options()
         # 清空上一账号的签到数据：登出/换号后「签到情况」与首页事件表
         # 不得残留旧账号的签到记录（防串号展示）
         self.events_by_id = {}
-        self._auto_answer_inflight_rollcalls.clear()
-        self._auto_answer_attempted_rollcalls.clear()
+        self._reset_answer_tasks(clear_attempted=True)
         self.event_order = []
         self.course_records = []
         self._refresh_event_tables()
@@ -843,9 +845,13 @@ class DashboardWindow(
             _ui_snapshot_path().unlink(missing_ok=True)
         except Exception:
             pass
-        self._show_toast("已退出登录")
+        if expired:
+            self._set_login_status("登录已过期，请重新登录", warn=True)
+            self._show_toast("登录已过期，请重新登录", ok=False)
+        else:
+            self._show_toast("已退出登录")
 
-        if account:
+        if account and not expired:
             try:
                 cookies_path = get_cookies_path(account.get("id", 1))
                 if os.path.exists(cookies_path):
@@ -877,6 +883,18 @@ class DashboardWindow(
             # 先使任务令牌失效，晚到的取消回执也不得把界面翻回「待处理」。
             self._auto_answer_attempted_rollcalls.add(rollcall.rollcall_id)
             self._auto_answer_inflight_rollcalls.pop(rollcall.rollcall_id, None)
+            task_key = DashboardWindow._answer_task_key(self, self.session, rollcall)
+            with self._answer_cancellations_lock:
+                tasks = getattr(self, "_answer_tasks", {})
+                task = tasks.get(task_key)
+                if task is not None:
+                    if task.get("phase") == "submitting":
+                        # The request is already irreversible; retain the gate
+                        # until its result arrives, but keep the user's skip UI.
+                        task["suppressed"] = True
+                    else:
+                        tasks.pop(task_key, None)
+                        task["cancel"].set()
             self._cancel_pending_answer(event_id)
             self._update_event_result(event_id, "已跳过", "用户手动跳过")
 
@@ -917,32 +935,91 @@ class DashboardWindow(
             else:
                 QMessageBox.information(self, "需要手动处理", "二维码签到暂不支持自动处理，请手动扫码。")
             return
-        # 取消该事件在途的延迟应答（手动重答 / 监控对同一事件再次触发的自动路径）：
-        # 不取消的话旧延迟 worker 到点照常提交，新旧双双提交造成重复应答请求。
-        self._cancel_pending_answer(event_id)
-        self._update_event_result(event_id, "处理中", "正在提交")
-        delay = self._auto_answer_delay(event, auto)
-        auto_context = None
-        if auto:
-            settings = get_rollcall_settings(self.account or {})
-            auto_context = {
-                "epoch": self._auto_answer_epoch,
-                "monitor_token": self.monitor_stop_event,
-                "mode": settings["wait_before_answer_mode"],
-                "count": settings["wait_before_answer_count"],
-                "percent": settings["wait_before_answer_percent"],
-                "username": str((self.account or {}).get("username") or ""),
-                "account_id": str((self.account or {}).get("id") or ""),
-                "recheck_activity": delay > 0,
-                "progress": (auto_snapshot or {}).get("progress"),
-                "number_code": (auto_snapshot or {}).get("number_code", event.number_code),
-                "current_event": (auto_snapshot or {}).get("current_event", event),
-                "task_token": (auto_snapshot or {}).get("task_token"),
+        task_key = DashboardWindow._answer_task_key(self, source_session, event)
+        if not hasattr(self, "_answer_cancellations_lock"):
+            self._answer_cancellations_lock = threading.Lock()
+        if not hasattr(self, "_answer_cancellations"):
+            self._answer_cancellations = {}
+        task_token = (auto_snapshot or {}).get("task_token") if auto else None
+        task_cancel = threading.Event()
+        tasks = getattr(self, "_answer_tasks", None)
+        if tasks is None:
+            self._answer_tasks = tasks = {}
+        with self._answer_cancellations_lock:
+            existing = tasks.get(task_key)
+            if existing is not None:
+                if (
+                    existing.get("phase") == "submitting"
+                    or existing.get("auto") is False
+                    or auto
+                ):
+                    if not auto:
+                        self._show_toast("该签到已有应答任务，请稍候")
+                    elif self._auto_answer_inflight_rollcalls.get(event.rollcall_id) is task_token:
+                        # Progress dispatch reserves the auto token before this
+                        # method; a manual task may already own the shared gate.
+                        self._auto_answer_inflight_rollcalls.pop(event.rollcall_id, None)
+                    return
+                # A manual answer may take over an automatic task only before
+                # its irreversible submit phase. Invalidate the old token first
+                # so its cancellation/result cannot overwrite the manual task.
+                existing["cancel"].set()
+                if self._answer_cancellations.get(existing.get("event_id")) is existing.get("cancel"):
+                    self._answer_cancellations.pop(existing.get("event_id"), None)
+                old_token = existing.get("token")
+                if self._auto_answer_inflight_rollcalls.get(event.rollcall_id) is old_token:
+                    self._auto_answer_inflight_rollcalls.pop(event.rollcall_id, None)
+            if task_token is None:
+                task_token = object()
+            tasks[task_key] = {
+                "token": task_token,
+                "phase": "starting",
+                "cancel": task_cancel,
+                "event_id": event_id,
+                "auto": bool(auto),
             }
-        self._run_thread(
-            self._answer_worker, event_id, event, delay, auto_context,
-            source_session, source_account_id,
-        )
+            if auto:
+                # This legacy cancellation table is intentionally auto-only:
+                # pause/strategy changes must never cancel a manual answer.
+                self._answer_cancellations[event_id] = task_cancel
+            if auto:
+                self._auto_answer_inflight_rollcalls[event.rollcall_id] = task_token
+        self._update_event_result(event_id, "处理中", "正在提交")
+        auto_context = None
+        try:
+            delay = self._auto_answer_delay(event, auto)
+            if auto:
+                settings = get_rollcall_settings(self.account or {})
+                auto_context = {
+                    "epoch": self._auto_answer_epoch,
+                    "monitor_token": self.monitor_stop_event,
+                    "mode": settings["wait_before_answer_mode"],
+                    "count": settings["wait_before_answer_count"],
+                    "percent": settings["wait_before_answer_percent"],
+                    "username": str((self.account or {}).get("username") or ""),
+                    "account_id": str((self.account or {}).get("id") or ""),
+                    "recheck_activity": delay > 0,
+                    "progress": (auto_snapshot or {}).get("progress"),
+                    "number_code": (auto_snapshot or {}).get("number_code", event.number_code),
+                    "current_event": (auto_snapshot or {}).get("current_event", event),
+                    "task_token": task_token,
+                }
+        except Exception as exc:
+            self._emit((
+                "answer_result", event_id, False, f"应答任务启动失败：{exc}",
+                False, False, task_token, source_session,
+            ))
+            return
+        try:
+            self._run_thread(
+                self._answer_worker, event_id, event, delay, auto_context,
+                source_session, source_account_id, task_token, task_cancel,
+            )
+        except Exception as exc:
+            self._emit((
+                "answer_result", event_id, False, f"应答任务启动失败：{exc}",
+                False, False, task_token, source_session,
+            ))
 
     def _auto_answer_delay(self, event: RollcallEvent, auto: bool) -> float:
         """自动应答的拟人化延迟（秒）。0 = 立即提交。
@@ -977,6 +1054,28 @@ class DashboardWindow(
         for event_id in pending_ids:
             self._cancel_pending_answer(event_id)
 
+    def _answer_task_key(self, source_session, event):
+        return id(source_session), str(getattr(event, "rollcall_id", "") or "")
+
+    def _reset_answer_tasks(self, *, clear_attempted=False):
+        """Invalidate every outstanding write for a replaced session."""
+        lock = getattr(self, "_answer_cancellations_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._answer_cancellations_lock = lock
+        if not hasattr(self, "_answer_cancellations"):
+            self._answer_cancellations = {}
+        if not hasattr(self, "_answer_tasks"):
+            self._answer_tasks = {}
+        with lock:
+            for cancel in getattr(self, "_answer_cancellations", {}).values():
+                cancel.set()
+            self._answer_cancellations.clear()
+            getattr(self, "_answer_tasks", {}).clear()
+        getattr(self, "_auto_answer_inflight_rollcalls", {}).clear()
+        if clear_attempted:
+            getattr(self, "_auto_answer_attempted_rollcalls", set()).clear()
+
     def _answer_worker(
         self,
         event_id: str,
@@ -985,6 +1084,8 @@ class DashboardWindow(
         auto_context: dict | None = None,
         source_session=None,
         worker_account_id: str | None = None,
+        task_token=None,
+        task_cancel=None,
     ):
         # A2 二期（H3）：应答是唯一写 cookie 的并发路径（PUT Set-Cookie）。克隆会话隔离
         # 写入口，避免与其余只读 worker / GUI 读共享 cookiejar 发生跨线程竞争写；
@@ -998,11 +1099,20 @@ class DashboardWindow(
             worker_account_id = str((self.account or {}).get("id") or "")
         if source_session is None:
             source_session = self.session
-        session = clone_session(source_session) if source_session is not None else None
-        if session is None:
+        if not hasattr(self, "_answer_cancellations_lock"):
+            self._answer_cancellations_lock = threading.Lock()
+        if not hasattr(self, "_answer_cancellations"):
+            self._answer_cancellations = {}
+        task_token = task_token if task_token is not None else (auto_context or {}).get("task_token")
+        task_cancel = task_cancel or threading.Event()
+        try:
+            session = clone_session(source_session) if source_session is not None else None
+            if session is None:
+                raise RuntimeError("已退出登录")
+        except Exception as exc:
             self._emit((
-                "answer_result", event_id, False, "已退出登录",
-                auto_context is None, False, (auto_context or {}).get("task_token"),
+                "answer_result", event_id, False, f"应答任务启动失败：{exc}",
+                False, False, task_token,
                 source_session,
             ))
             return
@@ -1011,35 +1121,31 @@ class DashboardWindow(
         try:
             if delay > 0:
                 # 可取消等待：用户手动应答/跳过/停止监控/登出可立即打断
-                cancel = threading.Event()
                 with self._answer_cancellations_lock:
-                    self._answer_cancellations[event_id] = cancel
-                try:
-                    if cancel.wait(delay):
-                        self._emit((
-                            "answer_result", event_id, False, "已取消", False, False,
-                            (auto_context or {}).get("task_token"),
-                            source_session,
-                        ))
-                        return
-                finally:
-                    # 仅当槽内仍是「自己的」取消信号时才移除：同一事件的新 worker 随后
-                    # 可能已覆盖槽位，无条件按 event_id pop 会误删新信号 → 该签到此后
-                    # 无法再被取消/跳过，到点照常提交 → 重复签到（旧 worker 慢退场竞态）。
-                    # 比较与摘除在同一临界区内（TOCTOU 防护）。
-                    with self._answer_cancellations_lock:
-                        if self._answer_cancellations.get(event_id) is cancel:
-                            self._answer_cancellations.pop(event_id, None)
+                    if task_token is None:
+                        self._answer_cancellations[event_id] = task_cancel
+                    record = getattr(self, "_answer_tasks", {}).get(
+                        DashboardWindow._answer_task_key(self, source_session, event)
+                    )
+                    if record is not None and record.get("token") is task_token:
+                        record["phase"] = "waiting"
+                if task_cancel.wait(delay):
+                    self._emit((
+                        "answer_result", event_id, False, "已取消", False, False,
+                        task_token, source_session,
+                    ))
+                    return
             # 二次校验（提交前）：delay 唤醒后/立即提交前，登出或换号在途则放弃。
             # 网络提交不可中断，只能在此拦截（worker_account_id 为入口时的账号快照，
             # 换号后 id 不同、登出后 session 为 None 均命中）。
             if (
                 self.session is not source_session
                 or str((self.account or {}).get("id") or "") != worker_account_id
+                or task_cancel.is_set()
             ):
                 self._emit((
                     "answer_result", event_id, False, "已取消（登录状态已变更）",
-                    False, False, (auto_context or {}).get("task_token"),
+                    False, False, task_token,
                     source_session,
                 ))
                 return
@@ -1051,11 +1157,22 @@ class DashboardWindow(
                 if not allowed:
                     self._emit((
                         "answer_result", event_id, False, reason, False, terminal,
-                        auto_context.get("task_token"),
+                        task_token,
                         source_session,
                     ))
                     return
                 number_code = checked_code or number_code
+            if task_token is not None:
+                task_key = DashboardWindow._answer_task_key(self, source_session, event)
+                with self._answer_cancellations_lock:
+                    record = getattr(self, "_answer_tasks", {}).get(task_key)
+                    if record is None or record.get("token") is not task_token or task_cancel.is_set():
+                        self._emit((
+                            "answer_result", event_id, False, "已取消", False, False,
+                            task_token, source_session,
+                        ))
+                        return
+                    record["phase"] = "submitting"
             answer_engine = RollcallEngine(
                 session, radar_coordinates=getattr(self, "radar_coordinates", None)
             )
@@ -1075,6 +1192,9 @@ class DashboardWindow(
                 # （线程安全：仅 emit，不在 worker 线程内碰 Qt 控件）
                 self._emit(("error", "应答失败：登录已过期，请重新登录", None, source_session))
         finally:
+            with self._answer_cancellations_lock:
+                if self._answer_cancellations.get(event_id) is task_cancel:
+                    self._answer_cancellations.pop(event_id, None)
             # 把 worker 克隆内新增/旋转的 cookie 合并回主会话（GUI 线程收到后单点写）
             try:
                 self._emit(("merge_session_cookies", session, worker_account_id, None, source_session))
@@ -1084,7 +1204,7 @@ class DashboardWindow(
                 close_cloned_session(session, source_session)
         self._emit((
             "answer_result", event_id, ok, detail, True, True,
-            (auto_context or {}).get("task_token"),
+            task_token,
             source_session,
         ))
 
@@ -1237,6 +1357,7 @@ class DashboardWindow(
         self._login_persisting = False
         self._login_in_progress = False
         self._login_epoch += 1
+        self.password_input.clear()
         # A successful login always creates a new session generation, including
         # same-account re-login.  Invalidate every old download event before the
         # new session becomes visible.
@@ -1251,6 +1372,11 @@ class DashboardWindow(
         if self.monitor_worker is not None:
             self.stop_monitor()
         previous_session = self.session
+        # A new Session is a new write-task generation even for the same
+        # account. Preserve explicit skip/attempt decisions, but never carry
+        # transient in-flight tokens or cancellation gates across generations.
+        DashboardWindow._reset_answer_tasks(self, clear_attempted=False)
+        previous_account_id = str((self.account or {}).get("id") or self._snapshot_account_id or "")
         self.session = tune_session(session)
         if previous_session is not None and previous_session is not self.session:
             try:
@@ -1258,8 +1384,16 @@ class DashboardWindow(
             except Exception:
                 pass
         self.account = account
+        # These are session-owned task gates, not account-owned preferences.
+        # Reset them on every successful Session replacement so stale workers
+        # cannot strand same-account refreshes behind a closed gate.
+        self.course_refresh_in_progress = False
+        self.course_verify_in_progress = False
+        self.courseware_courses_refresh_in_progress = False
+        self.courseware_refresh_in_progress = False
+        self.courseware_download_in_progress = False
         # 跨账号防护：本地快照属于其他账号时立即丢弃，避免串号展示
-        if self._snapshot_account_id and str(account.get("id")) != self._snapshot_account_id:
+        if previous_account_id and str(account.get("id")) != previous_account_id:
             # 清理面与登出路径对齐：换号后首页事件表/课件详情表/下载状态
             # 不得残留旧账号数据（登出清理面同款，防串号展示）
             self.course_records = []
@@ -1272,19 +1406,14 @@ class DashboardWindow(
             self.courseware_combo.blockSignals(True)
             self.courseware_combo.clear()
             self.courseware_combo.blockSignals(False)
+            self.refresh_radar_course_options()
             self.events_by_id = {}
-            self._auto_answer_inflight_rollcalls.clear()
             self._auto_answer_attempted_rollcalls.clear()
             self.event_order = []
             self._snapshot_account_id = ""
             # 互斥旗标随数据面一并复位（与 logout 清理面同款）：旧账号刷新/下载
             # 在途时直接登录新账号，残留 True 会让新账号的自动刷新被旗标检查
             # 静默跳过（页面空白）、新下载被拦截直至旧批次事件到达
-            self.course_refresh_in_progress = False
-            self.course_verify_in_progress = False
-            self.courseware_courses_refresh_in_progress = False
-            self.courseware_refresh_in_progress = False
-            self.courseware_download_in_progress = False
             # 指标行随换号一并复位（与 logout 复位面对齐）：最近结果/当前签到/
             # 最近检查/运行时长不得残留旧账号数值（旧监控已在上方停止）
             self.metric_last_result.setText("-")
@@ -1435,7 +1564,14 @@ class DashboardWindow(
             # （按 is_running 计算，暂停即非运行）长期不一致——映射回暂停口径。
             # 异常终态（stop_event 未设，如会话过期停机）保持「已停止」如实展示。
             text = "已暂停"
+        if event[1] == "已停止":
+            # The terminal event may arrive before Thread.is_alive() flips.
+            if self.monitor_stop_event:
+                self.monitor_stop_event.set()
+            self.started_at = None
+            self._cancel_all_pending_answers()
         self.metric_monitor.setText(text)
+        self._refresh_guard_status()
         self.log(f"监控状态：{text}")
 
     def _ev_poll(self, event):
@@ -1589,17 +1725,41 @@ class DashboardWindow(
         terminal = event[5] if len(event) > 5 else False
         task_token = event[6] if len(event) > 6 else None
         rollcall = self.events_by_id.get(event_id)
-        if rollcall and task_token is not None:
-            if self._auto_answer_inflight_rollcalls.get(rollcall.rollcall_id) is not task_token:
-                self.log("忽略已失效自动任务的迟到结果。")
+        task_auto = task_token is not None
+        if task_token is not None:
+            tasks = getattr(self, "_answer_tasks", {})
+            task_key = next(
+                (key for key, value in tasks.items() if value.get("token") is task_token),
+                None,
+            )
+            record = tasks.get(task_key) if task_key is not None else None
+            if record is not None:
+                task_auto = bool(record.get("auto"))
+                suppressed = bool(record.get("suppressed"))
+                tasks.pop(task_key, None)
+                cancel = record.get("cancel")
+                cancellations = getattr(self, "_answer_cancellations", {})
+                if cancellations.get(record.get("event_id")) is cancel:
+                    cancellations.pop(record.get("event_id"), None)
+                if suppressed:
+                    return
+            elif not rollcall or self._auto_answer_inflight_rollcalls.get(rollcall.rollcall_id) is not task_token:
+                self.log("忽略已失效应答任务的迟到结果。")
                 return
-            self._auto_answer_inflight_rollcalls.pop(rollcall.rollcall_id, None)
-            if attempted or terminal:
+            if rollcall and self._auto_answer_inflight_rollcalls.get(rollcall.rollcall_id) is task_token:
+                self._auto_answer_inflight_rollcalls.pop(rollcall.rollcall_id, None)
+            if rollcall and (
+                (task_auto and (attempted or terminal))
+                or (not task_auto and ok)
+            ):
                 self._auto_answer_attempted_rollcalls.add(rollcall.rollcall_id)
         if not attempted:
-            self._update_event_result(event_id, "已跳过" if terminal else "待处理", detail)
+            if task_token is not None and not task_auto:
+                self._update_event_result(event_id, "失败", detail)
+            else:
+                self._update_event_result(event_id, "已跳过" if terminal else "待处理", detail)
             self.metric_last_result.setText(detail)
-            self.log(f"自动签到复核结果：{detail}")
+            self.log(f"{'自动签到复核' if task_auto else '应答任务'}结果：{detail}")
             return
         self._update_event_result(event_id, "已签到" if ok else "失败", detail)
         self.metric_last_result.setText(detail)
@@ -1627,11 +1787,13 @@ class DashboardWindow(
         self._merge_worker_session(worker_session, worker_account_id)
 
     def _ev_course_rollcalls(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         _, records, source = event[:3]
         # 迟到结果既不能回填数据，也不能解锁当前账号的新刷新任务。
         worker_account_id = event[3] if len(event) > 3 else ""
         if late_worker_result_accepted(self.account, worker_account_id):
-            self.course_refresh_in_progress = False
             self.course_records = records
             self._refresh_course_table()
             self._update_nav_badges()
@@ -1645,9 +1807,13 @@ class DashboardWindow(
             self.log("忽略晚到的签到情况刷新结果（账号已切换或已登出）。")
 
     def _ev_course_rollcalls_error(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         worker_account_id = event[3] if len(event) > 3 else ""
         if late_worker_result_accepted(self.account, worker_account_id):
             self.course_refresh_in_progress = False
+            self._update_verify_button_state()
             self.course_summary.setText("刷新失败")
             self.log(f"签到情况刷新失败：{event[1]}")
             if not event[2]:
@@ -1660,12 +1826,18 @@ class DashboardWindow(
             self.log("忽略晚到的签到情况刷新失败（账号已切换或已登出）。")
 
     def _ev_course_records_verified(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         records = event[1] if len(event) > 1 else []
         worker_account_id = event[2] if len(event) > 2 else ""
         origin = event[3] if len(event) > 3 else "auto"
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的签到核实结果（账号已切换或已登出）。")
             return
+        if origin == "auto":
+            self.course_refresh_in_progress = False
+            self._update_verify_button_state()
         if origin == "manual":
             self.course_verify_in_progress = False
             self._update_verify_button_state()
@@ -1686,6 +1858,9 @@ class DashboardWindow(
             self.log(f"最近签到明细核实完成：更新 {applied} 条。")
 
     def _ev_course_records_verify_error(self, event):
+        if len(event) > 3 and self.session is not event[3]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         worker_account_id = event[2] if len(event) > 2 else ""
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的签到核实失败（账号已切换或已登出）。")
@@ -1701,6 +1876,9 @@ class DashboardWindow(
         )
 
     def _ev_courseware_courses(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         # P1-2：与 course_rollcalls 同款账号守卫
         worker_account_id = event[3] if len(event) > 3 else ""
         if late_worker_result_accepted(self.account, worker_account_id):
@@ -1714,6 +1892,9 @@ class DashboardWindow(
             self.log("忽略晚到的课件课程列表结果（账号已切换或已登出）。")
 
     def _ev_courseware_courses_error(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         worker_account_id = event[3] if len(event) > 3 else ""
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的课件课程列表读取失败（账号已切换或已登出）。")
@@ -1731,6 +1912,9 @@ class DashboardWindow(
             )
 
     def _ev_courseware(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         # P1-2：与 courseware_courses 同款账号守卫——课件详情是 8 线程池
         # 逐活动抓取，登出/换号后晚到的结果不得回填界面
         worker_account_id = event[3] if len(event) > 3 else ""
@@ -1742,6 +1926,9 @@ class DashboardWindow(
         self._update_nav_badges()
 
     def _ev_courseware_error(self, event):
+        if len(event) > 4 and self.session is not event[4]:
+            self.log("忽略旧会话迟到的查询结果或错误。")
+            return
         worker_account_id = event[3] if len(event) > 3 else ""
         if not late_worker_result_accepted(self.account, worker_account_id):
             self.log("忽略晚到的课件读取失败（账号已切换或已登出）。")
@@ -1778,7 +1965,13 @@ class DashboardWindow(
         self.courseware_download_status[key] = "下载中"
         self._refresh_courseware_table()
         self._update_nav_badges()
-        self.courseware_summary.setText(f"正在下载 {index}/{total}：{filename}")
+        byte_progress = ""
+        if len(event) >= 9:
+            received, expected = event[7:9]
+            byte_progress = f" · {received / 1048576:.1f} MB"
+            if expected:
+                byte_progress += f" / {expected / 1048576:.1f} MB（{received * 100 / expected:.0f}%）"
+        self.courseware_summary.setText(f"正在下载 {index}/{total}：{filename}{byte_progress}")
 
     def _ev_courseware_download_item_done(self, event):
         if self.session is None:
@@ -1854,7 +2047,12 @@ class DashboardWindow(
         # 若仍走「连续 3 次」阈值将永远凑不满，托盘常驻用户对监控停摆零感知。
         # 「登录已过期」文案族由 SessionExpiredError 全部来源共用（engine/
         # request_probe/number_code 分流），子串判定与 answer_failure_detail 同法。
-        self._record_background_error(event[1], immediate=("登录已过期" in event[1]))
+        expired = "登录已过期" in event[1]
+        self._record_background_error(event[1], immediate=expired)
+        if expired:
+            # Invalidate the generation and UI without deleting saved places or
+            # credentials. Old worker results now fail the usual session gates.
+            self.logout(expired=True)
 
     def _ev_notification_result(self, event):
         ok = event[1]

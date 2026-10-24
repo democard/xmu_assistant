@@ -19,7 +19,13 @@ internal object DownloadBodyWriter {
     fun hasEncodedBody(response: Response): Boolean = response.header("Content-Encoding")
         .orEmpty().split(',').any { it.isNotBlank() && !it.trim().equals("identity", ignoreCase = true) }
 
-    fun write(response: Response, target: File, resumeFrom: Long, preserveOriginal: Boolean) {
+    fun write(
+        response: Response,
+        target: File,
+        resumeFrom: Long,
+        preserveOriginal: Boolean,
+        beforeCommit: (() -> Unit)? = null,
+    ) {
         // OkHttp removes this header when it transparently decodes gzip. Any
         // remaining encoding describes bytes that must not become a PDF/ZIP.
         check(!hasEncodedBody(response)) { "下载响应仍为压缩内容，无法安全保存，请稍后重试" }
@@ -31,6 +37,7 @@ internal object DownloadBodyWriter {
             withTemporaryFile(target) { replacement ->
                 copyBody(response, replacement)
                 validateLength(response, replacement.length())
+                beforeCommit?.invoke()
                 Files.move(replacement.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
         } else {

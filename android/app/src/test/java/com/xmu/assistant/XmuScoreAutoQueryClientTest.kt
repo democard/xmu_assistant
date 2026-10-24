@@ -446,6 +446,28 @@ class XmuScoreAutoQueryClientTest {
         assertEquals(1, transport.rowAttempts.getValue("T3").get())
     }
 
+    @Test
+    fun `non percent grade record ignores explicit json null in display fields`() {
+        val transport = FakeQueryTransport(
+            ArrayDeque(
+                listOf(
+                    response(
+                        body = """{"datas":{"cxycjdxnxq":{"rows":[{"XNXQDM":"2025-1","XNXQDM_DISPLAY":null}]}}}""",
+                    ),
+                    response(
+                        body = """{"datas":{"xscjcx":{"rows":[{"KCH":"PE101","KCM":"体育","XF":"1.0","ZCJ":null,"ZCJ_DISPLAY":null,"DJCJ_DISPLAY":"优秀","XFJD":null,"DJCJLXDM_DISPLAY":"五级制","KXH":null}]}}}""",
+                    ),
+                ),
+            ),
+        )
+        val client = scoreClient(transport, cookieHeader = "saved=session")
+
+        val record = client.fetchScores().records.single()
+        assertEquals("2025-1", record.term)
+        assertEquals("优秀", record.resultText)
+        assertEquals("", record.courseSeq)
+    }
+
     private fun scoreClient(
         transport: QueryHttpTransport,
         cookieHeader: String,

@@ -1,0 +1,28 @@
+# Windows / Python 3.14.6 versions from the 2026-10-24 local test environment.
+# Local Qt tests use Essentials; full PySide6/Addons match that Qt version but are not exercised.
+# Use with -c; application lower bounds remain in pyproject.toml.
+PySide6==6.11.2
+PySide6-Essentials==6.11.2
+PySide6-Addons==6.11.2
+shiboken6==6.11.2
+requests==2.34.2
+xmulogin==1.0.0
+pycryptodome==3.23.0
+certifi==2026.6.17
+charset-normalizer==3.5.2
+idna==3.18
+urllib3==2.7.0
+pywin32==312
+pytest==9.1.1
+ruff==0.16.1
+pyinstaller==6.22.2
+altgraph==0.17.5
+packaging==26.2
+pefile==2024.8.26
+pyinstaller-hooks-contrib==2026.6
+pywin32-ctypes==0.2.3
+iniconfig==2.3.0
+pluggy==1.6.0
+pygments==2.20.0
+colorama==0.4.6
+setuptools==84.0.0

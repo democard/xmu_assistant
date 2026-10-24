@@ -8,11 +8,11 @@
 
 课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
 
-**当前版本：Windows 1.8.1 · Android 1.8.3（versionCode 44）**
+**当前版本：Windows 1.8.4 · Android 1.8.4（versionCode 45）**
 
-Android 1.8.3 修复有进行中签到时签到页闪退的问题，并按老版方式在首页原有监控区域恢复签到摘要，不新增独立模块；Windows 继续使用 1.8.1。
+1.8.4 集中改善登录与任务恢复、课件下载、账号数据隔离和邮件安全，双端安装包同步更新。
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.3)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.4)
 
 </div>
 
@@ -26,11 +26,11 @@ Android 1.8.3 修复有进行中签到时签到页闪退的问题，并按老版
 
 | 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Windows | 1.8.1 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.8.3（versionCode 44） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.8.3 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.3.zip) |
+| Windows | 1.8.4 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant.exe)，下载后运行，无需另装 Python |
+| Android | 1.8.4（versionCode 45） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.8.4 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.4.zip) |
 
-文件校验值分别见 [Android 1.8.3 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.3/SHA256SUMS.txt) 与 [Windows 1.8.1 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.1/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
+双端文件校验值见 [1.8.4 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
 
 ```powershell
 Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
@@ -68,17 +68,29 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 课件可按课程浏览并批量下载。Windows 按平台章节组织列表、按课程目录保存，重名文件不直接覆盖；Android 支持课程搜索和学年学期筛选，无法直接下载时保留平台入口。下载是否成功仍取决于当前账号权限、链接有效性和服务器响应。
 
+续传前会核对资源归属和强 ETag；缺少可靠验证器时从头下载，避免拼接不同资源或版本。旧版没有归属信息的断点保留在原位置，新下载另起文件名。
+
 ### Android 课表与教务功能
 
 课表提供每周七天、每天十一节的网格和日程视图，支持查看今天、跳转周次、复制课程详情及导出 `.ics` 日历。今日课程小组件保存未来十四天的课程摘要，跨日可读取本地排课，超过缓存范围需刷新；显示数量和刷新时机也受桌面启动器影响。
 
-成绩页支持统计、模拟成绩计算和长图分享。专业排名需要用户手动发起查询；已有完整结果时可复用，成绩变化只标记待更新。证明 PDF 可导出或清理应用内副本，已导出的副本需自行管理。**专业排名接口尚未用真实校园账号完成联调。**
+成绩页支持统计、模拟成绩计算和长图分享。专业排名需要用户手动发起查询；已有完整结果时可复用，成绩变化只标记待更新。证明 PDF 可导出或清理应用内副本，已导出的副本需自行管理。
 
 考试页按学期展示安排，可设置考前提醒。课表、成绩和考试的缓存用于离线查看，最新安排仍应以学校系统为准。更多入口与构建说明见 [Android 文档](android/README.md)。
 
 ## 本版更新
 
-### 1.8.3 · Android 当前公开版本
+### 1.8.4 · 双端稳定性与安全更新
+
+- 修复同账号重新登录后查询或自动任务卡住，阻止手动连点及自动 / 手动重叠提交；暂停监控不影响手动应答。
+- 下载绑定资源与版本，支持安全断点恢复、进度和取消；修复长文件名丢失后缀、配置目录探针竞争。
+- 修复 Android 登录 Cookie 作用域、账号切换与历史缓存写回竞态，完善雷达地点保存与坐标提交边界。
+- 邮件强制安全连接和主机名校验，提交回执不明时不跨端口重复发送。
+- 固定静态检查规则与维护依赖，加入双端自动化验证流程。
+
+[更新与下载](documentation/releases/v1.8.4.md) · [修复记录](documentation/repair8-2026-10-24.md)
+
+### 1.8.3 · Android 历史版本
 
 - 修复同一签到同时出现在进行中与历史记录中导致签到页闪退的问题。
 - 首页按老版“监控与提醒”内摘要行的方式恢复“当前签到”和“查看签到详情”；不新增独立模块，也不重复展示签到详情卡片。数据在前台自动刷新，手动刷新仍在签到详情页。
@@ -86,7 +98,7 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 此次首页与签到页 16 项界面回归通过；其余模块沿用前一候选的 787 项全量测试证据。详见 [发布说明](documentation/releases/v1.8.3.md)和[验证记录](documentation/verification-1.8.3.md)。
 
-### 1.8.1 · Windows 当前版本 / Android 历史版本
+### 1.8.1 · 历史版本
 
 - **Windows 雷达签到**：新增「雷达坐标」页，按课程保存地点并指定首选；自动与手动雷达签到只提交该课程的首选坐标一次，未配置时不提交并提示原因，不再使用固定探测坐标盲提交。预置翔安校区地点随包分发。
 - **等待策略（双端）**：Android 策略页补上「达到人数 / 达到比例」输入框并真正写入设置；Windows 将人数与比例改为常显并按模式启用，切换模式后不再出现“改不了”的情况。
@@ -127,6 +139,7 @@ v1.7.3 主要修复下载、账号切换和导出中的边界问题：
 | Android 账号、Cookie 等凭据 | 使用 EncryptedSharedPreferences 保存；不等于所有业务缓存和导出文件均已加密 |
 | 课表、成绩、考试与学习记录缓存 | 用于本地展示；换号和登出时按业务清理或隔离，外部导出副本不随登出自动删除 |
 | Android 小组件摘要 | 包含课程名、时间和地点，不包含密码或 Cookie；课程安排本身仍可能涉及个人隐私 |
+| 课程雷达地点、Android 本地课表修正 | 持久设置，按课程匹配，沿用跨账号保留行为，不随登出删除；共用设备时请在管理页检查和删除不再需要的设置 |
 
 Windows 默认配置目录为当前用户主目录下的 `.xmu_rollcall`。需要独立测试配置时，可在启动前设置 `XMU_ROLLCALL_CONFIG_DIR`。目录结构、加密限制及开发方式见 [Windows 文档](xmu-rollcall-cli/README.md)。
 
@@ -149,16 +162,9 @@ $env:PYTHONPATH = (Resolve-Path .\xmu-rollcall-cli).Path
 
 Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 35，再使用仓库的 Gradle 8.7 Wrapper 构建。测试与产物路径见 [Android 构建说明](android/README.md#构建与测试)；Windows 的测试、打包及本地配置见 [Windows 开发说明](xmu-rollcall-cli/README.md)。
 
-### 1.7.4 本地验证
+### 1.8.4 验证记录
 
-| 检查 | 本地结果 |
-| --- | --- |
-| Windows 自动化回归 | 703 项测试、225 个子测试通过；静态检查与编译检查通过 |
-| Android Debug 回归 | 758 项测试通过；Lint 0 错误、36 警告（含 30 条依赖版本提示） |
-| Windows 安装包 | EXE 构建、业务模块比对及隔离启动检查通过；完整实际流程仍待验证 |
-| Android 安装包 | release 构建、签名与版本检查通过；此前同版测试包部分实际流程已有用户反馈，新发布包未单独完成真机全功能验收 |
-
-自动化测试使用虚构数据和模拟传输，不代表所有设备、网络或实际业务场景均已验证。维护侧没有执行真实业务写入；用户反馈仅覆盖其实际测试的 Android 流程，真实通知、长期后台运行及 Windows 完整流程仍待验收。详见 [1.7.4 验证记录](documentation/verification-1.7.4.md)，历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
+Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通过，最终邮件定向 19 项通过。Ruff、编译检查与 Android Lint 通过。详细修复、验证与打包信息见 [1.8.4 验证记录](documentation/verification-1.8.4.md)；历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ### 项目结构
 

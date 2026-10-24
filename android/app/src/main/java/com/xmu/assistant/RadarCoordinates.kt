@@ -34,25 +34,27 @@ internal data class RadarPreset(
 )
 
 /**
- * Per-course radar locations. A course may own any number of locations; exactly one is preferred.
+ * Persistent, account-independent per-course radar locations (kept on logout).
+ * A course may own any number of locations; exactly one is preferred.
  * Matching primarily uses the platform course id and falls back to the normalized course title so
  * a location captured before the course list finishes loading remains usable.
  */
 internal class RadarCoordinateStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    @Synchronized
-    fun placesFor(courseId: String, courseTitle: String): List<RadarCoordinate> = readAll()
+    fun placesFor(courseId: String, courseTitle: String): List<RadarCoordinate> = synchronized(lock) {
+        readAll()
         .filter { it.matches(courseId, courseTitle) }
-        .sortedWith(compareByDescending<RadarCoordinate> { it.preferred }.thenBy { it.createdAtMillis })
-
-    @Synchronized
-    fun preferredFor(courseId: String, courseTitle: String): RadarCoordinate? {
-        val places = placesFor(courseId, courseTitle)
-        return places.firstOrNull { it.preferred } ?: places.firstOrNull()
+        .sortedWith(
+            compareBy<RadarCoordinate> { it.courseId != courseId }
+                .thenByDescending { it.preferred }
+                .thenBy { it.createdAtMillis },
+        )
     }
 
-    @Synchronized
+    fun preferredFor(courseId: String, courseTitle: String): RadarCoordinate? =
+        placesFor(courseId, courseTitle).firstOrNull()
+
     fun add(
         courseId: String,
         courseTitle: String,
@@ -62,18 +64,18 @@ internal class RadarCoordinateStore(context: Context) {
         source: String,
         accuracyMeters: Float? = null,
         makePreferred: Boolean = true,
-    ): RadarCoordinate {
+    ): RadarCoordinate = synchronized(lock) {
         require(name.isNotBlank()) { "地点名称不能为空" }
         require(latitude.isFinite() && latitude in -90.0..90.0) { "纬度无效" }
         require(longitude.isFinite() && longitude in -180.0..180.0) { "经度无效" }
         require(courseId.isNotBlank() || courseTitle.isNotBlank()) { "请先选择课程" }
 
         val all = readAll().toMutableList()
-        val matched = all.filter { it.matches(courseId, courseTitle) }
+        val matched = all.filter { it.sameCourse(courseId, courseTitle) }
         val preferred = makePreferred || matched.isEmpty()
         if (preferred) {
             for (index in all.indices) {
-                if (all[index].matches(courseId, courseTitle) && all[index].preferred) {
+                if (all[index].sameCourse(courseId, courseTitle) && all[index].preferred) {
                     all[index] = all[index].copy(preferred = false)
                 }
             }
@@ -94,12 +96,11 @@ internal class RadarCoordinateStore(context: Context) {
         return item
     }
 
-    @Synchronized
-    fun setPreferred(id: String): Boolean {
+    fun setPreferred(id: String): Boolean = synchronized(lock) {
         val all = readAll().toMutableList()
         val selected = all.firstOrNull { it.id == id } ?: return false
         for (index in all.indices) {
-            if (all[index].matches(selected.courseId, selected.courseTitle)) {
+            if (all[index].sameCourse(selected.courseId, selected.courseTitle)) {
                 all[index] = all[index].copy(preferred = all[index].id == id)
             }
         }
@@ -107,21 +108,19 @@ internal class RadarCoordinateStore(context: Context) {
         return true
     }
 
-    @Synchronized
-    fun delete(id: String): Boolean {
+    fun delete(id: String): Boolean = synchronized(lock) {
         val all = readAll().toMutableList()
         val removed = all.firstOrNull { it.id == id } ?: return false
         all.removeAll { it.id == id }
         if (removed.preferred) {
-            val replacementIndex = all.indexOfFirst { it.matches(removed.courseId, removed.courseTitle) }
+            val replacementIndex = all.indexOfFirst { it.sameCourse(removed.courseId, removed.courseTitle) }
             if (replacementIndex >= 0) all[replacementIndex] = all[replacementIndex].copy(preferred = true)
         }
         writeAll(all)
         return true
     }
 
-    @Synchronized
-    fun clear() = prefs.edit().remove(KEY_LOCATIONS).commit()
+    fun clear() = synchronized(lock) { prefs.edit().remove(KEY_LOCATIONS).commit() }
 
     private fun readAll(): List<RadarCoordinate> {
         val raw = prefs.getString(KEY_LOCATIONS, null).orEmpty()
@@ -133,19 +132,22 @@ internal class RadarCoordinateStore(context: Context) {
                     val item = array.optJSONObject(index) ?: continue
                     val latitude = item.optDouble("latitude", Double.NaN)
                     val longitude = item.optDouble("longitude", Double.NaN)
-                    if (!latitude.isFinite() || !longitude.isFinite()) continue
+                    if (!latitude.isFinite() || latitude !in -90.0..90.0) continue
+                    if (!longitude.isFinite() || longitude !in -180.0..180.0) continue
                     add(
                         RadarCoordinate(
-                            id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
-                            courseId = item.optString("courseId"),
-                            courseTitle = item.optString("courseTitle"),
-                            name = item.optString("name").ifBlank { "未命名地点" },
+                            id = item.optRealString("id").ifBlank { UUID.randomUUID().toString() },
+                            courseId = item.optRealString("courseId"),
+                            courseTitle = item.optRealString("courseTitle"),
+                            name = item.optRealString("name").ifBlank { "未命名地点" },
                             latitude = latitude,
                             longitude = longitude,
-                            source = item.optString("source").ifBlank { "custom" },
+                            source = item.optRealString("source").ifBlank { "custom" },
                             preferred = item.optBoolean("preferred", false),
                             accuracyMeters = item.optDouble("accuracyMeters", Double.NaN)
-                                .takeIf(Double::isFinite)?.toFloat(),
+                                .takeIf { it.isFinite() && it >= 0.0 }
+                                ?.toFloat()
+                                ?.takeIf(Float::isFinite),
                             createdAtMillis = item.optLong("createdAtMillis", 0L),
                         ),
                     )
@@ -181,7 +183,13 @@ internal class RadarCoordinateStore(context: Context) {
         return title.isNotBlank() && normalizeCourseTitle(title) == normalizeCourseTitle(courseTitle)
     }
 
+    private fun RadarCoordinate.sameCourse(id: String, title: String): Boolean {
+        if (id.isNotBlank() || courseId.isNotBlank()) return id.isNotBlank() && id == courseId
+        return title.isNotBlank() && normalizeCourseTitle(title) == normalizeCourseTitle(courseTitle)
+    }
+
     private companion object {
+        val lock = Any()
         const val PREFS_NAME = "xmu_radar_coordinates"
         const val KEY_LOCATIONS = "course_locations_v1"
     }
@@ -200,7 +208,7 @@ internal fun loadXiangAnRadarPresets(context: Context): List<RadarPreset> = runC
                     zone = row.getString("zone"),
                     latitude = row.getDouble("latitude"),
                     longitude = row.getDouble("longitude"),
-                    confidence = row.optString("confidence"),
+                    confidence = row.optRealString("confidence"),
                 ),
             )
         }

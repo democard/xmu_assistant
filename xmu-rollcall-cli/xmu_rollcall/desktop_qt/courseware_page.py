@@ -9,6 +9,7 @@ _update_nav_badges/_open_path/_ui_palette/log）仍由 DashboardWindow 持有。
 
 from __future__ import annotations
 
+import time
 import webbrowser
 from pathlib import Path
 
@@ -25,12 +26,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from ..courseware import (
+    DownloadCancelledError,
     CourseSummary,
     CoursewareItem,
     download_courseware,
@@ -46,6 +49,7 @@ from .icons import app_asset_path
 
 
 _DOWNLOAD_SOURCE_UNSET = object()
+_QUERY_SOURCE_UNSET = object()
 
 
 class CoursewarePageMixin:
@@ -74,6 +78,7 @@ class CoursewarePageMixin:
         layout.setSpacing(12)
 
         toolbar = self._panel("筛选")
+        toolbar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(16, 40, 16, 16)
         self.courseware_academic_year_combo = QComboBox()
@@ -90,6 +95,8 @@ class CoursewarePageMixin:
         refresh_items.setObjectName("PrimaryButton")
         self.courseware_summary = QLabel("登录后自动读取课程和课件。")
         self.courseware_summary.setObjectName("Subtle")
+        self.courseware_summary.setWordWrap(True)
+        self.courseware_summary.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         toolbar_layout.addWidget(QLabel("学年"))
         toolbar_layout.addWidget(self.courseware_academic_year_combo)
         toolbar_layout.addWidget(QLabel("学期"))
@@ -98,8 +105,9 @@ class CoursewarePageMixin:
         toolbar_layout.addWidget(self.courseware_combo)
         toolbar_layout.addWidget(refresh_courses)
         toolbar_layout.addWidget(refresh_items)
-        toolbar_layout.addWidget(self.courseware_summary, 1)
+        toolbar_layout.addStretch(1)
         layout.addWidget(toolbar)
+        layout.addWidget(self.courseware_summary)
 
         self.courseware_table = self._make_table(
             ("", "章节", "课件活动", "文件名", "类型", "下载状态"),
@@ -141,12 +149,15 @@ class CoursewarePageMixin:
         download_button = QPushButton("下载")
         download_button.setObjectName("PrimaryButton")
         download_button.setToolTip("下载当前选中的课件；需要全部下载时先点全选。")
+        cancel_button = QPushButton("取消下载")
+        cancel_button.clicked.connect(self.cancel_courseware_download)
         select_all_button = QPushButton("全选")
         select_all_button.setToolTip("选中当前课程下读取到的所有课件。")
         open_button = QPushButton("打开平台页面")
         choose_button = QPushButton("选择目录")
         self.courseware_download_dir = QLineEdit(str(Path.home() / "Downloads" / "XMU-Courseware"))
         actions.addWidget(download_button)
+        actions.addWidget(cancel_button)
         actions.addWidget(select_all_button)
         actions.addWidget(open_button)
         actions.addWidget(choose_button)
@@ -198,23 +209,31 @@ class CoursewarePageMixin:
         self.courseware_courses_refresh_in_progress = True
         self.courseware_summary.setText("正在读取课程列表...")
         self.log("开始读取课件课程列表。")
-        self._run_thread(self._courseware_courses_worker, silent)
+        self._run_thread(
+            self._courseware_courses_worker, silent, self.session,
+            str((self.account or {}).get("id") or ""),
+        )
 
-    def _courseware_courses_worker(self, silent=False):
+    def _courseware_courses_worker(
+        self, silent=False, worker_source_session=_QUERY_SOURCE_UNSET, worker_account_id=None,
+    ):
         # 账号快照：同 _course_rollcalls_worker（体检报告 P1-2）
-        worker_account_id = str((self.account or {}).get("id") or "")
+        if worker_account_id is None:
+            worker_account_id = str((self.account or {}).get("id") or "")
         # 克隆会话：与签到情况 worker 并发启动（_refresh_after_login），
         # 不能直接共用主 Session（requests.Session 非线程安全）
-        worker_source_session = self.session
-        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
-        if worker_session is None:
-            self._emit(("courseware_courses_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
-            return
+        if worker_source_session is _QUERY_SOURCE_UNSET:
+            worker_source_session = self.session
+        worker_session = None
         try:
+            worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
+            if worker_session is None:
+                self._emit(("courseware_courses_error", "登录状态已变更，请重新登录。", silent, worker_account_id, worker_source_session))
+                return
             courses, source = fetch_courses(worker_session)
-            self._emit(("courseware_courses", courses, source, worker_account_id))
+            self._emit(("courseware_courses", courses, source, worker_account_id, worker_source_session))
         except Exception as exc:
-            self._emit(("courseware_courses_error", str(exc), silent, worker_account_id))
+            self._emit(("courseware_courses_error", str(exc), silent, worker_account_id, worker_source_session))
         finally:
             close_cloned_session(worker_session, worker_source_session)
 
@@ -238,28 +257,37 @@ class CoursewarePageMixin:
         self.courseware_refresh_in_progress = True
         self.courseware_summary.setText(f"正在读取《{course.title}》课件...")
         self.log(f"开始读取课程课件：{course.title}。")
-        self._run_thread(self._courseware_worker, course, silent)
+        self._run_thread(
+            self._courseware_worker, course, silent, self.session,
+            str((self.account or {}).get("id") or ""),
+        )
 
-    def _courseware_worker(self, course: CourseSummary, silent=False):
+    def _courseware_worker(
+        self, course: CourseSummary, silent=False,
+        worker_source_session=_QUERY_SOURCE_UNSET, worker_account_id=None,
+    ):
         # 账号快照：课件详情是 8 线程池逐活动抓取，大课程可跑几十秒，
         # 晚到结果据此被 handler 丢弃（P1-2，同 courseware_courses 范式）；
         # 先于会话克隆取（同 _courseware_courses_worker）——会话为 None 的早退
         # 分支也要携带，空串会被 late_worker_result_accepted 视为接受
-        worker_account_id = str((self.account or {}).get("id") or "")
+        if worker_account_id is None:
+            worker_account_id = str((self.account or {}).get("id") or "")
         # 克隆会话：fetch_courseware 入口的活动列表/modules 请求不走其内部
         # 线程级 clone，在此隔离主 Session（同 _courseware_courses_worker 纪律）
-        worker_source_session = self.session
-        worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
-        if worker_session is None:
-            self._emit(("courseware_error", "登录状态已变更，请重新登录。", silent, worker_account_id))
-            return
-        # Keep modules caching scoped to the stable GUI session while this
-        # worker uses a detached clone for network safety.
-        worker_session._xmu_modules_cache_scope = worker_source_session
+        if worker_source_session is _QUERY_SOURCE_UNSET:
+            worker_source_session = self.session
+        worker_session = None
         try:
-            self._emit(("courseware", course, fetch_courseware(worker_session, course.course_id), worker_account_id))
+            worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
+            if worker_session is None:
+                self._emit(("courseware_error", "登录状态已变更，请重新登录。", silent, worker_account_id, worker_source_session))
+                return
+            # Keep modules caching scoped to the stable GUI session while this
+            # worker uses a detached clone for network safety.
+            worker_session._xmu_modules_cache_scope = worker_source_session
+            self._emit(("courseware", course, fetch_courseware(worker_session, course.course_id), worker_account_id, worker_source_session))
         except Exception as exc:
-            self._emit(("courseware_error", str(exc), silent, worker_account_id))
+            self._emit(("courseware_error", str(exc), silent, worker_account_id, worker_source_session))
         finally:
             close_cloned_session(worker_session, worker_source_session)
 
@@ -365,6 +393,20 @@ class CoursewarePageMixin:
             worker_source_session,
         )
 
+    def cancel_courseware_download(self):
+        if not self.courseware_download_in_progress:
+            self._show_toast("当前没有下载任务")
+            return
+        self.courseware_download_batch_token = None
+        self.courseware_download_in_progress = False
+        for key, status in self.courseware_download_status.items():
+            if status == "下载中":
+                self.courseware_download_status[key] = "已取消"
+        self._refresh_courseware_table()
+        self._update_nav_badges()
+        self.courseware_summary.setText("已取消下载；已完成文件保留，可重新下载")
+        self._show_toast("已取消下载")
+
     def _courseware_download_worker(
         self,
         items: list[CoursewareItem],
@@ -437,7 +479,31 @@ class CoursewarePageMixin:
                     ))
                     continue
                 try:
-                    target = download_courseware(worker_session, item, destination)
+                    def cancelled():
+                        return (
+                            self.session is not worker_source_session
+                            or batch_token is not self.courseware_download_batch_token
+                            or str((self.account or {}).get("id") or "") != worker_account_id
+                        )
+
+                    last_progress_at = 0.0
+
+                    def progress(downloaded_bytes, total_bytes):
+                        nonlocal last_progress_at
+                        now = time.monotonic()
+                        if now - last_progress_at < 0.15 and downloaded_bytes != total_bytes:
+                            return
+                        last_progress_at = now
+                        self._emit((
+                            "courseware_download_progress", batch_token, worker_account_id,
+                            index, len(items), item.filename or item.activity_title, key,
+                            downloaded_bytes, total_bytes,
+                        ))
+
+                    target = download_courseware(
+                        worker_session, item, destination,
+                        progress_callback=progress, should_cancel=cancelled,
+                    )
                     if target.suffix.lower() == ".url":
                         entries.append(target)
                     else:
@@ -446,6 +512,12 @@ class CoursewarePageMixin:
                         "courseware_download_item_done", batch_token, worker_account_id,
                         key, "下载成功",
                     ))
+                except DownloadCancelledError:
+                    self._emit((
+                        "courseware_download_item_done", batch_token, worker_account_id,
+                        key, "已取消",
+                    ))
+                    break
                 except Exception as exc:
                     name = item.filename or item.activity_title
                     errors.append(f"{name}：{friendly_error_message(exc, 'courseware')}")

@@ -68,12 +68,12 @@ def is_supported() -> bool:
     return os.name == "nt"
 
 
-def protect(plaintext: str) -> str:
-    """加密明文为 ``dpapi:<base64>`` 形式；不支持或失败时原样返回（不阻塞保存）。"""
+def protect(plaintext: str, *, force_plaintext: bool = False) -> str:
+    """加密凭据；force_plaintext 用于已知明文输入，默认保留旧密文幂等行为。"""
     if not plaintext:
         return plaintext
-    if plaintext.startswith(DPAPI_PREFIX):
-        # 已加密，幂等返回（避免对内存中已解密的 config 重复加密造成二次写入损坏）
+    if not force_plaintext and plaintext.startswith(DPAPI_PREFIX):
+        # 兼容旧调用方传入已加密值；config 的已知明文使用 force_plaintext。
         return plaintext
     if not is_supported():
         return plaintext

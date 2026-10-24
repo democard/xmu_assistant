@@ -23,6 +23,7 @@ __pycache__/
 # Kotlin metadata cache（Compose/Kotlin 编译器中间产物）
 .kotlin/
 *.apk.bak
+*.apk
 *.aab
 
 # Release 签名密钥：绝不入库（debug.keystore 已入库用于覆盖升级签名保持）

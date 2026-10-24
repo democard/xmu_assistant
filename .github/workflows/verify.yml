@@ -1,0 +1,66 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONPATH: ${{ github.workspace }}/xmu-rollcall-cli
+      XMU_ROLLCALL_CONFIG_DIR: ${{ runner.temp }}/xmu-test-profile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.6'
+          cache: pip
+          cache-dependency-path: |
+            requirements-ci.txt
+            constraints-windows-py314.txt
+            xmu-rollcall-cli/requirements.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - run: python -m ruff check xmu-rollcall-cli tests scripts
+      - run: python -m compileall -q xmu-rollcall-cli tests scripts
+      - run: python -m pytest tests -q --junitxml=build/pytest.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-test-results
+          path: build/pytest.xml
+          if-no-files-found: ignore
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Test and lint
+        working-directory: android
+        run: bash gradlew :app:testDebugUnitTest :app:lintDebug --console=plain
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-results
+          path: |
+            android/app/build/test-results/testDebugUnitTest
+            android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore

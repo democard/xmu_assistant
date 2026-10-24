@@ -1,0 +1,7 @@
+target-version = "py311"
+extend-exclude = ["build", "dist", ".tools"]
+
+[lint]
+# 仓库发布前沿用的致命语法、名称和控制流检查，加上未使用局部变量。
+# 不隐式继承个人机器上的全局规则；这不是全量风格检查。
+select = ["E9", "F63", "F7", "F82", "F841"]

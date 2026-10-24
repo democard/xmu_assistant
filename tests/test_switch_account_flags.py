@@ -43,16 +43,16 @@ METRIC_RESETS = (
 class SwitchAccountFlagResetTest(unittest.TestCase):
     def _cross_account_branch(self) -> str:
         source = inspect.getsource(DashboardWindow._ev_login_success)
-        marker = "self._snapshot_account_id and"
+        marker = "if previous_account_id and"
         start = source.index(marker)
         # 跨账号段到恢复 _snapshot_account_id 的 else 分支为止
         end = source.index("\n        else:", start)
         return source[start:end]
 
-    def test_cross_account_branch_resets_all_mutex_flags(self):
-        branch = self._cross_account_branch()
+    def test_successful_session_replacement_resets_all_mutex_flags(self):
+        source = inspect.getsource(DashboardWindow._ev_login_success)
         for flag in FLAGS:
-            self.assertIn(f"self.{flag} = False", branch, f"跨账号分支缺少 {flag} 复位")
+            self.assertIn(f"self.{flag} = False", source, f"登录换代缺少 {flag} 复位")
 
     def test_cross_account_branch_resets_metric_rows(self):
         branch = self._cross_account_branch()

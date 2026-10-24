@@ -19,6 +19,10 @@ class NotificationMessage:
     action_url: str = ""
 
 
+class MailDeliveryUncertain(RuntimeError):
+    """SMTP 写入阶段回执不明；不能切换端口重发。"""
+
+
 def build_rollcall_notification(event, action_url: str = "") -> NotificationMessage:
     remaining = event.remaining_text if getattr(event, "remaining_text", "") else "未知"
     lines = [
@@ -54,6 +58,8 @@ def friendly_error_message(error, area: str = "general") -> str:
     # 类型优先：会话过期已在源头类型化（SessionExpiredError），直接给出可操作提示
     if isinstance(error, SessionExpiredError):
         return "登录已过期，请重新登录。"
+    if isinstance(error, MailDeliveryUncertain):
+        return "邮件发送结果未知，请检查收件箱，勿重复发送。"
     text = str(error or "").strip()
     lowered = text.lower()
     if "无法确认通知请求是否已受理" in text:
@@ -155,22 +161,34 @@ class QQMailNotifier:
         errors: list[str] = []
         # smtplib 不传 context 时用 ssl._create_stdlib_context()：verify_mode=CERT_NONE、
         # 不校验主机名——同一局域网的主动中间人在握手/STARTTLS 时出示任意证书即可拿到
-        # QQ 授权码（等同完整邮箱）与提醒正文。PushPlus 走 requests（默认校验）、Android
-        # JavaMail 默认校验，唯独这两条路径裸奔；显式传校验上下文与其余通道对齐。
+        # 邮箱授权码与提醒正文。显式传入证书链和主机名均校验的上下文。
         tls_context = ssl.create_default_context()
         for port in self._ports():
+            submitting = False
+            accepted = False
             try:
                 if port == 465:
                     with smtplib.SMTP_SSL(self.smtp_host, port, timeout=15, context=tls_context) as smtp:
                         smtp.login(self.sender, self.password)
+                        submitting = True
                         smtp.send_message(message)
+                        accepted = True
                 else:
                     with smtplib.SMTP(self.smtp_host, port, timeout=15) as smtp:
                         smtp.starttls(context=tls_context)
                         smtp.login(self.sender, self.password)
+                        submitting = True
                         smtp.send_message(message)
+                        accepted = True
                 return
             except Exception as exc:
+                if accepted:
+                    # DATA 已确认成功；QUIT/关闭失败不撤销已受理的邮件。
+                    return
+                if submitting:
+                    if isinstance(exc, (smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError)):
+                        raise RuntimeError("邮箱服务器拒绝本次邮件，请检查收件人和邮件内容。") from exc
+                    raise MailDeliveryUncertain("邮件发送结果未知，请检查收件箱，勿重复发送。") from exc
                 errors.append(f"{port}: {exc}")
         raise RuntimeError("；".join(errors))
 

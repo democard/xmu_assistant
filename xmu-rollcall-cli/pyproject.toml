@@ -17,6 +17,11 @@ dependencies = [
     "pywin32>=306; sys_platform == \"win32\"",
 ]
 
+[project.optional-dependencies]
+# pytest 9 自带 unittest.subTest 支持，不再需要 pytest-subtests 插件。
+dev = ["pytest>=9,<10", "ruff>=0.16,<0.17"]
+build = ["pyinstaller>=6.22,<7"]
+
 [project.scripts]
 xmu-dashboard = "xmu_rollcall.desktop_qt.app:main"
 

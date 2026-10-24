@@ -42,6 +42,7 @@ private fun java.io.InputStream.readBytesLimited(limit: Int): ByteArray {
 }
 
 internal class RankAuthExpired : IllegalStateException("教务登录已过期，请重新获取")
+internal class RankSessionChanged : IllegalStateException("账号会话已改变，操作已停止")
 internal class RankSubmitUncertain : IllegalStateException("申请可能已提交。请继续查询结果，勿重复申请。")
 internal class RankSubmitRejected : IllegalStateException("教务未受理本次申请，请稍后重试")
 
@@ -56,7 +57,7 @@ internal class XmuRankClient(
     fun cookieHeader(): String = jar.header()
 
     private fun request(path: String, form: Map<String, String>? = emptyMap(), submit: Boolean = false): RankResponse {
-        check(active()) { "账号会话已改变，操作已停止" }
+        if (!active()) throw RankSessionChanged()
         val response = transport.execute(path, form, jar.header())
         // Shared academic cookie jar handles Set-Cookie in the same way as existing modules.
         jar.read(response.headers)
@@ -84,9 +85,9 @@ internal class XmuRankClient(
             when (value) {
                 is JSONArray -> (0 until value.length()).forEach { visit(value.opt(it)) }
                 is JSONObject -> {
-                    val id = value.optString("WID").takeUnless { it == "null" }.orEmpty()
-                    if (id.isNotBlank()) result += RankRecord(id, value.optInt("CYJSZYRS", 0), value.optString("CJFWWID").takeUnless { it == "null" }.orEmpty(),
-                        value.optString("JSSJ").ifBlank { value.optString("SQSJ") })
+                    val id = value.optRealString("WID")
+                    if (id.isNotBlank()) result += RankRecord(id, value.optInt("CYJSZYRS", 0), value.optRealString("CJFWWID"),
+                        value.optRealString("JSSJ").ifBlank { value.optRealString("SQSJ") })
                     else value.keys().forEach { visit(value.opt(it)) }
                 }
             }
@@ -100,8 +101,8 @@ internal class XmuRankClient(
         val rows = root.optJSONObject("datas")?.optJSONObject("cxxskxcjfw")?.optJSONArray("rows")
             ?: root.optJSONArray("rows") ?: error("无法识别可选成绩范围，未提交申请")
         return (0 until rows.length()).map { rows.getJSONObject(it) }.mapNotNull {
-            val id = it.optString("WID"); val name = it.optString("XSMC")
-            if (id.isBlank() || name.isBlank() || id == "null" || name == "null") null else RankRange(id, name)
+            val id = it.optRealString("WID"); val name = it.optRealString("XSMC")
+            if (id.isBlank() || name.isBlank()) null else RankRange(id, name)
         }.distinctBy { it.id }.also { check(it.isNotEmpty()) { "当前没有可申请的成绩范围" } }
     }
 
@@ -110,7 +111,8 @@ internal class XmuRankClient(
             val root = json(request("/jwapp/sys/jdfpm/api/jdjs/addJdjssq.do", mapOf("CJFWWID" to rangeId), submit = true))
             if (root.has("success") && root.opt("success")?.toString() == "false") throw RankSubmitRejected()
             // Even an unfamiliar success response is reconciled by new WID, never blindly resubmitted.
-        } catch (rejected: RankSubmitRejected) { throw rejected }
+        } catch (changed: RankSessionChanged) { throw changed }
+        catch (rejected: RankSubmitRejected) { throw rejected }
         catch (error: Exception) { throw RankSubmitUncertain() }
     }
 

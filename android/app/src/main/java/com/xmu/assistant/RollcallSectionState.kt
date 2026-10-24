@@ -45,7 +45,12 @@ internal class RollcallSectionState(
     private val createHistoryClient: (String) -> RollcallHistoryClient = { cookieHeader ->
         RollcallHistoryClient(cookieHeader, OkHttpQueryTransport(), { size -> Executors.newFixedThreadPool(size) })
     },
-    private val createEngine: (String) -> RollcallEngine = { cookieHeader -> RollcallEngine(cookieHeader) },
+    private val createEngine: (String) -> RollcallEngine = { cookieHeader ->
+        val coordinates = RadarCoordinateStore(activity)
+        RollcallEngine(cookieHeader, radarCoordinateProvider = { event ->
+            coordinates.preferredFor(event.courseId, event.courseTitle)
+        })
+    },
 ) {
     /** 最近一次拉到的签到事件列表。 */
     var events by mutableStateOf(eventsInitial)
@@ -168,6 +173,7 @@ internal class RollcallSectionState(
                             saveRollcallHistoryCache(
                                 rollcallHistoryCacheFile(activity),
                                 RollcallHistorySnapshot(accountId, System.currentTimeMillis(), resolved),
+                                isSessionCurrent = { sessionEpoch.isCurrent(session) },
                             )
                         }
                     }

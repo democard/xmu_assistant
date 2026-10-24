@@ -5,11 +5,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Interceptor
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -109,6 +111,259 @@ class FileDownloadTransportTest {
         assertEquals(206, result.code)
         assertEquals("bytes=8-", server.takeRequest().getHeader("Range"))
         assertArrayEquals("part-one+resumed".toByteArray(), target.readBytes())
+    }
+
+    @Test
+    fun `production resume sends if-range only for matching resource identity and validator`() {
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 6-11/12")
+                .addHeader("ETag", "\"version-a\"")
+                .setBody("+tail!"),
+        )
+        val target = File(temporaryFolder.root, "same.pdf.part").apply { writeText("prefix") }
+        DownloadResumeMetadata.write(target, "course/activity/reference-1", DownloadEntityValidator("etag", "\"version-a\""))
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/renewed-signed-url").toString(), resourceIdentity = "course/activity/reference-1"),
+            target,
+        )
+
+        val request = server.takeRequest()
+        assertEquals(206, result.code)
+        assertEquals("bytes=6-", request.getHeader("Range"))
+        assertEquals("\"version-a\"", request.getHeader("If-Range"))
+        assertEquals("identity", request.getHeader("Accept-Encoding"))
+        assertEquals("prefix+tail!", target.readText())
+    }
+
+    @Test
+    fun `changed entity validator refuses a mismatched 206 and restarts full`() {
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 6-8/9")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("wrong"),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("new-version"),
+        )
+        val target = File(temporaryFolder.root, "version.pdf.part").apply { writeText("prefix") }
+        DownloadResumeMetadata.write(target, "resource-1", DownloadEntityValidator("etag", "\"version-a\""))
+
+        val result = OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "resource-1"), target,
+        )
+
+        val first = server.takeRequest()
+        val second = server.takeRequest()
+        assertEquals(200, result.code)
+        assertEquals("\"version-a\"", first.getHeader("If-Range"))
+        assertEquals(null, second.getHeader("Range"))
+        assertEquals("new-version", target.readText())
+    }
+
+    @Test
+    fun `same resource without a reliable validator starts full instead of appending`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Last-Modified", "Sat, 24 Oct 2026 12:00:00 GMT")
+                .setBody("complete"),
+        )
+        val target = File(temporaryFolder.root, "no-validator.pdf.part").apply { writeText("unknown-prefix") }
+        DownloadResumeMetadata.write(target, "resource-1", null)
+
+        OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "resource-1"), target,
+        )
+
+        assertEquals(null, server.takeRequest().getHeader("Range"))
+        assertEquals("complete", target.readText())
+        assertEquals(null, DownloadResumeMetadata.validator(null))
+    }
+
+    @Test
+    fun `206 without matching strong ETag retries as a full response`() {
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 6-9/10")
+                .setBody("wrong"),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("complete-b"),
+        )
+        val target = File(temporaryFolder.root, "missing-response-etag.pdf.part").apply { writeText("prefix") }
+        DownloadResumeMetadata.write(target, "resource-1", DownloadEntityValidator("etag", "\"version-a\""))
+
+        OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "resource-1"), target,
+        )
+
+        val first = server.takeRequest()
+        val second = server.takeRequest()
+        assertEquals("\"version-a\"", first.getHeader("If-Range"))
+        assertEquals(null, second.getHeader("Range"))
+        assertEquals("identity", second.getHeader("Accept-Encoding"))
+        assertEquals("complete-b", target.readText())
+        assertEquals("\"version-b\"", DownloadResumeMetadata.read(target)?.validator?.value)
+    }
+
+    @Test
+    fun `short full response keeps old partial and validator for a safe retry`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody(Buffer().write(ByteArray(256 * 1024) { 1 }))
+                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes 6-10/11")
+                .addHeader("ETag", "\"version-a\"")
+                .setBody("+tail"),
+        )
+        val target = File(temporaryFolder.root, "short-replace.pdf.part").apply { writeText("prefix") }
+        DownloadResumeMetadata.write(target, "resource-1", DownloadEntityValidator("etag", "\"version-a\""))
+
+        org.junit.Assert.assertThrows(Exception::class.java) {
+            OkHttpFileDownloadTransport(OkHttpClient()).download(
+                FileDownloadRequest(server.url("/first").toString(), resourceIdentity = "resource-1"), target,
+            )
+        }
+        assertEquals("prefix", target.readText())
+        assertEquals("\"version-a\"", DownloadResumeMetadata.read(target)?.validator?.value)
+
+        OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/retry").toString(), resourceIdentity = "resource-1"), target,
+        )
+
+        val retry = server.takeRequest()
+        assertEquals("bytes=6-", retry.getHeader("Range"))
+        assertEquals("\"version-a\"", retry.getHeader("If-Range"))
+        assertEquals("prefix+tail", target.readText())
+    }
+
+    @Test
+    fun `real interrupted first response leaves validator-bound prefix that resumes`() {
+        val full = ByteArray(256 * 1024) { (it % 251).toByte() }
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"fresh-v1\"")
+                .setBody(Buffer().write(full))
+                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        val target = File(temporaryFolder.root, "first-interrupt.pdf.part")
+        val transport = OkHttpFileDownloadTransport(OkHttpClient())
+
+        org.junit.Assert.assertThrows(Exception::class.java) {
+            transport.download(
+                FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "course/activity/upload-7"),
+                target,
+            )
+        }
+
+        val prefixLength = target.length().toInt()
+        assertTrue("the real response must leave a body prefix", prefixLength > 0 && prefixLength < full.size)
+        assertEquals("course/activity/upload-7", DownloadResumeMetadata.read(target)?.resourceIdentity)
+        assertEquals("\"fresh-v1\"", DownloadResumeMetadata.read(target)?.validator?.value)
+        assertEquals(null, server.takeRequest().getHeader("Range"))
+
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Range", "bytes $prefixLength-${full.lastIndex}/${full.size}")
+                .addHeader("ETag", "\"fresh-v1\"")
+                .setBody(Buffer().write(full.copyOfRange(prefixLength, full.size))),
+        )
+        transport.download(
+            FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "course/activity/upload-7"),
+            target,
+        )
+
+        val retry = server.takeRequest()
+        assertEquals("bytes=$prefixLength-", retry.getHeader("Range"))
+        assertEquals("\"fresh-v1\"", retry.getHeader("If-Range"))
+        assertEquals("identity", retry.getHeader("Accept-Encoding"))
+        assertArrayEquals(full, target.readBytes())
+    }
+
+    @Test
+    fun `failed final sidecar commit after replacement cannot reuse previous validator`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("replacement-version-b"),
+        )
+        val target = File(temporaryFolder.root, "meta-commit.pdf.part").apply { writeText("old-version-a") }
+        DownloadResumeMetadata.write(target, "resource-1", DownloadEntityValidator("etag", "\"version-a\""))
+        val failingCommit = OkHttpFileDownloadTransport(
+            OkHttpClient(),
+            writeResumeMetadata = { _, _, _ -> error("simulated sidecar commit failure") },
+        )
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            failingCommit.download(
+                FileDownloadRequest(server.url("/replace").toString(), resourceIdentity = "resource-1"), target,
+            )
+        }
+
+        assertEquals("replacement-version-b", target.readText())
+        assertFalse(DownloadResumeMetadata.sidecar(target).exists())
+        val firstRequest = server.takeRequest()
+        assertEquals("\"version-a\"", firstRequest.getHeader("If-Range"))
+
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("replacement-version-b"),
+        )
+        OkHttpFileDownloadTransport(OkHttpClient()).download(
+            FileDownloadRequest(server.url("/retry").toString(), resourceIdentity = "resource-1"), target,
+        )
+
+        val retry = server.takeRequest()
+        assertEquals(null, retry.getHeader("Range"))
+        assertEquals(null, retry.getHeader("If-Range"))
+        assertEquals("replacement-version-b", target.readText())
+        assertEquals("\"version-b\"", DownloadResumeMetadata.read(target)?.validator?.value)
+    }
+
+    @Test
+    fun `safe full response that ignores identity encoding is rejected without replacing old state`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("Content-Encoding", "gzip")
+                .addHeader("ETag", "\"version-b\"")
+                .setBody("not actually gzip"),
+        )
+        val target = File(temporaryFolder.root, "gzip.pdf.part").apply { writeText("old-prefix") }
+        DownloadResumeMetadata.write(target, "resource-1", DownloadEntityValidator("etag", "\"version-a\""))
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            OkHttpFileDownloadTransport(OkHttpClient()).download(
+                FileDownloadRequest(server.url("/file").toString(), resourceIdentity = "resource-1"), target,
+            )
+        }
+
+        assertEquals("identity", server.takeRequest().getHeader("Accept-Encoding"))
+        assertEquals("old-prefix", target.readText())
+        assertEquals("\"version-a\"", DownloadResumeMetadata.read(target)?.validator?.value)
     }
 
     @Test

@@ -10,6 +10,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MonitorRunGateTest {
+    @Test fun `local coordinate failure never consumes submission budget and later recovers`() {
+        val attempts = mutableMapOf<String, Int>()
+        val completed = mutableSetOf<String>()
+        val notified = mutableSetOf<String>()
+        val event = RollcallEvent("r1", "数学", "老师", "雷达签到", "未签", ownStatus = "未签")
+        repeat(5) {
+            assertThrows(RollcallAnswerNotSubmittedException::class.java) {
+                processRollcallMonitorPoll(listOf(event), RollcallSettings(autoAnswerRadar = true),
+                    notified, completed, attempts, { action -> action(); true }, { true },
+                    { throw RollcallAnswerNotSubmittedException("未配置课程坐标") }, {})
+            }
+        }
+        assertTrue(attempts.isEmpty())
+        assertTrue(completed.isEmpty())
+        processRollcallMonitorPoll(listOf(event), RollcallSettings(autoAnswerRadar = true),
+            notified, completed, attempts, { action -> action(); true }, { true }, { true }, {})
+        assertEquals(setOf("r1"), completed)
+    }
+
     @Test
     fun `invalidated token cannot start an action`() {
         val gate = MonitorRunGate()

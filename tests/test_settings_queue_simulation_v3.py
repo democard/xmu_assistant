@@ -69,7 +69,7 @@ class SettingsQueueSimulationTests(unittest.TestCase):
         self.directory = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         self.stack.enter_context(patch.object(config, "CONFIG_DIR", self.directory))
         self.stack.enter_context(patch.object(config, "CONFIG_FILE", self.directory / "config.json"))
-        self.stack.enter_context(patch.object(config.secrets, "protect", side_effect=lambda value: value))
+        self.stack.enter_context(patch.object(config.secrets, "protect", side_effect=lambda value, **kwargs: value))
         self.stack.enter_context(patch.object(config.secrets, "unprotect", side_effect=lambda value: value))
         self.stack.enter_context(patch("xmu_rollcall.desktop_qt.notifications_page.QMessageBox.critical"))
         config.save_config({"accounts": [], "current_account_id": None})

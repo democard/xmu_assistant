@@ -1,5 +1,7 @@
 package com.xmu.assistant
 
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import android.util.Base64
 import org.json.JSONObject
 import java.net.URL
@@ -21,6 +23,7 @@ internal class TronclassLogin(
     fun login(username: String, password: String): LoginResult {
         require(username.isNotBlank() && password.isNotBlank()) { "请输入学号和密码" }
 
+        jar.clear()
         val authUrl = "https://c-identity.xmu.edu.cn/auth/realms/xmu/protocol/openid-connect/auth"
         val tokenUrl = "https://c-identity.xmu.edu.cn/auth/realms/xmu/protocol/openid-connect/token"
         val loginUrl = "https://lnt.xmu.edu.cn/api/login?login=access_token"
@@ -69,7 +72,7 @@ internal class TronclassLogin(
         )
         val tokenResponse = request(tokenUrl, method = "POST", body = tokenBody).requireNotServerError("令牌获取")
         val token = JSONObject(tokenResponse.body)
-            .optString("access_token")
+            .optRealString("access_token")
             .takeIf { it.isNotBlank() }
             ?: error("登录令牌获取失败")
 
@@ -80,7 +83,7 @@ internal class TronclassLogin(
             body = JSONObject().put("access_token", token).put("org_id", 1).toString(),
         ).requireNotServerError("TronClass 登录")
         if (finalLogin.code !in 200..299) error("TronClass 登录失败：${finalLogin.code}")
-        return LoginResult(cookieHeader = jar.header())
+        return LoginResult(cookieHeader = jar.header(loginUrl))
     }
 
     /** 服务端 5xx 显式归为"服务繁忙"（与密码错误/网络失败区分，避免误导重试）。 */
@@ -117,10 +120,10 @@ internal class TronclassLogin(
                 method = method,
                 contentType = contentType,
                 body = body,
-                cookieHeader = jar.header(),
+                cookieHeader = jar.header(url),
             ),
         )
-        jar.read(response.headers)
+        jar.read(response.headers, url)
         return response
     }
 
@@ -134,23 +137,29 @@ internal class TronclassLogin(
 }
 
 class SimpleCookieJar {
-    private val cookies = linkedMapOf<String, String>()
+    private val cookies = linkedMapOf<Triple<String, String, String>, Cookie>()
 
-    // @Synchronized：登录流程可能被并发调用（重登/恢复竞争），linkedMapOf 非线程安全，
-    // read（写）与 header（读）并发会抛 ConcurrentModificationException
-    // （对照 XmuScoreCookieJar 的 @Synchronized 同款防护）。
     @Synchronized
-    fun read(headers: Map<String, List<String>>) {
-        headers.entries
-            .filter { it.key.equals("Set-Cookie", ignoreCase = true) }
-            .flatMap { it.value }
-            .forEach { raw ->
-                val pair = raw.substringBefore(";")
-                val name = pair.substringBefore("=", "")
-                if (name.isNotBlank()) cookies[name] = pair
+    fun clear() = cookies.clear()
+
+    @Synchronized
+    fun read(headers: Map<String, List<String>>, url: String = "https://lnt.xmu.edu.cn/") {
+        val origin = url.toHttpUrl()
+        headers.entries.filter { it.key.equals("Set-Cookie", ignoreCase = true) }
+            .flatMap { it.value }.forEach { raw ->
+                val cookie = Cookie.parse(origin, raw) ?: return@forEach
+                val key = Triple(cookie.name, cookie.domain, cookie.path)
+                if (cookie.expiresAt <= System.currentTimeMillis()) cookies.remove(key)
+                else cookies[key] = cookie
             }
     }
 
     @Synchronized
-    fun header(): String = cookies.values.joinToString("; ")
+    fun header(url: String = "https://lnt.xmu.edu.cn/"): String {
+        val target = url.toHttpUrl()
+        val now = System.currentTimeMillis()
+        cookies.entries.removeAll { it.value.expiresAt <= now }
+        return cookies.values.filter { it.matches(target) }.sortedByDescending { it.path.length }
+            .joinToString("; ") { "${it.name}=${it.value}" }
+    }
 }

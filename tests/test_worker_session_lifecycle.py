@@ -203,3 +203,48 @@ def test_answer_worker_releases_clone_but_preserves_cookies_for_gui_merge(outcom
         assert source.cookies.get("rotated-cookie") == "synthetic"
         if outcome in {"cancelled", "recheck", "delay"}:
             engine.assert_not_called()
+
+@pytest.mark.parametrize("operation,error_kind", [
+    ("courses", "courseware_courses_error"), ("courseware", "courseware_error"),
+    ("rollcalls", "course_rollcalls_error"), ("verify", "course_records_verify_error"),
+])
+def test_page_clone_failure_emits_recoverable_error_instead_of_leaving_gate_locked(operation, error_kind):
+    events = []
+    host = SimpleNamespace(session=object(), account={"id": "fixture"}, _emit=events.append)
+    module = courses_page if operation in ("rollcalls", "verify") else courseware_page
+    with patch.object(module, "clone_session", side_effect=RuntimeError("synthetic clone failure")):
+        if operation == "courses":
+            courseware_page.CoursewarePageMixin._courseware_courses_worker(host)
+        elif operation == "courseware":
+            courseware_page.CoursewarePageMixin._courseware_worker(host, SimpleNamespace(course_id="fixture"))
+        elif operation == "rollcalls":
+            courses_page.CoursesPageMixin._course_rollcalls_worker(host)
+        else:
+            courses_page.CoursesPageMixin._course_verify_one_worker(host, record(), "fixture", "fixture")
+    assert events[0][0] == error_kind
+    assert events[0][1] == "synthetic clone failure"
+
+
+def test_download_worker_connects_byte_progress_and_stops_batch_on_user_cancel(tmp_path):
+    from xmu_rollcall.courseware import DownloadCancelledError
+    with requests.Session() as source:
+        token = object()
+        events = []
+        host = SimpleNamespace(
+            session=source, account={"id": "fixture"}, _emit=events.append,
+            courseware_download_batch_token=token, _courseware_key=lambda item: item.filename,
+            _short_courseware_error=str,
+        )
+        items = [SimpleNamespace(filename=name, activity_title=name) for name in ("a.pdf", "b.pdf")]
+        def transfer(session, item, destination, *, progress_callback, should_cancel):
+            assert not should_cancel()
+            progress_callback(1024, 2048)
+            host.courseware_download_batch_token = None
+            assert should_cancel()
+            raise DownloadCancelledError("synthetic cancel")
+        with patch.object(courseware_page, "download_courseware", side_effect=transfer) as download:
+            courseware_page.CoursewarePageMixin._courseware_download_worker(host, items, tmp_path, token, "fixture", source)
+        assert download.call_count == 1
+        assert any(event[0] == "courseware_download_progress" and event[-2:] == (1024, 2048) for event in events)
+        assert any(event[0] == "courseware_download_item_done" and event[-1] == "已取消" for event in events)
+        assert events[-1][0] == "courseware_download_done"

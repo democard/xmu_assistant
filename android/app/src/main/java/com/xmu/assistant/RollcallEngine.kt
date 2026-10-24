@@ -11,6 +11,8 @@ private val defaultRollcallAnswerTransport: QueryHttpTransport by lazy {
     OkHttpQueryTransport(XmuHttpClients.query.newBuilder().retryOnConnectionFailure(false).build())
 }
 
+internal class RollcallAnswerNotSubmittedException(message: String) : IllegalStateException(message)
+
 class RollcallEngine internal constructor(
     private val cookieHeader: String,
     private val statusTransport: QueryHttpTransport = OkHttpQueryTransport(),
@@ -40,8 +42,8 @@ class RollcallEngine internal constructor(
             )
             RollcallEvent(
                 id = id,
-                courseTitle = item.optString("course_title", item.optString("course_name", "未知课程")),
-                teacher = listOf(item.optString("department_name"), item.optString("created_by_name"))
+                courseTitle = firstString(item, "course_title", "course_name").ifBlank { "未知课程" },
+                teacher = listOf(item.optRealString("department_name"), item.optRealString("created_by_name"))
                     .filter { it.isNotBlank() }
                     .joinToString(" ")
                     .ifBlank { "未知" },
@@ -50,7 +52,7 @@ class RollcallEngine internal constructor(
                     item.optBoolean("is_number") -> "数字签到"
                     else -> "二维码签到"
                 },
-                status = normalizedRollcallStatus(item.optString("status", "unknown")),
+                status = normalizedRollcallStatus(item.optRealString("status", "unknown")),
                 deadline = deadline,
                 remainingSeconds = remainingSecondsFromDeadline(deadline),
                 isExpired = item.optBoolean("is_expired", false),
@@ -223,11 +225,14 @@ class RollcallEngine internal constructor(
         "数字签到" -> answerNumber(event)
         "雷达签到" -> if (
             if (radarCoordinateProvider == null) {
-                // 保留给兼容性测试和旧调用方；应用监控始终注入课程坐标提供器。
+                // 保留显式旧引擎调用契约；应用入口始终注入课程地点提供器。
                 answerRadar(event.id)
             } else {
                 val coordinate = radarCoordinateProvider.invoke(event)
-                    ?: error("雷达签到未提交：${event.courseTitle}尚未配置课程坐标")
+                    ?: throw RollcallAnswerNotSubmittedException("雷达签到未提交：${event.courseTitle}尚未配置课程坐标")
+                if (!coordinate.latitude.isFinite() || coordinate.latitude !in -90.0..90.0 ||
+                    !coordinate.longitude.isFinite() || coordinate.longitude !in -180.0..180.0
+                ) throw RollcallAnswerNotSubmittedException("雷达签到未提交：课程坐标无效")
                 answerRadarAt(event.id, coordinate)
             }
         ) true else {

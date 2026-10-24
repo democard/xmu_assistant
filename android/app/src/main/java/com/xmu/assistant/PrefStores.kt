@@ -40,6 +40,10 @@ package com.xmu.assistant
  * 6. exam_reminder        【明文】考试提醒计划标识（随机值，不含账号/考试内容）。
  *    键：active_plan；取消/重排时替换，使已排队的旧广播失效。登出后保留失效标识。
  *
+ * 7. xmu_schedule_overrides 【明文】持久课表本地调整，按学期/课程/原时段匹配；登出保留。
+ * 8. xmu_radar_coordinates 【明文】持久课程地点库，与账号无关，登出/换号保留。
+ *    course_locations_v1 按平台 courseId 匹配；旧记录缺 id 时兼容课程标题。
+ *
  * ── 登出清理链对照（clearLoggedOutUi，MainActivity；2026-08-29 与实现逐行核对）─
  * 登出时实际清理：会话键（cookie_header/score_cookie_header/score_records_json/
  * score_updated_at_millis）、academic_cache_json、exam_cache（exam.clearAll →
@@ -63,5 +67,7 @@ internal object PrefStores {
         "widget_mirror",
         "rollcall_seen",
         "exam_reminder",
+        "xmu_schedule_overrides",
+        "xmu_radar_coordinates",
     )
 }

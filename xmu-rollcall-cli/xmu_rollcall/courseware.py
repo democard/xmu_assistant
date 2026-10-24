@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import tempfile
 import threading
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,8 +57,19 @@ WINDOWS_RESERVED_NAMES = {
 
 # available_path 同名查名的防御性上限，与安卓 CoursewareClient.reserveDownloadFiles 一致（D3）
 MAX_AVAILABLE_PATH_ATTEMPTS = 50
+# 以 UTF-16 单元计数，为编号、.part.resume.json 及其原子写临时后缀留空间。
+MAX_FILENAME_UNITS = 230
 _DOWNLOAD_ALLOCATION_LOCK = threading.RLock()
 _RESERVED_DOWNLOAD_PATHS: set[Path] = set()
+
+
+class DownloadCancelledError(RuntimeError):
+    """用户取消下载；保留未完成内容，有可靠版本验证器时可续传。"""
+
+
+def _check_download_cancelled(should_cancel):
+    if should_cancel is not None and should_cancel():
+        raise DownloadCancelledError("下载已取消，已保留断点续传记录")
 
 
 @dataclass(frozen=True)
@@ -453,14 +466,71 @@ def sanitize_filename(filename: str, fallback: str = "courseware") -> str:
         cleaned = fallback
     if cleaned.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES:
         cleaned = f"_{cleaned}"
-    return cleaned[:240]
+    return _fit_filename(cleaned)
 
 
-def _download_path_keys(target: Path) -> tuple[Path, Path]:
-    return target.resolve(), target.with_name(target.name + ".part").resolve()
+def _fit_filename(filename: str, numbered: str = "") -> str:
+    suffix = Path(filename).suffix
+    if len((suffix + numbered).encode("utf-16-le")) // 2 >= MAX_FILENAME_UNITS:
+        suffix = ""
+    stem = filename[:-len(suffix)] if suffix else filename
+    budget = MAX_FILENAME_UNITS - len((numbered + suffix).encode("utf-16-le")) // 2
+    stem = stem.encode("utf-16-le")[:budget * 2].decode("utf-16-le", errors="ignore").rstrip(". ")
+    return (stem or "file") + numbered + suffix
 
 
-def available_path(directory: Path, filename: str) -> Path:
+def _resume_metadata_path(partial: Path) -> Path:
+    return partial.with_name(partial.name + ".resume.json")
+
+
+def _strong_etag(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if re.fullmatch(r'"[\x21\x23-\x7e\x80-\xff]*"', value) else None
+
+
+def _read_resume_metadata(partial: Path) -> dict | None:
+    try:
+        value = json.loads(_resume_metadata_path(partial).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("resource"), str):
+        return None
+    if value.get("etag") is not None and _strong_etag(value["etag"]) is None:
+        return None
+    return value
+
+
+def _write_resume_metadata(partial: Path, resource: str, etag: str | None) -> None:
+    path = _resume_metadata_path(partial)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        temporary.write_text(json.dumps({"version": 1, "resource": resource, "etag": etag}), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _courseware_resource_key(item: CoursewareItem) -> str:
+    fields = [str(getattr(item, key, "") or "") for key in ("course_id", "activity_id", "upload_id", "reference_id")]
+    # 附件以业务 ID 认领，不保存随时刷新的最终签名 URL；直链保留原来源，不能
+    # 擅删查询参数（不同参数可能就是不同资源），只去掉不参与 HTTP 请求的 fragment。
+    if not fields[2] and not fields[3]:
+        fields.append(urlsplit(str(getattr(item, "source_url", "") or ""))._replace(fragment="").geturl())
+    return json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+
+
+def _download_path_keys(target: Path) -> tuple[Path, ...]:
+    partial = target.with_name(target.name + ".part")
+    metadata = _resume_metadata_path(partial)
+    return target.resolve(), partial.resolve(), metadata.resolve(), metadata.with_name(metadata.name + ".tmp").resolve()
+
+
+def available_path(directory: Path, filename: str, *, resource_key: str | None = None) -> Path:
     """在目录里挑一个不冲突的落地文件名（同名自动加序号）。
 
     D3：与安卓端 CoursewareClient.reserveDownloadFiles 的限次语义统一。
@@ -468,27 +538,28 @@ def available_path(directory: Path, filename: str) -> Path:
     上限是防御性兜底——避免极端目录（同名 >= MAX 个）下无限循环，命中即抛清晰错误。
     """
     with _DOWNLOAD_ALLOCATION_LOCK:
-        target = directory / sanitize_filename(filename)
-        # 原名和编号名都复用失败断点；活跃任务通过进程内占位排除，不能
-        # 仅靠 .part 是否存在判断，否则编号下载每次重试都会换名从零开始。
-        if not target.exists() and not _RESERVED_DOWNLOAD_PATHS.intersection(_download_path_keys(target)):
-            return target
-        stem, suffix = target.stem, target.suffix
-        number = 2
-        while number <= MAX_AVAILABLE_PATH_ATTEMPTS:
-            candidate = directory / f"{stem} ({number}){suffix}"
-            if not candidate.exists() and not _RESERVED_DOWNLOAD_PATHS.intersection(_download_path_keys(candidate)):
+        clean = sanitize_filename(filename)
+        for number in range(1, MAX_AVAILABLE_PATH_ATTEMPTS + 1):
+            candidate = directory / (clean if number == 1 else _fit_filename(clean, f" ({number})"))
+            if candidate.exists() or _RESERVED_DOWNLOAD_PATHS.intersection(_download_path_keys(candidate)):
+                continue
+            partial = candidate.with_name(candidate.name + ".part")
+            if resource_key is not None and partial.exists():
+                record = _read_resume_metadata(partial)
+                if record is None or record["resource"] != resource_key:
+                    # 旧版/异资源断点原样保留，不能只因同名就拼接。
+                    continue
                 return candidate
-            number += 1
+            return candidate
     raise RuntimeError("目录内同名课件过多，请清理后重试")
 
 
 @contextmanager
-def _reserve_download_path(directory: Path, filename: str):
+def _reserve_download_path(directory: Path, filename: str, *, resource_key: str | None = None):
     # 仅分配时持锁，网络和写盘不阻塞其它下载。规范化路径让不同相对写法
     # 使用同一占位；finally 覆盖请求启动失败、写盘失败和正常返回。
     with _DOWNLOAD_ALLOCATION_LOCK:
-        target = available_path(directory, filename)
+        target = available_path(directory, filename, resource_key=resource_key)
         # 正式目标也可能恰好是另一任务的 .part；两种路径必须一起占用。
         keys = _download_path_keys(target)
         _RESERVED_DOWNLOAD_PATHS.update(keys)
@@ -509,12 +580,19 @@ def _write_url_shortcut(directory: Path, item: CoursewareItem) -> Path:
         return target
 
 
-def download_courseware(session, item: CoursewareItem, destination: str | Path) -> Path:
+def download_courseware(
+    session, item: CoursewareItem, destination: str | Path, *,
+    progress_callback: Callable[[int, int | None], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Path:
+    _check_download_cancelled(should_cancel)
     directory = Path(destination)
     directory.mkdir(parents=True, exist_ok=True)
     if not item.upload_id:
         if item.source_url and _looks_direct_url(item.source_url):
-            return _download_url(session, item.source_url, directory, item.filename or item.activity_title)
+            return _download_url(session, item.source_url, directory, item.filename or item.activity_title,
+                                 progress_callback=progress_callback, should_cancel=should_cancel,
+                                 resource_key=_courseware_resource_key(item))
         if item.entry_url:
             return _write_url_shortcut(directory, item)
         raise RuntimeError("资源缺失")
@@ -535,23 +613,38 @@ def download_courseware(session, item: CoursewareItem, destination: str | Path) 
     signed_url = signed_payload.get("url") if isinstance(signed_payload, dict) else ""
     if not isinstance(signed_url, str) or not signed_url.startswith(("https://", "http://")):
         raise RuntimeError("平台未返回有效的签名下载地址")
-    return _download_url(session, signed_url, directory, item.filename or item.activity_title)
+    return _download_url(session, signed_url, directory, item.filename or item.activity_title,
+                         progress_callback=progress_callback, should_cancel=should_cancel,
+                         resource_key=_courseware_resource_key(item))
 
 
-def _download_url(session, url: str, directory: Path, filename: str) -> Path:
-    with _reserve_download_path(directory, filename or url.rsplit("/", 1)[-1] or "courseware") as target:
-        return _download_to_path(session, url, directory, target)
+def _download_url(session, url: str, directory: Path, filename: str, *,
+                  progress_callback=None, should_cancel=None, resource_key=None) -> Path:
+    _check_download_cancelled(should_cancel)
+    with _reserve_download_path(directory, filename or url.rsplit("/", 1)[-1] or "courseware", resource_key=resource_key) as target:
+        return _download_to_path(session, url, directory, target,
+                                 progress_callback=progress_callback, should_cancel=should_cancel, resource_key=resource_key)
 
 
-def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
+def _download_to_path(session, url: str, directory: Path, target: Path, *,
+                      progress_callback=None, should_cancel=None, resource_key=None) -> Path:
+    _check_download_cancelled(should_cancel)
     partial = target.with_name(target.name + ".part")
     # 断点续传：.part 已有字节则带 Range 续传（平台实测返回 206 Partial Content）。
     # 服务端忽略 Range 返回 200 时按全量覆盖处理——文件可能已变化，不可盲目追加。
     resume_from = partial.stat().st_size if partial.exists() else 0
-    restarting_rejected_range = False
+    record = _read_resume_metadata(partial) if resource_key is not None else None
+    validator = _strong_etag(record.get("etag")) if record and record["resource"] == resource_key else None
+    restarting_rejected_range = resource_key is not None and resume_from > 0 and validator is None
+    if restarting_rejected_range:
+        resume_from = 0
     request_headers = {"User-Agent": headers["User-Agent"]}
+    if resource_key is not None:
+        request_headers["Accept-Encoding"] = "identity"
     if resume_from > 0:
         request_headers["Range"] = f"bytes={resume_from}-"
+        if validator is not None:
+            request_headers["If-Range"] = validator
     response = session.get(
         url,
         headers=request_headers,
@@ -559,7 +652,10 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
         stream=True,
     )
     try:
-        if response.status_code == 416 and resume_from > 0:
+        if resume_from > 0 and (response.status_code == 416 or (
+            resource_key is not None and response.status_code == 206
+            and _strong_etag(response.headers.get("ETag")) != validator
+        )):
             # 旧断点可能已超过远端文件末尾。只重试一次完整 GET，避免永久
             # 复用同一失效 Range；响应通过校验前保留旧 .part。
             rejected_response = response
@@ -568,6 +664,8 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
             resume_from = 0
             restarting_rejected_range = True
             request_headers.pop("Range", None)
+            request_headers.pop("If-Range", None)
+            _check_download_cancelled(should_cancel)
             response = session.get(
                 url,
                 headers=request_headers,
@@ -603,6 +701,14 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
         content_encoding = (response.headers.get("Content-Encoding") or "").lower()
         compressed = any(value.strip() in {"gzip", "x-gzip", "deflate", "br", "zstd"}
                          for value in content_encoding.split(","))
+        received_bytes = 0
+
+        def report_progress(chunk_size=0):
+            nonlocal received_bytes
+            _check_download_cancelled(should_cancel)
+            received_bytes += chunk_size
+            if progress_callback is not None:
+                progress_callback(resume_from + received_bytes, progress_total)
         # requests 会自动解压；压缩 206 无法按 Content-Range 安全拼接。
         # 压缩 200 可写入，但 Content-Length 不再对应解压后的字节数。
         if response.status_code == 206:
@@ -615,6 +721,9 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
             if compressed:
                 raise RuntimeError("压缩的断点续传响应无法安全拼接")
 
+            progress_total = range_total
+            report_progress()
+
             # 先校验临时片段，避免错误范围或短流污染既有 .part。
             chunk_path: Path | None = None
             try:
@@ -623,8 +732,10 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
                 ) as chunk_file:
                     chunk_path = Path(chunk_file.name)
                     for chunk in response.iter_content(chunk_size=1024 * 256):
+                        _check_download_cancelled(should_cancel)
                         if chunk:
                             chunk_file.write(chunk)
+                            report_progress(len(chunk))
                 received = chunk_path.stat().st_size
                 expected_chunk = range_end - range_start
                 expected_length = str(response.headers.get("Content-Length") or "")
@@ -632,26 +743,38 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
                     raise RuntimeError(
                         f"下载不完整（收到 {received}/{expected_chunk} 字节），已保留断点续传记录"
                     )
+                if resource_key is not None and resume_from == 0:
+                    _write_resume_metadata(partial, resource_key, _strong_etag(response.headers.get("ETag")))
                 with partial.open("ab" if resume_from > 0 else "wb") as file, chunk_path.open("rb") as chunk_file:
                     for chunk in iter(lambda: chunk_file.read(1024 * 256), b""):
+                        _check_download_cancelled(should_cancel)
                         file.write(chunk)
             finally:
                 if chunk_path is not None:
                     chunk_path.unlink(missing_ok=True)
         else:
             # 200 是全量响应，压缩体跳过 Content-Length 校验。
+            replacing_existing = restarting_rejected_range or (resource_key is not None and partial.exists() and partial.stat().st_size > 0)
+            resume_from = 0
+            length = str(response.headers.get("Content-Length") or "")
+            progress_total = int(length) if not compressed and length.isdigit() else None
+            report_progress()
             full_path = partial
             try:
-                if restarting_rejected_range:
+                if replacing_existing:
                     # 失效断点恢复完成前保留原文件；短流/断网不应破坏它。
                     with tempfile.NamedTemporaryFile(
                         dir=directory, prefix=".xmu-download-", suffix=".chunk", delete=False,
                     ) as full_file:
                         full_path = Path(full_file.name)
+                if resource_key is not None and full_path == partial:
+                    _write_resume_metadata(partial, resource_key, None if compressed else _strong_etag(response.headers.get("ETag")))
                 with full_path.open("wb") as file:
                     for chunk in response.iter_content(chunk_size=1024 * 256):
+                        _check_download_cancelled(should_cancel)
                         if chunk:
                             file.write(chunk)
+                            report_progress(len(chunk))
                 expected_total = str(response.headers.get("Content-Length") or "")
                 if not compressed and expected_total.isdigit():
                     received = full_path.stat().st_size
@@ -660,11 +783,23 @@ def _download_to_path(session, url: str, directory: Path, target: Path) -> Path:
                             f"下载不完整（收到 {received}/{expected_total} 字节），已保留断点续传记录"
                         )
                 if full_path != partial:
+                    # 先撤销旧版本续传资格，再提升新字节；任何一步失败都不能
+                    # 留下“旧 validator + 新内容”的可拼接组合。
+                    if resource_key is not None:
+                        _write_resume_metadata(partial, resource_key, None)
                     os.replace(full_path, partial)
+                    if resource_key is not None:
+                        _write_resume_metadata(partial, resource_key, None if compressed else _strong_etag(response.headers.get("ETag")))
             finally:
                 if full_path != partial:
                     full_path.unlink(missing_ok=True)
+        _check_download_cancelled(should_cancel)
         os.replace(partial, target)
+        if resource_key is not None:
+            try:
+                _resume_metadata_path(partial).unlink(missing_ok=True)
+            except OSError:
+                pass  # 成品已完整落盘；残留元数据不影响后续资源身份判断。
         return target
     finally:
         if response is not None:

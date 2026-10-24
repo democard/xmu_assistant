@@ -7,6 +7,16 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class RadarConfiguredSubmissionTest {
+    @Test fun `invalid supplied coordinate sends no write`() {
+        val transport = RecordingTransport()
+        val coordinate = RadarCoordinate("bad", "c", "数学", "invalid", Double.NaN, 118.3, "custom", true)
+        val engine = RollcallEngine("fixture", transport, transport) { coordinate }
+        org.junit.Assert.assertThrows(RollcallAnswerNotSubmittedException::class.java) {
+            engine.answer(RollcallEvent("r", "数学", "老师", "雷达签到", "未签"))
+        }
+        assertTrue(transport.requests.isEmpty())
+    }
+
     private class RecordingTransport : QueryHttpTransport {
         val requests = mutableListOf<QueryHttpRequest>()
         override fun execute(request: QueryHttpRequest): QueryHttpResponse {

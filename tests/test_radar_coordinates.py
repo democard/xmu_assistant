@@ -55,6 +55,64 @@ class RadarCoordinateStoreTests(unittest.TestCase):
         self.store.add("c2", "数学建模", "B", 24.2, 118.2)
         self.assertIsNone(self.store.preferred_for("c3", "数学建模"))
 
+    def test_title_only_mutations_do_not_corrupt_id_bound_courses(self):
+        c1_first = self.store.add("c1", "数学建模", "c1-A", 24.60, 118.30, make_preferred=True)
+        c1_second = self.store.add("c1", "数学建模", "c1-B", 24.61, 118.31, make_preferred=False)
+        c2_only = self.store.add("c2", "数学建模", "c2-A", 24.62, 118.32, make_preferred=True)
+
+        legacy_1 = self.store.add("", "数学建模", "legacy-1", 24.63, 118.33, make_preferred=True)
+        legacy_2 = self.store.add("", "数学建模", "legacy-2", 24.64, 118.34, make_preferred=True)
+
+        self.assertEqual(self.store.preferred_for("c1", "数学建模").id, c1_first.id)
+        self.assertTrue(self.store.preferred_for("c1", "数学建模").preferred)
+        self.assertEqual(self.store.preferred_for("c2", "数学建模").id, c2_only.id)
+        self.assertTrue(self.store.preferred_for("c2", "数学建模").preferred)
+
+        self.assertTrue(self.store.set_preferred(legacy_1.id))
+        self.assertEqual(self.store.preferred_for("c1", "数学建模").id, c1_first.id)
+        self.assertTrue(self.store.preferred_for("c1", "数学建模").preferred)
+        self.assertEqual(self.store.preferred_for("c2", "数学建模").id, c2_only.id)
+        self.assertTrue(self.store.preferred_for("c2", "数学建模").preferred)
+
+        self.assertTrue(self.store.delete(legacy_1.id))
+        self.assertEqual(self.store.preferred_for("", "数学建模").id, legacy_2.id)
+        self.assertTrue(self.store.preferred_for("", "数学建模").preferred)
+
+        self.assertTrue(self.store.delete(c1_first.id))
+        self.assertEqual(self.store.preferred_for("c1", "数学建模").id, c1_second.id)
+        self.assertTrue(self.store.preferred_for("c1", "数学建模").preferred)
+
+    def test_read_skips_invalid_coordinates_and_sanitizes_accuracy(self):
+        radar_path = Path(self.tmp.name) / "radar.json"
+        radar_path.write_text(
+            """[
+              {"id": "bad-lat", "course_id": "c1", "course_title": "数学", "name": "越界纬度", "latitude": 95.0, "longitude": 118.3, "preferred": true},
+              {"id": "bad-lon", "course_id": "c1", "course_title": "数学", "name": "越界经度", "latitude": 24.6, "longitude": -181.0, "preferred": true},
+              {"id": "nan-lat", "course_id": "c1", "course_title": "数学", "name": "NaN纬度", "latitude": NaN, "longitude": 118.3, "preferred": true},
+              {"id": "inf-lon", "course_id": "c1", "course_title": "数学", "name": "Inf经度", "latitude": 24.6, "longitude": Infinity, "preferred": true},
+              {"id": "good-neg-acc", "course_id": "c1", "course_title": "数学", "name": "负精度", "latitude": 24.6, "longitude": 118.3, "preferred": true, "accuracy_meters": -5.0},
+              {"id": "good-pos-acc", "course_id": "c2", "course_title": "物理", "name": "正常精度", "latitude": 24.61, "longitude": 118.31, "preferred": true, "accuracy_meters": 12.5}
+            ]""",
+            encoding="utf-8",
+        )
+        reloaded = RadarCoordinateStore(radar_path)
+        self.assertEqual([item.id for item in reloaded.all()], ["good-neg-acc", "good-pos-acc"])
+        self.assertIsNone(reloaded.preferred_for("c1", "数学").accuracy_meters)
+        self.assertEqual(reloaded.preferred_for("c2", "物理").accuracy_meters, 12.5)
+
+        added = reloaded.add("c3", "化学", "实验楼", 24.62, 118.32, accuracy_meters=-1.0)
+        self.assertIsNone(added.accuracy_meters)
+
+    def test_write_cleans_up_temp_file_on_replace_error(self):
+        from unittest.mock import patch
+
+        radar_path = Path(self.tmp.name) / "radar.json"
+        tmp_path = radar_path.with_suffix(".tmp")
+        with patch.object(Path, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.store.add("c1", "数学建模", "A", 24.6, 118.3)
+        self.assertFalse(tmp_path.exists())
+
     def test_presets_ship_with_package(self):
         presets = load_presets()
         self.assertGreater(len(presets), 10)

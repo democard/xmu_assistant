@@ -6,8 +6,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -15,6 +19,56 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class CoursewareClientTest {
+    @Test fun `different resource with same filename never claims another resources partial`() {
+        val server = MockWebServer()
+        val directory = temporaryFolder.newFolder("resource-identity")
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .addHeader("Content-Type", "application/pdf")
+                .addHeader("ETag", "\"new-resource\"")
+                .setBody("resource-b-complete"),
+        )
+        server.start()
+        try {
+            val oldPartial = File(directory, "lecture.pdf.part").apply { writeText("resource-a-prefix") }
+            DownloadResumeMetadata.write(oldPartial, "resource-a", DownloadEntityValidator("etag", "\"a-v1\""))
+            val item = CoursewareUiItem(
+                id = "upload-b", courseId = "course-1", activityId = "activity-b", title = "Lecture",
+                filename = "lecture.pdf", type = "文件", sourceUrl = server.url("/lecture.pdf").toString(),
+            )
+            val client = CoursewareClient(
+                cookieHeader = "",
+                queryTransport = QueryHttpTransport { error("query transport unused") },
+                executorFactory = { size -> Executors.newFixedThreadPool(size) },
+                fileDownloadTransport = OkHttpFileDownloadTransport(OkHttpClient()),
+                downloadDirectory = directory,
+            )
+
+            val result = client.download(item)
+
+            assertEquals(COURSEWARE_STATUS_SUCCESS, result)
+            assertEquals("resource-a-prefix", oldPartial.readText())
+            assertEquals("resource-b-complete", File(directory, "lecture (2).pdf").readText())
+            assertEquals(null, server.takeRequest().getHeader("Range"))
+            assertTrue(DownloadResumeMetadata.sidecar(oldPartial).exists())
+        } finally {
+            server.shutdown()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun `signed URL resource forbidden does not expire account`() {
+        val directory = java.nio.file.Files.createTempDirectory("forbidden-download").toFile()
+        val client = CoursewareClient("session=fixture", RecordingTransport { request ->
+            QueryHttpResponse(request.url, 403, null, "forbidden", emptyMap())
+        }, { size -> Executors.newFixedThreadPool(size) }, downloadDirectory = directory)
+        try {
+            val item = CoursewareUiItem(id = "1", courseId = "c", activityId = "a", title = "file", filename = "file.pdf", type = "文件", referenceId = "r")
+            try { client.download(item); org.junit.Assert.fail("expected failure") }
+            catch (error: IllegalStateException) { assertFalse(error is MainSessionExpiredException) }
+        } finally { directory.deleteRecursively() }
+    }
+
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
@@ -315,12 +369,92 @@ class CoursewareClientTest {
         assertTrue(File(directory, "resume.pdf.part").exists())
         assertFalse(File(directory, "resume.pdf").exists())
         assertFalse(File(directory, "resume (2).pdf").exists())
+        // The real transport writes this sidecar from the response validator; this fake only
+        // covers client-side reservation and therefore seeds the equivalent resume ownership.
+        DownloadResumeMetadata.write(
+            File(directory, "resume.pdf.part"),
+            coursewareResourceIdentity(item),
+            DownloadEntityValidator("etag", "\"fixture-version\""),
+        )
 
         client.download(item)
 
         assertEquals("final", File(directory, "resume.pdf").readText())
         assertFalse(File(directory, "resume.pdf.part").exists())
         assertEquals(2, attempt)
+    }
+
+    @Test
+    fun `retry finds matching numbered partial after another resource owns primary`() {
+        val directory = temporaryFolder.newFolder("numbered-resume")
+        var attempts = 0
+        val client = downloadClient(directory) { target ->
+            attempts++
+            if (attempts == 1) {
+                target.writeText("partial-b")
+                FileDownloadResult(500, "application/pdf")
+            } else {
+                target.writeText("complete-b")
+                FileDownloadResult(200, "application/pdf")
+            }
+        }
+        val itemA = directItem("same.pdf", "upload-a")
+        val itemB = directItem("same.pdf", "upload-b")
+        val primary = File(directory, "same.pdf.part").apply { writeText("partial-a") }
+        DownloadResumeMetadata.write(primary, coursewareResourceIdentity(itemA), DownloadEntityValidator("etag", "\"a\""))
+
+        assertThrows(IllegalStateException::class.java) { client.download(itemB) }
+        val numberedPart = File(directory, "same (2).pdf.part")
+        assertTrue(numberedPart.exists())
+        DownloadResumeMetadata.write(numberedPart, coursewareResourceIdentity(itemB), DownloadEntityValidator("etag", "\"b\""))
+
+        client.download(itemB)
+
+        assertEquals("partial-a", primary.readText())
+        assertEquals("complete-b", File(directory, "same (2).pdf").readText())
+        assertFalse(File(directory, "same (3).pdf").exists())
+        assertEquals(2, attempts)
+    }
+
+    @Test
+    fun `active sidecar reservation prevents another legal filename from replacing it`() {
+        val directory = temporaryFolder.newFolder("sidecar-collision")
+        val reserved = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val client = CoursewareClient(
+            cookieHeader = "",
+            queryTransport = RecordingTransport { error("query transport unused") },
+            executorFactory = { size -> Executors.newFixedThreadPool(size) },
+            fileDownloadTransport = FileDownloadTransport { request, target ->
+                if (request.url.endsWith("/first.pdf")) {
+                    reserved.countDown()
+                    check(releaseFirst.await(5, TimeUnit.SECONDS))
+                    target.writeText("first")
+                } else {
+                    target.writeText("second")
+                }
+                FileDownloadResult(200, "application/pdf")
+            },
+            downloadDirectory = directory,
+        )
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val first = executor.submit<String> {
+                client.download(directItem("same.pdf", "first").copy(sourceUrl = "https://fixture.invalid/first.pdf"))
+            }
+            assertTrue(reserved.await(5, TimeUnit.SECONDS))
+            val second = directItem("same.pdf.part.meta", "second").copy(sourceUrl = "https://fixture.invalid/valid.pdf")
+            assertEquals(COURSEWARE_STATUS_SUCCESS, client.download(second))
+            val secondFile = File(directory, "same.pdf.part (2).meta")
+            assertTrue(secondFile.exists())
+            releaseFirst.countDown()
+            assertEquals(COURSEWARE_STATUS_SUCCESS, first.get(5, TimeUnit.SECONDS))
+            assertEquals("first", File(directory, "same.pdf").readText())
+            assertEquals("second", secondFile.readText())
+        } finally {
+            releaseFirst.countDown()
+            executor.shutdownNow()
+        }
     }
 
     @Test
@@ -420,6 +554,53 @@ class CoursewareClientTest {
         assertFalse(captured.getValue("https://lnt.xmu.edu.cn:8443/f/port.pdf").containsKey("Cookie"))
         assertTrue(captured.getValue("https://lnt.xmu.edu.cn:443/f/default.pdf").containsKey("Cookie"))
         assertFalse(captured.getValue("https://lnt.xmu.edu.cn.evil.com/f/spoof.pdf").containsKey("Cookie"))
+    }
+
+    @Test
+    fun `explicit json null fields fall back to secondary keys in courses and activities`() {
+        val transport = RecordingTransport { request ->
+            val body = when {
+                request.url.contains("/api/my-courses") ->
+                    """{"courses":[{"id":null,"course_id":"course-1","name":null,"title":"数学分析","academic_year":null,"term_name":"2025-2026-1","semester":{"code":null,"name":"20251"}}]}"""
+                request.url.endsWith("/courseware-activities") ->
+                    """{"activities":[{"id":"act-1","type":"video","title":null,"name":"第一章课件","module_name":null,"syllabus_name":"第一章"}]}"""
+                request.url.endsWith("/api/activities/act-1") ->
+                    """{"title":null,"name":"第一章课件","type":null,"uploads":[{"id":null,"reference_id":"ref-1","name":null,"filename":"ch1.mp4","type":null}]}"""
+                else -> error("Unexpected URL: ${request.url}")
+            }
+            QueryHttpResponse(request.url, 200, null, body, emptyMap())
+        }
+        val client = CoursewareClient(
+            cookieHeader = "session=fixture",
+            queryTransport = transport,
+            executorFactory = { size -> Executors.newFixedThreadPool(size) },
+        )
+
+        val course = client.fetchCourses().single()
+        assertEquals("course-1", course.id)
+        assertEquals("数学分析", course.title)
+        assertEquals("2025-2026-1", course.term)
+        assertEquals("20251", course.semesterCode)
+
+        val item = client.fetchCourseware("course-1").single()
+        assertEquals("act-1", item.activityId)
+        assertEquals("第一章课件", item.title)
+        assertEquals("ch1.mp4", item.filename)
+        assertEquals("ref-1", item.referenceId)
+        assertEquals("ref-1", item.resourceId)
+        assertEquals(
+            coursewareResourceIdentity(item),
+            coursewareResourceIdentity(item.copy(id = "act-1-99-ref-1")),
+        )
+        val direct = item.copy(referenceId = "", resourceId = "", sourceUrl = "https://cdn.example/file.pdf?sig=one#page=1")
+        val renewedDirect = direct.copy(sourceUrl = "https://cdn.example/file.pdf?sig=two#page=2")
+        assertNotEquals(coursewareResourceIdentity(direct), coursewareResourceIdentity(renewedDirect))
+        assertEquals(
+            coursewareResourceIdentity(direct),
+            coursewareResourceIdentity(direct.copy(sourceUrl = direct.sourceUrl.substringBefore('#') + "#other")),
+        )
+        assertEquals("视频", item.type)
+        assertEquals("第一章", item.moduleName)
     }
 
     @Test

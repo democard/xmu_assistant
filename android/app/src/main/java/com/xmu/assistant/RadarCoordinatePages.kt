@@ -135,7 +135,7 @@ internal fun CourseCoordinatePage(
             }
         }
     }
-    val places = remember(selectedCourseId, selectedCourseTitle, revision) {
+    val places = remember(store, selectedCourseId, selectedCourseTitle, revision) {
         store.placesFor(selectedCourseId, selectedCourseTitle)
     }
 

@@ -11,8 +11,8 @@ android {
         applicationId = "com.xmu.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "1.8.3"
+        versionCode = 45
+        versionName = "1.8.4"
         buildConfigField("boolean", "NETWORK_METRICS", "false")
     }
 
@@ -49,6 +49,11 @@ android {
         unitTests {
             // Robolectric 运行 Compose UI 测试需要 Android 资源
             isIncludeAndroidResources = true
+            all {
+                // JavaMail 1.6.7's JVM hostname checker reflects into InetAddress on JDK 17.
+                // Open only the unit-test worker module; Android production runtime is unchanged.
+                it.jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+            }
         }
     }
 
