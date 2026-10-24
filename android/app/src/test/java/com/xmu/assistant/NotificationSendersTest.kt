@@ -162,7 +162,11 @@ class NotificationSendersTest {
             // dialogue are identical; only this fixture's certificate SAN differs.
             assertTrue("trusted wrong-SAN certificate completes TLS", server.awaitHandshake())
             assertTrue("SMTP greeting is sent only after the TLS handshake", server.awaitGreeting())
-            assertTrue("client aborts the wrong-SAN SMTP session", server.failure is IOException)
+            assertTrue("client stream terminates before AUTH", server.awaitClientTermination())
+            assertTrue(
+                "wrong-SAN session must end by EOF or an observed client I/O close",
+                server.clientEof || server.clientReadFailure is IOException,
+            )
             assertTrue("hostname mismatch must fail before AUTH", server.commands.none { it.startsWith("AUTH", true) })
         } finally {
             server.close()
@@ -282,8 +286,11 @@ class NotificationSendersTest {
         private val acceptedHandshake = CountDownLatch(1)
         private val completedHandshake = CountDownLatch(1)
         private val greetingSent = CountDownLatch(1)
+        private val clientTerminated = CountDownLatch(1)
         val commands = CopyOnWriteArrayList<String>()
         @Volatile var failure: Throwable? = null
+        @Volatile var clientEof: Boolean = false
+        @Volatile var clientReadFailure: IOException? = null
         val port: Int get() = server.localPort
         private val worker = Thread({
             try {
@@ -291,7 +298,17 @@ class NotificationSendersTest {
                     acceptedHandshake.countDown()
                     (socket as javax.net.ssl.SSLSocket).startHandshake()
                     completedHandshake.countDown()
-                    serveSmtp(socket, commands, advertiseStartTls = false) { greetingSent.countDown() }
+                    serveSmtp(
+                        socket,
+                        commands,
+                        advertiseStartTls = false,
+                        onGreeting = { greetingSent.countDown() },
+                        onClientTermination = { error ->
+                            clientEof = error == null
+                            clientReadFailure = error
+                            clientTerminated.countDown()
+                        },
+                    )
                 }
             } catch (error: Exception) {
                 // Client-side TLS verification is expected to close the socket before SMTP auth.
@@ -302,6 +319,7 @@ class NotificationSendersTest {
         fun awaitConnection(): Boolean = acceptedHandshake.await(5, TimeUnit.SECONDS)
         fun awaitHandshake(): Boolean = completedHandshake.await(1, TimeUnit.SECONDS)
         fun awaitGreeting(): Boolean = greetingSent.await(1, TimeUnit.SECONDS)
+        fun awaitClientTermination(): Boolean = clientTerminated.await(3, TimeUnit.SECONDS)
 
         override fun close() {
             runCatching { server.close() }
@@ -352,6 +370,7 @@ class NotificationSendersTest {
         advertiseStartTls: Boolean,
         serverTlsContext: SSLContext? = null,
         onGreeting: () -> Unit = {},
+        onClientTermination: (IOException?) -> Unit = {},
     ) {
         var activeSocket = socket
         var output = activeSocket.getOutputStream().bufferedWriter()
@@ -361,7 +380,16 @@ class NotificationSendersTest {
         onGreeting()
         var loginStep = 0
         while (true) {
-            val line = input.readLine() ?: break
+            val line = try {
+                input.readLine()
+            } catch (error: IOException) {
+                onClientTermination(error)
+                throw error
+            }
+            if (line == null) {
+                onClientTermination(null)
+                break
+            }
             commands += line
             when {
                 line.startsWith("EHLO", true) -> {
