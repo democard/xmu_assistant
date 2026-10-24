@@ -19,7 +19,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONPATH: ${{ github.workspace }}/xmu-rollcall-cli
-      XMU_ROLLCALL_CONFIG_DIR: ${{ runner.temp }}/xmu-test-profile
+      XMU_ROLLCALL_CONFIG_DIR: ${{ github.workspace }}/build/ci-profile
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
