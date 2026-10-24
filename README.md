@@ -164,7 +164,7 @@ Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 
 
 ### 1.8.4 验证记录
 
-Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通过，最终邮件定向 19 项通过。Ruff、编译检查与 Android Lint 通过。详细修复、验证与打包信息见 [1.8.4 验证记录](documentation/verification-1.8.4.md)；历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
+Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通过，其中 19 项邮件回归通过。Ruff、编译检查与 Android Lint 通过。详细修复、验证与打包信息见 [1.8.4 验证记录](documentation/verification-1.8.4.md)；历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ### 项目结构
 

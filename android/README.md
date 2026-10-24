@@ -65,7 +65,7 @@ cd android
 | 单元测试报告 | `app/build/reports/tests/testDebugUnitTest/index.html` |
 | Lint 报告 | `app/build/reports/lint-results-debug.html` |
 
-单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。1.8.4 的 Debug 全量 822 项测试通过，最终邮件定向 19 项通过；Lint 0 错误、6 警告。打包、版本与签名检查见 [1.8.4 验证记录](../documentation/verification-1.8.4.md)。
+单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。1.8.4 的 Debug 全量 822 项测试通过，其中 19 项邮件回归通过；Lint 0 错误、6 警告。打包、版本与签名检查见 [1.8.4 验证记录](../documentation/verification-1.8.4.md)。
 
 仓库另带 `gradle/init.gradle` 作为可选镜像配置，可用 `-I gradle/init.gradle` 显式加载。依赖未缓存完整时，不要添加 `--offline`。
 

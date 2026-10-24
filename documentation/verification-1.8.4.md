@@ -10,11 +10,13 @@
 | --- | --- |
 | Python 完整回归 | 800 项测试、294 个子测试通过 |
 | Android Debug 完整回归 | 822 项测试通过，0 失败 / 错误 / 跳过 |
-| 最终 Android 邮件定向 | 19 项通过，覆盖隐式 TLS、STARTTLS 和证书身份对照 |
+| 打包前 Android 邮件定向 | 19 项通过，覆盖隐式 TLS、STARTTLS 和证书身份对照 |
 | Ruff 与 Python 编译检查 | 通过 |
 | Android Lint | 0 错误、6 警告、13 条提示 |
 
-完整回归对应本轮修复后的功能源码；最终邮件定向验证对应最后调整的 SMTP 夹具，不与全量计数相加。发布版本号调整后，安装包另核对其内嵌版本与资源。
+完整回归对应本轮修复后的功能源码；邮件定向不与全量计数相加。发布版本号调整后，安装包另核对其内嵌版本与资源。
+
+发布前 GitHub Actions 的 Windows 与 Android 检查均通过，见 [云端运行记录](https://github.com/democard/xmu_assistant/actions/runs/40098429197)。Android 云端结果为 115 个测试类、822 项测试，0 失败 / 错误 / 跳过，含 19 项邮件回归。云端验证还修正了工作流变量作用域、已退役 SDK 工具包名称，以及 SMTP 夹具对正常 EOF 关闭的跨平台兼容；没有改变安装包的生产代码。该结果对应 `fc96cba`，后续仅更新发布文档。
 
 回归日志保存在本地 `build/repair8-20261024/` 及 `build/maintenance4-repair8*`。构建与包检查日志保存于 `build/release-1.8.4/`。
 
