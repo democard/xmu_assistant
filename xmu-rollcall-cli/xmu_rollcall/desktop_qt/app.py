@@ -329,7 +329,7 @@ class DashboardWindow(
         self._update_nav_badges()
 
     def _setup_shortcuts(self):
-        """全局键盘加速器：Ctrl+1..6 直达页签；Ctrl+R 触发当前页刷新。"""
+        """全局键盘加速器：Ctrl+1..7 直达页签；Ctrl+R 触发当前页刷新。"""
         for index in range(len(self.nav_titles)):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
             shortcut.activated.connect(lambda checked=False, row=index: self._show_page(row))
@@ -1450,12 +1450,17 @@ class DashboardWindow(
         undo = event[5] if len(event) > 5 else None
         if login_epoch != self._login_epoch:
             # logout() keeps the login gate occupied until this cleanup finishes.
-            self._run_thread(
-                self._discard_persisted_login_worker,
+            cleanup_args = (
                 session,
                 undo,
                 self._login_persist_cancel_remove_cookie,
             )
+            try:
+                self._run_thread(self._discard_persisted_login_worker, *cleanup_args)
+            except Exception as exc:
+                # Thread exhaustion must not leave canceled credentials persisted.
+                self._discard_persisted_login_worker(*cleanup_args)
+                self.log(f"登录取消后的清理线程未能启动，已同步回滚：{exc}")
             return
         if error:
             self._login_persisting = False
@@ -1856,6 +1861,8 @@ class DashboardWindow(
             # _apply_verified_records 已整表重建，此处统一走摘要重写）
             self._write_course_summary("；核实完成")
             self.log(f"最近签到明细核实完成：更新 {applied} 条。")
+        if applied > 0 and hasattr(self, "_save_ui_snapshot"):
+            self._save_ui_snapshot()
 
     def _ev_course_records_verify_error(self, event):
         if len(event) > 3 and self.session is not event[3]:
@@ -1962,9 +1969,11 @@ class DashboardWindow(
             index, total, filename, key = event[3:7]
         else:
             index, total, filename, key = event[1:5]
+        prev_status = self.courseware_download_status.get(key)
         self.courseware_download_status[key] = "下载中"
-        self._refresh_courseware_table()
-        self._update_nav_badges()
+        if prev_status != "下载中":
+            self._refresh_courseware_table()
+            self._update_nav_badges()
         byte_progress = ""
         if len(event) >= 9:
             received, expected = event[7:9]
@@ -2119,7 +2128,14 @@ class DashboardWindow(
 
     def _open_path(self, path: str | Path):
         try:
-            os.startfile(str(path))
+            if hasattr(os, "startfile"):
+                os.startfile(str(path))
+            else:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+
+                if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                    raise OSError("QDesktopServices.openUrl returned False")
         except Exception as exc:
             self.log(f"打开路径失败：{exc}")
             QMessageBox.warning(self, "打开失败", "无法打开该目录，请检查路径是否存在。")
@@ -2268,7 +2284,8 @@ class DashboardWindow(
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] {message}"
         self.log_messages.append(line)
-        self.log_messages = self.log_messages[-MAX_LOG_LINES:]
+        if len(self.log_messages) > MAX_LOG_LINES:
+            del self.log_messages[:-MAX_LOG_LINES]
         # 同步打印到 stdout：供后台运行时重定向到日志文件观测（否则日志只在内存里，
         # 外部无法发现"轮询失败/会话过期"等问题）；可见日志页已移除，仅内存+stdout
         print(line, flush=True)

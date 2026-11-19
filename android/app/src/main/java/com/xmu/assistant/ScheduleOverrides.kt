@@ -16,19 +16,42 @@ internal data class ScheduleCourseOverride(
 /** Local corrections to a course arrangement, kept separate from the official timetable cache. */
 internal class ScheduleOverrideStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private var cachedRaw: String? = null
+    private var cachedItems: List<StoredScheduleOverride> = emptyList()
 
-    @Synchronized
-    fun apply(termCode: String, group: XmuScheduleGroup): XmuScheduleGroup {
+    fun apply(termCode: String, group: XmuScheduleGroup): XmuScheduleGroup = synchronized(lock) {
         val override = readAll().firstOrNull { it.matches(termCode, group) }?.value ?: return group
-        return applyScheduleOverride(group, override)
+        applyScheduleOverride(group, override)
     }
 
-    @Synchronized
-    fun has(termCode: String, group: XmuScheduleGroup): Boolean =
-        readAll().any { it.matches(termCode, group) }
+    fun applyToEntries(termCode: String, entries: List<XmuScheduleEntry>): List<XmuScheduleEntry> = synchronized(lock) {
+        val overrides = readAll().filter { it.termCode == termCode }
+        if (overrides.isEmpty()) return entries
+        entries.map { entry ->
+            val override = overrides.firstOrNull {
+                normalizeCourseTitle(it.courseName) == normalizeCourseTitle(entry.courseName) &&
+                    it.originalWeekday == entry.weekday &&
+                    it.originalStartSection == entry.startSection &&
+                    it.originalEndSection == entry.endSection
+            }?.value ?: return@map entry
+            entry.copy(
+                weekday = override.weekday,
+                startSection = override.startSection,
+                endSection = override.endSection,
+                startTime = scheduleSectionStartTime(override.startSection, entry.startTime),
+                endTime = scheduleSectionEndTime(override.endSection, entry.endTime),
+                room = override.room.ifBlank { entry.room },
+                teacher = override.teacher.ifBlank { entry.teacher },
+                weeks = override.weeks.ifBlank { entry.weeks },
+            )
+        }
+    }
 
-    @Synchronized
-    fun save(termCode: String, original: XmuScheduleGroup, value: ScheduleCourseOverride) {
+    fun has(termCode: String, group: XmuScheduleGroup): Boolean = synchronized(lock) {
+        readAll().any { it.matches(termCode, group) }
+    }
+
+    fun save(termCode: String, original: XmuScheduleGroup, value: ScheduleCourseOverride) = synchronized(lock) {
         require(value.weekday in 1..7) { "星期必须在 1—7 之间" }
         require(value.startSection in 1..11) { "开始节次必须在 1—11 之间" }
         require(value.endSection in value.startSection..11) { "结束节次不能早于开始节次" }
@@ -49,47 +72,59 @@ internal class ScheduleOverrideStore(context: Context) {
         writeAll(all)
     }
 
-    @Synchronized
-    fun remove(termCode: String, original: XmuScheduleGroup): Boolean {
+    fun remove(termCode: String, original: XmuScheduleGroup): Boolean = synchronized(lock) {
         val all = readAll().toMutableList()
         val removed = all.removeAll { it.matches(termCode, original) }
         if (removed) writeAll(all)
-        return removed
+        removed
+    }
+
+    fun clear() = synchronized(lock) {
+        cachedRaw = ""
+        cachedItems = emptyList()
+        prefs.edit().remove(KEY_OVERRIDES).apply()
     }
 
     private fun readAll(): List<StoredScheduleOverride> {
         val raw = prefs.getString(KEY_OVERRIDES, null).orEmpty()
-        if (raw.isBlank()) return emptyList()
-        return runCatching {
-            val rows = JSONArray(raw)
-            buildList {
-                for (index in 0 until rows.length()) {
-                    val row = rows.optJSONObject(index) ?: continue
-                    val value = row.optJSONObject("value") ?: continue
-                    val weekday = value.optInt("weekday")
-                    val startSection = value.optInt("startSection")
-                    val endSection = value.optInt("endSection")
-                    if (weekday !in 1..7 || startSection !in 1..11 || endSection !in startSection..11) continue
-                    add(
-                        StoredScheduleOverride(
-                            termCode = row.optString("termCode"),
-                            courseName = row.optString("courseName"),
-                            originalWeekday = row.optInt("originalWeekday"),
-                            originalStartSection = row.optInt("originalStartSection"),
-                            originalEndSection = row.optInt("originalEndSection"),
-                            value = ScheduleCourseOverride(
-                                weekday = weekday,
-                                startSection = startSection,
-                                endSection = endSection,
-                                room = value.optString("room"),
-                                teacher = value.optString("teacher"),
-                                weeks = value.optString("weeks"),
+        if (raw == cachedRaw) return cachedItems
+        val parsed = if (raw.isBlank()) {
+            emptyList()
+        } else {
+            runCatching {
+                val rows = JSONArray(raw)
+                buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val value = row.optJSONObject("value") ?: continue
+                        val weekday = value.optInt("weekday")
+                        val startSection = value.optInt("startSection")
+                        val endSection = value.optInt("endSection")
+                        if (weekday !in 1..7 || startSection !in 1..11 || endSection !in startSection..11) continue
+                        add(
+                            StoredScheduleOverride(
+                                termCode = row.optString("termCode"),
+                                courseName = row.optString("courseName"),
+                                originalWeekday = row.optInt("originalWeekday"),
+                                originalStartSection = row.optInt("originalStartSection"),
+                                originalEndSection = row.optInt("originalEndSection"),
+                                value = ScheduleCourseOverride(
+                                    weekday = weekday,
+                                    startSection = startSection,
+                                    endSection = endSection,
+                                    room = value.optString("room"),
+                                    teacher = value.optString("teacher"),
+                                    weeks = value.optString("weeks"),
+                                ),
                             ),
-                        ),
-                    )
+                        )
+                    }
                 }
-            }
-        }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList())
+        }
+        cachedRaw = raw
+        cachedItems = parsed
+        return parsed
     }
 
     private fun writeAll(items: List<StoredScheduleOverride>) {
@@ -114,7 +149,10 @@ internal class ScheduleOverrideStore(context: Context) {
                     ),
             )
         }
-        prefs.edit().putString(KEY_OVERRIDES, rows.toString()).apply()
+        val encoded = rows.toString()
+        cachedRaw = encoded
+        cachedItems = items.toList()
+        prefs.edit().putString(KEY_OVERRIDES, encoded).apply()
     }
 
     private data class StoredScheduleOverride(
@@ -134,6 +172,7 @@ internal class ScheduleOverrideStore(context: Context) {
     }
 
     private companion object {
+        val lock = Any()
         const val PREFS_NAME = "xmu_schedule_overrides"
         const val KEY_OVERRIDES = "course_arrangements_v1"
     }

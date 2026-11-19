@@ -88,42 +88,14 @@ internal fun ScheduleWeekGrid(
                 overlapping = placement.overlapping,
             )
         }
-        SubcomposeLayout(Modifier.horizontalScroll(rememberScrollState())) { constraints ->
-            val measurables = subcompose("grid") {
-                Row {
-                    ScheduleGridHeaderCell("节次", sectionWidth, false)
-                    axes.days.forEach { day ->
-                        val date = weekStart?.plusDays(day - 1L)?.let { "${it.monthValue}/${it.dayOfMonth}" }.orEmpty()
-                        ScheduleGridHeaderCell("周${xmuWeekdayShort(day)}\n$date", dayWidth * laneCounts.getValue(day), selectedIsCurrent && day == todayWeekday)
-                    }
-                }
-                axes.sections.forEach { section ->
-                    Row(Modifier.fillMaxWidth()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.width(sectionWidth).fillMaxHeight(),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("$section", style = MaterialTheme.typography.labelMedium, color = themePrimary())
-                            }
-                        }
-                        axes.days.forEach { day ->
-                            Surface(
-                                color = if (selectedIsCurrent && day == todayWeekday) themeTodayColumn() else MaterialTheme.colorScheme.surface,
-                                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                                modifier = Modifier.width(dayWidth * laneCounts.getValue(day)).fillMaxHeight(),
-                            ) { }
-                        }
-                    }
-                }
-                placements.forEach { CourseCard(it) }
-            }
+        val hScroll = rememberScrollState()
+        SubcomposeLayout(Modifier.fillMaxWidth()) { constraints ->
             val dayPx = dayWidth.roundToPx()
             val sectionPx = sectionWidth.roundToPx()
-            val width = sectionPx + dayPx * laneCounts.values.sum()
-            val header = measurables[0].measure(Constraints.fixedWidth(width))
+            val totalDayWidth = dayPx * laneCounts.values.sum()
+            val layoutWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else sectionPx + totalDayWidth
+
             // Measure real wrapped text, including FlowRow, before fixing every card to its span.
-            // Intrinsic estimates can undercount wrapped time lines at larger font scales.
             val spans = placements.map { (it.course.endSection.coerceAtMost(11) - it.course.startSection + 1).coerceAtLeast(1) }
             val measuredCards = subcompose("measure") {
                 placements.forEach { placement ->
@@ -134,25 +106,92 @@ internal fun ScheduleWeekGrid(
                 val required = measuredCards[index].height
                 maxOf(height, (required + spans[index] - 1) / spans[index])
             }
-            val heights = IntArray(axes.sections.size) { periodHeight }
-            val cards = placements.indices.map { index ->
-                measurables[1 + axes.sections.size + index].measure(Constraints.fixed(dayPx, periodHeight * spans[index]))
-            }
-            val tops = IntArray(heights.size)
-            var totalHeight = header.height
-            heights.forEachIndexed { index, height -> tops[index] = totalHeight; totalHeight += height }
-            val strips = axes.sections.indices.map { index ->
-                measurables[1 + index].measure(Constraints.fixed(width, heights[index]))
-            }
-            layout(constraints.constrainWidth(width), constraints.constrainHeight(totalHeight)) {
-                header.placeRelative(0, 0)
-                strips.forEachIndexed { index, strip -> strip.placeRelative(0, tops[index]) }
-                cards.forEachIndexed { index, card ->
-                    val placement = placements[index]
-                    val group = placement.course
-                    val precedingColumns = axes.days.takeWhile { it != group.weekday }.sumOf { laneCounts.getValue(it) }
-                    card.placeRelative(sectionPx + (precedingColumns + placement.lane) * dayPx, tops[axes.sections.indexOf(group.startSection)])
+            val measuredHeader = subcompose("measureHeader") {
+                Box(Modifier.clearAndSetSemantics {}) {
+                    ScheduleGridHeaderCell("周一\n10/10", dayWidth, false)
                 }
+            }.single().measure(Constraints.fixedWidth(dayPx))
+            val headerHeight = maxOf(44.dp.roundToPx(), measuredHeader.height)
+            val totalHeight = headerHeight + periodHeight * axes.sections.size
+            val headerHeightDp = headerHeight.toDp()
+            val periodHeightDp = periodHeight.toDp()
+
+            // Fixed left 1..11 section column (does not scroll horizontally)
+            val leftColumn = subcompose("leftColumn") {
+                Column(Modifier.width(sectionWidth)) {
+                    ScheduleGridHeaderCell("节次", sectionWidth, false, Modifier.height(headerHeightDp))
+                    axes.sections.forEach { section ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.width(sectionWidth).height(periodHeightDp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("$section", style = MaterialTheme.typography.labelMedium, color = themePrimary())
+                            }
+                        }
+                    }
+                }
+            }.single().measure(Constraints.fixed(sectionPx, totalHeight))
+
+            val rightViewportWidth = (layoutWidth - sectionPx).coerceAtLeast(dayPx)
+            val rightScrollable = subcompose("rightGrid") {
+                Box(Modifier.horizontalScroll(hScroll)) {
+                    SubcomposeLayout { _ ->
+                        val measurables = subcompose("daysGrid") {
+                            Row {
+                                axes.days.forEach { day ->
+                                    val date = weekStart?.plusDays(day - 1L)?.let { "${it.monthValue}/${it.dayOfMonth}" }.orEmpty()
+                                    ScheduleGridHeaderCell(
+                                        "周${xmuWeekdayShort(day)}\n$date",
+                                        dayWidth * laneCounts.getValue(day),
+                                        selectedIsCurrent && day == todayWeekday,
+                                        Modifier.height(headerHeightDp),
+                                    )
+                                }
+                            }
+                            axes.sections.forEach { _ ->
+                                Row {
+                                    axes.days.forEach { day ->
+                                        Surface(
+                                            color = if (selectedIsCurrent && day == todayWeekday) themeTodayColumn() else MaterialTheme.colorScheme.surface,
+                                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                                            modifier = Modifier.width(dayWidth * laneCounts.getValue(day)).fillMaxHeight(),
+                                        ) { }
+                                    }
+                                }
+                            }
+                            placements.forEach { CourseCard(it) }
+                        }
+                        val headerPlaceable = measurables[0].measure(Constraints.fixed(totalDayWidth, headerHeight))
+                        val stripPlaceables = axes.sections.indices.map { index ->
+                            measurables[1 + index].measure(Constraints.fixed(totalDayWidth, periodHeight))
+                        }
+                        val cardPlaceables = placements.indices.map { index ->
+                            measurables[1 + axes.sections.size + index].measure(
+                                Constraints.fixed(dayPx, periodHeight * spans[index]),
+                            )
+                        }
+                        layout(totalDayWidth, totalHeight) {
+                            headerPlaceable.placeRelative(0, 0)
+                            stripPlaceables.forEachIndexed { index, strip ->
+                                strip.placeRelative(0, headerHeight + index * periodHeight)
+                            }
+                            cardPlaceables.forEachIndexed { index, card ->
+                                val placement = placements[index]
+                                val group = placement.course
+                                val precedingColumns = axes.days.takeWhile { it != group.weekday }.sumOf { laneCounts.getValue(it) }
+                                val sectionIdx = axes.sections.indexOf(group.startSection)
+                                card.placeRelative((precedingColumns + placement.lane) * dayPx, headerHeight + sectionIdx * periodHeight)
+                            }
+                        }
+                    }
+                }
+            }.single().measure(Constraints.fixed(rightViewportWidth, totalHeight))
+
+            layout(constraints.constrainWidth(layoutWidth), constraints.constrainHeight(totalHeight)) {
+                leftColumn.placeRelative(0, 0)
+                rightScrollable.placeRelative(sectionPx, 0)
             }
         }
     }

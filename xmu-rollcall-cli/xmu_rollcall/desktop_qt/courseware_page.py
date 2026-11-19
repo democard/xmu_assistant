@@ -622,7 +622,7 @@ class CoursewarePageMixin:
     def _set_courseware_items(self, course: CourseSummary, items: list[CoursewareItem]):
         selected = self._selected_courseware_course()
         if not selected:
-            self._refresh_courseware_empty_state()
+            self._reset_courseware_selection_prompt()
             return
         if selected.course_id != course.course_id:
             self.refresh_selected_courseware(silent=True)
@@ -669,49 +669,60 @@ class CoursewarePageMixin:
         # 一次 setRowCount 预留全部行后直接 setItem：逐行 insertRow 会让 Qt 每行
         # 内部重排（O(n²)）——下载批次里每次进度/完成事件都整表重建，100 项课件即
         # 200 次 × O(n²) 的行插入；首页事件表已是 setRowCount(n)+setItem 的 O(n) 版。
-        self.courseware_table.setRowCount(len(self.courseware_items))
-        self.courseware_table.clearSelection()
-        self.courseware_table.setCurrentCell(-1, -1)
-        for row_index, item in enumerate(self.courseware_items):
-            key = self._courseware_key(item)
-            checkbox = QTableWidgetItem("")
-            checkbox.setData(Qt.ItemDataRole.UserRole, key)
-            checkbox.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-                | Qt.ItemFlag.ItemIsUserCheckable
-            )
-            checkbox.setCheckState(
-                Qt.CheckState.Checked
-                if key in checked_keys
-                else Qt.CheckState.Unchecked
-            )
-            checkbox.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.courseware_table.setItem(row_index, 0, checkbox)
+        table = self.courseware_table
+        has_qt_guards = hasattr(table, "setUpdatesEnabled") and hasattr(table, "blockSignals")
+        if has_qt_guards:
+            signals_blocked = table.blockSignals(True)
+            updates_enabled = table.updatesEnabled()
+            table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(len(self.courseware_items))
+            table.clearSelection()
+            table.setCurrentCell(-1, -1)
+            for row_index, item in enumerate(self.courseware_items):
+                key = self._courseware_key(item)
+                checkbox = QTableWidgetItem("")
+                checkbox.setData(Qt.ItemDataRole.UserRole, key)
+                checkbox.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                checkbox.setCheckState(
+                    Qt.CheckState.Checked
+                    if key in checked_keys
+                    else Qt.CheckState.Unchecked
+                )
+                checkbox.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                table.setItem(row_index, 0, checkbox)
 
-            values = (
-                item.module_name,
-                item.activity_title,
-                item.filename or "-",
-                type_names.get(item.activity_type, item.media_type or item.activity_type or "-"),
-                self.courseware_download_status.get(self._courseware_key(item), "可下载"),
-            )
-            for column, value in enumerate(values, start=1):
-                cell = QTableWidgetItem(str(value))
-                if column in (1, 4, 5):
-                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if column == 5:
-                    cell.setForeground(QColor(self._courseware_status_color(str(value))))
-                self.courseware_table.setItem(row_index, column, cell)
-            if key == current_key:
-                self.courseware_table.setCurrentCell(
-                    row_index, max(0, current_column), QItemSelectionModel.SelectionFlag.NoUpdate,
+                values = (
+                    item.module_name,
+                    item.activity_title,
+                    item.filename or "-",
+                    type_names.get(item.activity_type, item.media_type or item.activity_type or "-"),
+                    self.courseware_download_status.get(key, "可下载"),
                 )
-            if key in selected_keys:
-                self.courseware_table.selectionModel().select(
-                    self.courseware_table.model().index(row_index, 0),
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                )
+                for column, value in enumerate(values, start=1):
+                    cell = QTableWidgetItem(str(value))
+                    if column in (1, 4, 5):
+                        cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    if column == 5:
+                        cell.setForeground(QColor(self._courseware_status_color(str(value))))
+                    table.setItem(row_index, column, cell)
+                if key == current_key:
+                    table.setCurrentCell(
+                        row_index, max(0, current_column), QItemSelectionModel.SelectionFlag.NoUpdate,
+                    )
+                if key in selected_keys:
+                    table.selectionModel().select(
+                        table.model().index(row_index, 0),
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+        finally:
+            if has_qt_guards:
+                table.blockSignals(signals_blocked)
+                table.setUpdatesEnabled(updates_enabled)
         self._refresh_courseware_empty_state()
 
     def _refresh_courseware_empty_state(self):

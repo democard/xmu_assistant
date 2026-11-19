@@ -66,6 +66,10 @@ internal class RollcallSectionState(
     var refreshError by mutableStateOf("")
         private set
 
+    /** 首页「一键签到」是否正在执行。 */
+    var oneTapBusy by mutableStateOf(false)
+        private set
+
     // ---- 最近十次签到（历史区块，独立门 "rollcall_history"）----
 
     var historyItems by mutableStateOf<List<RollcallHistoryItem>>(emptyList())
@@ -119,9 +123,144 @@ internal class RollcallSectionState(
         return true
     }
 
+    /** 首页「一键签到」：拉取最新进行中签到明细，直接提交待处理的数字/雷达签到，跳过已签与二维码签到。 */
+    fun oneTapSignIn(): Boolean {
+        if (!requireLogin()) return false
+        if (!requestGate.tryStart("rollcall_one_tap")) return false
+        refreshError = ""
+        oneTapBusy = true
+        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
+        val accountId = username()
+        scope.runModuleRequest(
+            requestGate = requestGate,
+            gateKey = "rollcall_one_tap",
+            acceptsResult = { sessionEpoch.accepts(session, cookieHeader(), loggedIn()) },
+            ioWork = {
+                val engine = createEngine(session.cookieHeader)
+                val polled = engine.pollWithDetails(accountId)
+                if (polled.isEmpty()) {
+                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                }
+                var submitted = 0
+                var alreadySigned = 0
+                var skippedQr = 0
+                var missingCoordinate = 0
+                var missingCode = 0
+                var failed = 0
+                var firstError = ""
+                for (event in polled) {
+                    val resolvedStatus = event.ownStatus ?: event.status
+                    if (isTerminalRollcallStatus(resolvedStatus)) {
+                        alreadySigned += 1
+                        continue
+                    }
+                    when (event.type) {
+                        "二维码签到" -> skippedQr += 1
+                        "数字签到" -> {
+                            if (event.numberCode.isBlank()) {
+                                missingCode += 1
+                            } else {
+                                try {
+                                    if (engine.answer(event)) submitted += 1 else failed += 1
+                                } catch (expired: MainSessionExpiredException) {
+                                    throw expired
+                                } catch (error: Throwable) {
+                                    failed += 1
+                                    if (firstError.isBlank()) firstError = refreshFailureMessage(error)
+                                }
+                            }
+                        }
+                        "雷达签到" -> {
+                            try {
+                                if (engine.answer(event)) submitted += 1 else failed += 1
+                            } catch (expired: MainSessionExpiredException) {
+                                throw expired
+                            } catch (notSubmitted: RollcallAnswerNotSubmittedException) {
+                                missingCoordinate += 1
+                                if (firstError.isBlank()) firstError = notSubmitted.message.orEmpty()
+                            } catch (error: Throwable) {
+                                failed += 1
+                                if (firstError.isBlank()) firstError = refreshFailureMessage(error)
+                            }
+                        }
+                        else -> skippedQr += 1
+                    }
+                }
+                val refreshed = if (submitted > 0) {
+                    runCatching { engine.pollWithDetails(accountId) }.getOrElse { polled }
+                } else {
+                    polled
+                }
+                OneTapSignInOutcome(
+                    events = refreshed,
+                    submitted = submitted,
+                    alreadySigned = alreadySigned,
+                    skippedQr = skippedQr,
+                    missingCoordinate = missingCoordinate,
+                    missingCode = missingCode,
+                    failed = failed,
+                    firstError = firstError,
+                )
+            },
+            onResult = { result ->
+                result.onSuccess { outcome ->
+                    refreshError = ""
+                    events = outcome.events
+                    updatedAtMillis = System.currentTimeMillis()
+                    when {
+                        outcome.events.isEmpty() -> show("当前暂无进行中的签到")
+                        outcome.submitted > 0 && outcome.failed == 0 && outcome.missingCoordinate == 0 && outcome.missingCode == 0 -> {
+                            val suffix = if (outcome.skippedQr > 0) "（跳过 ${outcome.skippedQr} 项二维码签到）" else ""
+                            show("一键签到已提交 ${outcome.submitted} 项$suffix")
+                        }
+                        outcome.submitted == 0 && outcome.alreadySigned > 0 && outcome.failed == 0 &&
+                            outcome.missingCoordinate == 0 && outcome.missingCode == 0 && outcome.skippedQr == 0 -> {
+                            show("进行中的 ${outcome.alreadySigned} 项签到均已签到")
+                        }
+                        outcome.submitted == 0 && outcome.skippedQr > 0 && outcome.failed == 0 &&
+                            outcome.missingCoordinate == 0 && outcome.missingCode == 0 -> {
+                            show("当前仅有二维码签到，请在畅课内扫码")
+                        }
+                        outcome.missingCoordinate > 0 && outcome.submitted == 0 && outcome.failed == 0 -> {
+                            showWarning("有 ${outcome.missingCoordinate} 项雷达签到未配置课程坐标，请先配置")
+                        }
+                        outcome.missingCode > 0 && outcome.submitted == 0 && outcome.failed == 0 -> {
+                            showWarning("数字签到码暂未获取到，请稍后重试")
+                        }
+                        else -> {
+                            val parts = buildList {
+                                if (outcome.submitted > 0) add("已提交 ${outcome.submitted} 项")
+                                if (outcome.alreadySigned > 0) add("已签 ${outcome.alreadySigned} 项")
+                                if (outcome.missingCoordinate > 0) add("缺坐标 ${outcome.missingCoordinate} 项")
+                                if (outcome.missingCode > 0) add("缺签到码 ${outcome.missingCode} 项")
+                                if (outcome.skippedQr > 0) add("跳过二维码 ${outcome.skippedQr} 项")
+                                if (outcome.failed > 0) add("失败 ${outcome.failed} 项")
+                            }
+                            val detail = outcome.firstError.takeIf { it.isNotBlank() && outcome.failed > 0 }?.let { "：$it" }.orEmpty()
+                            val msg = "一键签到完成（${parts.joinToString("，")}）$detail"
+                            if (outcome.submitted > 0) showWarning(msg) else showError(msg)
+                        }
+                    }
+                }
+                result.onFailure { error ->
+                    val message = if (error is MainSessionExpiredException) {
+                        "登录已过期，请重新登录"
+                    } else {
+                        "一键签到失败：${refreshFailureMessage(error)}"
+                    }
+                    refreshError = refreshFailureMessage(error)
+                    showError(message)
+                }
+            },
+            releaseLoading = { oneTapBusy = false },
+        )
+        return true
+    }
+
     /** 会话失效时仅复位加载中标志（保留已展示数据，供 invalidateMainSessionUi 使用）。 */
     fun clearLoadingState() {
         loading = false
+        oneTapBusy = false
         historyLoading = false
     }
 
@@ -227,6 +366,7 @@ internal class RollcallSectionState(
     fun clearAll() {
         events = emptyList()
         loading = false
+        oneTapBusy = false
         refreshError = ""
         updatedAtMillis = 0L
         // 历史区块与进行中两块同清（磁盘缓存由调用方 deleteRollcallHistoryCacheFile 一并删）
@@ -237,3 +377,14 @@ internal class RollcallSectionState(
         historyLoaded = false
     }
 }
+
+private data class OneTapSignInOutcome(
+    val events: List<RollcallEvent>,
+    val submitted: Int = 0,
+    val alreadySigned: Int = 0,
+    val skippedQr: Int = 0,
+    val missingCoordinate: Int = 0,
+    val missingCode: Int = 0,
+    val failed: Int = 0,
+    val firstError: String = "",
+)

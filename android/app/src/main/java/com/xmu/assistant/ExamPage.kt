@@ -276,7 +276,7 @@ private fun ExamCard(exam: XmuExam) {
 
 /** 考试结束时刻（epoch 毫秒）：日期 + 时间段结束时间；跨午夜（结束早于开始）日期 +1。
  *  解析失败返回 Long.MAX_VALUE（视为未完成，避免误归已完成）。 */
-private fun examEndEpochMillis(exam: XmuExam): Long {
+internal fun examEndEpochMillis(exam: XmuExam): Long {
     val date = runCatching { java.time.LocalDate.parse(exam.date) }.getOrNull() ?: return Long.MAX_VALUE
     val parts = exam.timeRange.split("-").map { it.trim() }
     if (parts.size != 2) return Long.MAX_VALUE

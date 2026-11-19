@@ -76,10 +76,14 @@ internal fun PreviewSectionHeader(title: String, trailing: String = "") {
     }
 }
 
-internal enum class PreviewBadgeTone { BLUE, GREEN, AMBER }
+internal enum class PreviewBadgeTone { BLUE, GREEN, AMBER, RED }
 
 @Composable
-internal fun PreviewBadge(text: String, tone: PreviewBadgeTone = PreviewBadgeTone.BLUE) {
+internal fun PreviewBadge(
+    text: String,
+    tone: PreviewBadgeTone = PreviewBadgeTone.BLUE,
+    modifier: Modifier = Modifier,
+) {
     val background: Color
     val foreground: Color
     when (tone) {
@@ -91,12 +95,16 @@ internal fun PreviewBadge(text: String, tone: PreviewBadgeTone = PreviewBadgeTon
             background = themeSoftAmber()
             foreground = themeOnAmber()
         }
+        PreviewBadgeTone.RED -> {
+            background = themeSoftRed()
+            foreground = themeWarning()
+        }
         PreviewBadgeTone.BLUE -> {
             background = themePrimarySoft()
             foreground = themePrimary()
         }
     }
-    Surface(color = background, shape = RoundedCornerShape(9.dp)) {
+    Surface(modifier = modifier, color = background, shape = RoundedCornerShape(9.dp)) {
         Text(
             text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),

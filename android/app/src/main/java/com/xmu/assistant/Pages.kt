@@ -1,5 +1,11 @@
 package com.xmu.assistant
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -9,33 +15,27 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +46,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @Composable
@@ -64,11 +67,22 @@ internal fun RollcallStatusPage(
     historyError: String,
     historyUpdatedAtMillis: Long,
     loggedIn: Boolean = false,
+    monitorRunning: Boolean = false,
     coordinateStore: RadarCoordinateStore? = null,
     onManageCoordinates: (String, String) -> Unit = { _, _ -> },
+    onOpenCoordinatesHome: () -> Unit = { onManageCoordinates("", "") },
     onRefresh: () -> Unit,
 ) {
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    LaunchedEffect(openedEventId, events) {
+        if (openedEventId.isNotBlank()) {
+            val activeIndex = events.indexOfFirst { it.id == openedEventId }
+            if (activeIndex >= 0) {
+                // index 0 = top sync card, index 1 = section header, index 2 + activeIndex = card
+                listState.animateScrollToItem(2 + activeIndex)
+            }
+        }
+    }
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -78,26 +92,59 @@ internal fun RollcallStatusPage(
             PreviewCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("签到情况", fontWeight = FontWeight.Bold)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            val lastSyncMillis = maxOf(updatedAtMillis, historyUpdatedAtMillis)
+                            Text(
+                                if (loading || historyLoading) {
+                                    "正在同步…"
+                                } else {
+                                    "上次同步 ${if (lastSyncMillis > 0L) formatMonitorTime(lastSyncMillis) else "刚刚"}"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            PreviewBadge(
+                                if (monitorRunning) "监控中" else "未监控",
+                                if (monitorRunning) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER,
+                            )
+                        }
                         Text(
-                            if (loading || historyLoading) "正在刷新" else "上次更新 ${if (updatedAtMillis > 0L) formatMonitorTime(updatedAtMillis) else "刚刚"}",
+                            "进行中 ${events.size} 项 · 最近记录 ${historyItems.size} 条",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    OutlinedButton(onClick = onRefresh, enabled = !loading && !historyLoading) {
-                        Text(if (loading || historyLoading) "刷新中" else "刷新")
+                    OutlinedButton(
+                        onClick = onOpenCoordinatesHome,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text("雷达坐标", style = MaterialTheme.typography.labelMedium)
+                    }
+                    OutlinedButton(
+                        onClick = onRefresh,
+                        enabled = !loading && !historyLoading,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(if (loading || historyLoading) "刷新中" else "刷新", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (loading || historyLoading || refreshError.isNotBlank()) {
-                    RefreshStateBanner(loading = loading || historyLoading, errorMessage = refreshError, hasData = events.isNotEmpty())
+                    RefreshStateBanner(
+                        loading = loading || historyLoading,
+                        errorMessage = refreshError,
+                        hasData = events.isNotEmpty() || historyItems.isNotEmpty(),
+                    )
                 }
                 notificationEventLabel(openedEventId, events, historyItems)?.let { label ->
-                    Text(label, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                    Text(label, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -105,17 +152,23 @@ internal fun RollcallStatusPage(
             item { PreviewSectionHeader("正在签到", "${events.size} 项") }
             // 同一签到也会出现在最近记录中，LazyColumn 的 key 必须跨区块唯一。
             items(events, key = { "active:${it.id}" }) { event ->
-                val preferred = if (event.type == "雷达签到") {
-                    coordinateStore?.preferredFor(event.courseId, event.courseTitle)
-                } else null
+                val places = if (event.type == "雷达签到") {
+                    coordinateStore?.placesFor(event.courseId, event.courseTitle).orEmpty()
+                } else emptyList()
                 ActiveRollcallPreviewCard(
                     event = event,
-                    preferred = preferred,
+                    places = places,
+                    highlighted = openedEventId.isNotBlank() && event.id == openedEventId,
                     onManageCoordinates = { onManageCoordinates(event.courseId, event.courseTitle) },
                 )
             }
         }
-        item { PreviewSectionHeader("签到记录", "今天") }
+        item {
+            PreviewSectionHeader(
+                "最近签到记录",
+                if (historyItems.isNotEmpty()) "最近 ${historyItems.size} 次" else "",
+            )
+        }
         if (historyLoading) {
             item { Text("正在读取最近签到…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp)) }
         } else if (historyError.isNotBlank()) {
@@ -128,13 +181,7 @@ internal fun RollcallStatusPage(
             }
         } else {
             items(historyItems, key = { "history:${it.rollcallId}" }) { item ->
-                CompactRollcallHistoryCard(
-                    item = item,
-                    preferred = if (item.type == "雷达签到") {
-                        coordinateStore?.preferredFor(item.courseId, item.courseTitle)
-                    } else null,
-                    onManageCoordinates = { onManageCoordinates(item.courseId, item.courseTitle) },
-                )
+                CompactRollcallHistoryCard(item = item)
             }
         }
     }
@@ -143,78 +190,205 @@ internal fun RollcallStatusPage(
 @Composable
 private fun ActiveRollcallPreviewCard(
     event: RollcallEvent,
-    preferred: RadarCoordinate?,
+    places: List<RadarCoordinate>,
+    highlighted: Boolean = false,
     onManageCoordinates: () -> Unit,
 ) {
-    PreviewCard {
+    val context = LocalContext.current
+    val resolvedStatus = event.ownStatus ?: event.status
+    val isSigned = isTerminalRollcallStatus(resolvedStatus)
+    val statusBadgeText = when {
+        isSigned -> "本人已签"
+        event.type == "二维码签到" -> "需扫码"
+        else -> "待处理"
+    }
+    val statusBadgeTone = if (isSigned) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER
+
+    PreviewCard(
+        modifier = if (highlighted) Modifier else Modifier,
+        soft = highlighted,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(event.courseTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("发起人：${event.teacher}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             PreviewBadge(event.type)
-            PreviewBadge("进行中", PreviewBadgeTone.AMBER)
+            PreviewBadge(statusBadgeText, statusBadgeTone)
         }
-        if (event.type == "数字签到") {
-            val progress = event.progress
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    if (progress != null && progress.total > 0) "${progress.present} / ${progress.total} 人已签到" else "签到人数暂未获取",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    event.numberCode.takeIf { it.isNotBlank() }?.let { "签到码 $it" } ?: "签到码暂未获取",
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            if (progress != null && progress.total > 0) {
-                LinearProgressIndicator(
-                    progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PreviewIconBox(R.drawable.ic_nav_location)
-                Column(Modifier.weight(1f)) {
-                    Text(preferred?.name ?: "未配置课程坐标", fontWeight = FontWeight.Bold, color = if (preferred == null) themeWarning() else MaterialTheme.colorScheme.onSurface)
-                    Text(if (preferred == null) "配置后自动签到才会提交" else "使用本课程首选坐标", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val progress = event.progress
+        when (event.type) {
+            "数字签到" -> {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (progress != null && progress.total > 0) "${progress.present} / ${progress.total} 人已签到" else "签到人数暂未获取",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            event.numberCode.takeIf { it.isNotBlank() }?.let { "签到码 $it" } ?: "签到码暂未获取",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (event.numberCode.isNotBlank()) {
+                            Surface(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("rollcall_code", event.numberCode))
+                                    Toast.makeText(context, "已复制签到码 ${event.numberCode}", Toast.LENGTH_SHORT).show()
+                                },
+                                color = themePrimarySoft(),
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    "复制",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = themePrimary(),
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
                 }
-                TextButton(onClick = onManageCoordinates) { Text("坐标管理 ›") }
+                if (progress != null && progress.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            "雷达签到" -> {
+                if (progress != null && progress.total > 0) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${progress.present} / ${progress.total} 人已签到",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (places.isNotEmpty()) {
+                        Text(
+                            "地点：",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            places.forEach { place ->
+                                Text(
+                                    place.name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            "未配置课程坐标（配置后自动签到才会提交）",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = themeWarning(),
+                        )
+                    }
+                    Text(
+                        "坐标管理 ›",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = themePrimary(),
+                        modifier = Modifier
+                            .clickable(onClick = onManageCoordinates)
+                            .padding(start = 6.dp),
+                    )
+                }
+            }
+            // 二维码签到：保留课程、徽章与可选签到人数，不显示坐标管理或冗余说明
+            else -> {
+                if (progress != null && progress.total > 0) {
+                    Text(
+                        "${progress.present} / ${progress.total} 人已签到",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LinearProgressIndicator(
+                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun CompactRollcallHistoryCard(
-    item: RollcallHistoryItem,
-    preferred: RadarCoordinate?,
-    onManageCoordinates: () -> Unit,
-) {
+private fun CompactRollcallHistoryCard(item: RollcallHistoryItem) {
+    val displayStatus = historyRollcallDisplayStatus(item.ownStatus)
+    val isAbsent = displayStatus == "缺勤" || displayStatus == "未签"
+    val progressText = item.progress?.takeIf { it.total > 0 }?.let { "${it.present} / ${it.total} 人" }
     PreviewCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Surface(color = themeSoftGreen(), shape = RoundedCornerShape(11.dp)) {
-                Text("✓", color = themeSuccess(), fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text(item.courseTitle, fontWeight = FontWeight.Bold)
-                val code = item.numberCode.takeIf { it.isNotBlank() }?.let { " · 签到码 $it" }.orEmpty()
-                Text("${item.timeDisplay} · ${item.type}$code", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            PreviewBadge(historyRollcallDisplayStatus(item.ownStatus), PreviewBadgeTone.GREEN)
-        }
-        if (item.type == "雷达签到") {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PreviewIconBox(R.drawable.ic_nav_location)
+            Surface(
+                color = if (isAbsent) themeSoftRed() else themeSoftGreen(),
+                shape = RoundedCornerShape(11.dp),
+            ) {
                 Text(
-                    preferred?.name ?: "课程首选地点",
-                    style = MaterialTheme.typography.bodySmall,
+                    if (isAbsent) "!" else "✓",
+                    color = if (isAbsent) themeWarning() else themeSuccess(),
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 )
-                TextButton(onClick = onManageCoordinates) { Text("坐标管理") }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(item.courseTitle, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val code = item.numberCode.takeIf { it.isNotBlank() }?.let { " · 签到码 $it" }.orEmpty()
+                Text(
+                    "${item.timeDisplay} · ${item.type}$code",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                PreviewBadge(displayStatus, if (isAbsent) PreviewBadgeTone.RED else PreviewBadgeTone.GREEN)
+                if (progressText != null) {
+                    Text(
+                        progressText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -252,90 +426,172 @@ fun ScorePage(
     }
     // rememberSaveable：转屏后保留滚动位置。
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-    LazyColumn(
-        state = listState,
+    val scope = rememberCoroutineScope()
+
+    Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item {
-            PreviewCard {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("成绩概览", fontWeight = FontWeight.Bold)
-                        Text(
-                            if (updatedAtMillis > 0L) "上次更新 ${formatMonitorTime(updatedAtMillis)}" else "尚未更新",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    PreviewBadge(
-                        if (validSimulationCount > 0) "${records.size} 已出 · $validSimulationCount 模拟"
-                        else "${records.size} 门",
+        // 顶部成绩概览卡片固定，下方课程与模拟成绩列表独立滚动
+        PreviewCard {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("成绩概览", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (updatedAtMillis > 0L) "上次更新 ${formatMonitorTime(updatedAtMillis)}" else "尚未更新",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (records.isNotEmpty() || validSimulationCount > 0) ScoreSummaryPanel(summary)
-                // FlowRow：宽屏下四件单行（「刷新成绩」weight 撑满余宽，观感同原 Row）；
-                // 窄屏放不下时自动换行，避免「刷新成绩」被挤压到文字裁切。
-                // weight 在 FlowRow 里只按行内余宽分配（320dp 下仅剩约 44dp，主按钮
-                // 文字被迫折行），故加最小宽度兜底保证「刷新成绩」始终单行可读。
-                @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(
-                        onClick = onRefresh,
-                        enabled = !loading,
-                        modifier = Modifier.weight(1f).widthIn(min = 112.dp),
-                    ) {
-                        Text(if (loading) "刷新中" else "刷新成绩")
-                    }
-                    // 两个次级按钮收紧内边距，配合 FlowRow 换行兜底窄屏排版
-                    OutlinedButton(
-                        onClick = onShareScore,
-                        enabled = records.isNotEmpty(),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                    ) {
-                        Text("分享长图")
-                    }
+                PreviewBadge(
+                    if (validSimulationCount > 0) "${records.size} 已出 · $validSimulationCount 模拟"
+                    else "${records.size} 门",
+                )
+            }
+            if (records.isNotEmpty() || validSimulationCount > 0) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    CompactScoreMetric("加权平均分", scoreMetricText(summary.weightedScore), Modifier.weight(1f), prominent = true)
+                    CompactScoreMetric("加权 GPA", scoreMetricText(summary.weightedGpa), Modifier.weight(1f), prominent = true)
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    CompactScoreMetric("算术平均分", scoreMetricText(summary.averageScore), Modifier.weight(1f), prominent = false)
+                    CompactScoreMetric("已修总学分", scoreMetricText(summary.completedCredits), Modifier.weight(1f), prominent = false)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = onRefresh,
+                    enabled = !loading,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text(if (loading) "刷新中" else "刷新成绩", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onShareScore,
+                    enabled = records.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text("分享长图", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            listState.animateScrollToItem(target)
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text("模拟 ↓", maxLines = 1)
+                }
+            }
+            if (loading || refreshError.isNotBlank()) {
                 RefreshStateBanner(loading = loading, errorMessage = refreshError, hasData = records.isNotEmpty())
-                if (onOpenRank != null) {
-                    TextButton(onClick = onOpenRank, modifier = Modifier.fillMaxWidth()) { Text("专业排名与绩点证明 ›") }
+            }
+            if (onOpenRank != null) {
+                Surface(
+                    onClick = onOpenRank,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("专业排名与绩点证明", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Text("$rankLabel ›", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = themePrimary())
+                    }
                 }
             }
         }
-        if (records.isEmpty()) {
-            if (onOpenRank != null) item { RankEntry(rankLabel, onOpenRank) }
-            item {
-                // 空态三档之「未登录」：登出后成绩清空时给出登录引导而非"暂无成绩"
-                if (!loggedIn) {
-                    EmptyState("请先登录", "登录后点击刷新即可读取成绩。")
-                } else {
-                    EmptyState("暂无成绩", "刷新后显示百分制成绩和及格制等非百分制结果。")
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (records.isEmpty()) {
+                item {
+                    // 空态三档之「未登录」：登出后成绩清空时给出登录引导而非"暂无成绩"
+                    if (!loggedIn) {
+                        EmptyState("请先登录", "登录后点击刷新即可读取成绩。")
+                    } else {
+                        EmptyState("暂无成绩", "刷新后显示百分制成绩和及格制等非百分制结果。")
+                    }
                 }
+            } else {
+                recordsByTerm.forEach { (term, termRecords) ->
+                    val termCredits = termRecords.sumOf { it.credit }
+                    item(key = "term:$term") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, start = 2.dp, end = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(term, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text(
+                                "${termRecords.size} 门 · ${String.format(Locale.US, "%.1f", termCredits)} 学分",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                    // 注意：不使用显式 key。同一学期可能存在 courseCode+courseName 相同的
+                    // 重修/补考记录，若用内容 key 会重复导致 LazyColumn 崩溃；默认 index key 绝对安全。
+                    items(count = termRecords.size) { index ->
+                        ScoreRecordCard(termRecords[index])
+                    }
+                }
+            }
+            // 模拟区固定在成绩列表下方（页面最底部，不碍眼），入口按钮滚动跳转至此
+            item(key = "score-simulation") {
+                ScoreSimulationSection(
+                    currentSummary = currentSummary,
+                    simulatedSummary = summary,
+                    simulationRows = simulationRows,
+                    onRowsChanged = { simulationRows = it },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactScoreMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    prominent: Boolean = true,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (prominent) 0.72f else 0.42f),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier,
+    ) {
+        if (prominent) {
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         } else {
-            recordsByTerm.forEach { (term, termRecords) ->
-                item(key = "term:$term") {
-                    TermHeader(term, termRecords.size)
-                }
-                // 注意：不使用显式 key。同一学期可能存在 courseCode+courseName 相同的
-                // 重修/补考记录，若用内容 key 会重复导致 LazyColumn 崩溃；默认 index key 绝对安全。
-                items(count = termRecords.size) { index ->
-                    ScoreRecordCard(termRecords[index])
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                Text(value, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1)
             }
-        }
-        // 模拟区固定在成绩列表下方（页面最底部，不碍眼），入口按钮滚动跳转至此
-        item(key = "score-simulation") {
-            ScoreSimulationSection(
-                currentSummary = currentSummary,
-                simulatedSummary = summary,
-                simulationRows = simulationRows,
-                onRowsChanged = { simulationRows = it },
-            )
         }
     }
 }
@@ -527,7 +783,7 @@ private fun TutorialPageLegacy(scrollState: ScrollState, navigate: (String) -> U
         }
         TutorialSection("开启监控", modifier = Modifier.bringIntoViewRequester(anchors.getValue("开启监控"))) {
             Text("1. 监控会按策略页的默认轮询间隔检查签到。")
-            Text("2. 检测到签到后会在签到情况页展示课程、类型、剩余时间和状态。")
+            Text("2. 检测到签到后会在签到情况页展示课程、类型、发起人与当前状态。")
             Text("3. 手机端需要允许通知和后台运行，否则系统可能会限制常驻。")
             OutlinedButton(onClick = { navigate("签到情况") }) { Text("查看签到情况") }
         }

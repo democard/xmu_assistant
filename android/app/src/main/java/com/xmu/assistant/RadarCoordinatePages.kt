@@ -14,27 +14,34 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -101,13 +108,14 @@ private fun sameCourse(left: CourseSummary, right: CourseSummary): Boolean =
         normalizeCourseTitle(left.title) == normalizeCourseTitle(right.title)
 
 private fun courseChoices(courses: List<CourseSummary>, initial: CourseSummary?): List<CourseSummary> = buildList {
-    initial?.let { target -> courses.firstOrNull { sameCourse(it, target) }?.let(::add) }
     addAll(courses)
+    initial?.let { target -> if (courses.none { sameCourse(it, target) }) add(target) }
 }.distinctBy { it.id.ifBlank { normalizeCourseTitle(it.title) } }
 
 private fun selectedCourse(courses: List<CourseSummary>, initial: CourseSummary?): CourseSummary? =
     initial?.let { target -> courses.firstOrNull { sameCourse(it, target) } } ?: courses.firstOrNull()
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CourseCoordinatePage(
     courses: List<CourseSummary>,
@@ -122,6 +130,8 @@ internal fun CourseCoordinatePage(
     var selectedCourseId by rememberSaveable(initialCourse?.id) { mutableStateOf(initialCourse?.id.orEmpty()) }
     var selectedCourseTitle by rememberSaveable(initialCourse?.title) { mutableStateOf(initialCourse?.title.orEmpty()) }
     var revision by remember { mutableIntStateOf(0) }
+    var coursePickerOpen by rememberSaveable { mutableStateOf(false) }
+    var courseQuery by rememberSaveable { mutableStateOf("") }
     val selectedCourse = availableCourses.firstOrNull {
         (selectedCourseId.isNotBlank() && it.id == selectedCourseId) ||
             normalizeCourseTitle(it.title) == normalizeCourseTitle(selectedCourseTitle)
@@ -138,24 +148,172 @@ internal fun CourseCoordinatePage(
     val places = remember(store, selectedCourseId, selectedCourseTitle, revision) {
         store.placesFor(selectedCourseId, selectedCourseTitle)
     }
+    val preferredPlaceName = places.firstOrNull { it.preferred }?.name ?: places.firstOrNull()?.name
+
+    if (coursePickerOpen && availableCourses.size > 1) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val filteredCourses = remember(availableCourses, courseQuery) {
+            val q = courseQuery.trim()
+            if (q.isBlank()) availableCourses
+            else availableCourses.filter { it.title.contains(q, ignoreCase = true) || it.term.contains(q, ignoreCase = true) }
+        }
+        ModalBottomSheet(
+            onDismissRequest = { coursePickerOpen = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("选择课程", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "共 ${availableCourses.size} 门 · 点击切换查看或设置雷达地点",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { coursePickerOpen = false }) { Text("关闭") }
+                }
+                OutlinedTextField(
+                    value = courseQuery,
+                    onValueChange = { courseQuery = it },
+                    label = { Text("搜索课程名称") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = if (courseQuery.isNotBlank()) {
+                        { TextButton(onClick = { courseQuery = "" }) { Text("清除") } }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (filteredCourses.isEmpty()) {
+                    Text(
+                        "没有找到匹配的课程",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 18.dp),
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(filteredCourses, key = { it.id.ifBlank { it.title } }) { course ->
+                            val isSelected = course == selectedCourse
+                            val coursePlaces = remember(store, course.id, course.title, revision) {
+                                store.placesFor(course.id, course.title)
+                            }
+                            Surface(
+                                onClick = {
+                                    selectedCourseId = course.id
+                                    selectedCourseTitle = course.title
+                                    onCourseSelected(course)
+                                    coursePickerOpen = false
+                                    courseQuery = ""
+                                },
+                                color = if (isSelected) themePrimarySoft() else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(
+                                    if (isSelected) 1.5.dp else 1.dp,
+                                    if (isSelected) themePrimary() else MaterialTheme.colorScheme.outlineVariant,
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            course.title,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) themePrimary() else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        val prefName = coursePlaces.firstOrNull { it.preferred }?.name ?: coursePlaces.firstOrNull()?.name
+                                        if (prefName != null) {
+                                            Text(
+                                                "首选：$prefName",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                    if (coursePlaces.isNotEmpty()) {
+                                        PreviewBadge("已设 ${coursePlaces.size} 个", PreviewBadgeTone.GREEN)
+                                    } else {
+                                        PreviewBadge("未配置", PreviewBadgeTone.AMBER)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        if (availableCourses.size > 1) {
+        if (selectedCourse != null) {
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                PreviewCard(
+                    onClick = if (availableCourses.size > 1) {
+                        { coursePickerOpen = true }
+                    } else null,
                 ) {
-                    availableCourses.forEach { course ->
-                        FilterChip(
-                            selected = course == selectedCourse,
-                            onClick = {
-                                selectedCourseId = course.id
-                                selectedCourseTitle = course.title
-                                onCourseSelected(course)
-                            },
-                            label = { Text(course.title, maxLines = 1) },
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        PreviewIconBox(R.drawable.ic_nav_location)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                selectedCourse.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                if (preferredPlaceName != null) {
+                                    "已保存 ${places.size} 个地点 · 首选 $preferredPlaceName"
+                                } else {
+                                    "暂未设置地点 · 自动签到前请先配置"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (preferredPlaceName != null) MaterialTheme.colorScheme.onSurfaceVariant else themeWarning(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (availableCourses.size > 1) {
+                            OutlinedButton(
+                                onClick = { coursePickerOpen = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(10.dp),
+                            ) {
+                                Text("换课 ▾", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
@@ -163,9 +321,9 @@ internal fun CourseCoordinatePage(
         item {
             PreviewCard(soft = true) {
                 PreviewListRow(
-                    icon = R.drawable.ic_nav_location,
+                    icon = R.drawable.ic_nav_help,
                     title = "自动签到会使用首选地点",
-                    subtitle = "这门课可保存任意多个地点，你决定保留多少个。",
+                    subtitle = "这门课可保存任意多个地点，点击即可设为首选。",
                     trailing = {},
                 )
             }
@@ -198,8 +356,12 @@ internal fun CourseCoordinatePage(
             }
         }
         if (selectedCourse != null) {
-            item { Button(onClick = onAddPlace, modifier = Modifier.fillMaxWidth().height(46.dp)) { Text("添加地点") } }
-            item { OutlinedButton(onClick = onCapture, modifier = Modifier.fillMaxWidth().height(46.dp)) { Text("现场采点") } }
+            item {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onAddPlace, modifier = Modifier.weight(1f).height(46.dp)) { Text("添加地点") }
+                    OutlinedButton(onClick = onCapture, modifier = Modifier.weight(1f).height(46.dp)) { Text("现场采点") }
+                }
+            }
         }
         item {
             PreviewCard(soft = true) {
@@ -477,7 +639,11 @@ internal fun OnsiteRadarCapturePage(
                     Box(Modifier.size(68.dp).background(themePrimary().copy(alpha = .14f), CircleShape))
                     Box(Modifier.size(18.dp).background(themePrimary(), CircleShape))
                     captured?.accuracyMeters?.let {
-                        PreviewBadge("精度 ±${String.format(Locale.US, "%.1f", it)} 米", if (it <= 20f) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER)
+                        PreviewBadge(
+                            "精度 ±${String.format(Locale.US, "%.1f", it)} 米",
+                            if (it <= 20f) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                        )
                     }
                 }
             }

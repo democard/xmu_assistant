@@ -311,9 +311,7 @@ internal fun MainScreen(
                 ) {
                     BrandHeader(
                         loggedIn = loggedIn,
-                        page = if (page == "课程坐标" && currentTermCoordinateTarget != null) {
-                            "${currentTermCoordinateTarget.title} · 课程坐标"
-                        } else page,
+                        page = page,
                         showBack = page != "首页" && primaryDestinations.none { it.page == page },
                         onBack = { onModuleEntered(parentPage(page)) },
                     )
@@ -335,9 +333,13 @@ internal fun MainScreen(
                                 historyError = rollcall.historyError,
                                 historyUpdatedAtMillis = rollcall.historyUpdatedAtMillis,
                                 loggedIn = loggedIn,
+                                monitorRunning = monitorRunning,
                                 coordinateStore = radarCoordinateStore,
                                 onManageCoordinates = { courseId, courseTitle ->
                                     coordinateTarget = CourseSummary(courseId, courseTitle)
+                                    onModuleEntered("课程坐标")
+                                },
+                                onOpenCoordinatesHome = {
                                     onModuleEntered("课程坐标")
                                 },
                                 onRefresh = {
@@ -345,6 +347,21 @@ internal fun MainScreen(
                                     rollcall.refresh()
                                     rollcall.refreshHistory()
                                 },
+                            )
+                            "课表" -> SchedulePage(
+                                entries = schedule.entries,
+                                termCode = schedule.termCode,
+                                updatedAtMillis = schedule.updatedAtMillis,
+                                loading = schedule.loading,
+                                refreshError = schedule.refreshError,
+                                loggedIn = loggedIn,
+                                onRefresh = { schedule.refresh() },
+                                inferredCalendar = schedule.cache.inferredCalendars[schedule.termCode],
+                                // 学期切换或设置页校准后重读，避免课表继续显示旧周次。
+                                manualWeek = remember(schedule.termCode, manualWeekRevision.intValue) {
+                                    settings.manualAcademicWeek(schedule.termCode)
+                                },
+                                pinnedHeader = true,
                             )
                             "课程坐标" -> CourseCoordinatePage(
                                 courses = currentSemesterCoordinateCourses,
@@ -391,6 +408,7 @@ internal fun MainScreen(
                                 loggedIn = loggedIn,
                                 onSelectTerm = exam::selectTerm,
                                 onRefresh = exam::refresh,
+                                autoUpdated = exam.autoUpdated,
                             )
                             "课程课件" -> CoursewarePreviewPage(
                                 courses = courses,
@@ -429,20 +447,6 @@ internal fun MainScreen(
                                 ) {
                                     when (page) {
                                         "更多" -> MorePage(notificationSettings, downloadingCount, onSelected = onModuleEntered)
-                                        "课表" -> SchedulePage(
-                                            entries = schedule.entries,
-                                            termCode = schedule.termCode,
-                                            updatedAtMillis = schedule.updatedAtMillis,
-                                            loading = schedule.loading,
-                                            refreshError = schedule.refreshError,
-                                            loggedIn = loggedIn,
-                                            onRefresh = { schedule.refresh() },
-                                            inferredCalendar = schedule.cache.inferredCalendars[schedule.termCode],
-                                            // 学期切换或设置页校准后重读，避免课表继续显示旧周次。
-                                            manualWeek = remember(schedule.termCode, manualWeekRevision.intValue) {
-                                                settings.manualAcademicWeek(schedule.termCode)
-                                            },
-                                        )
                                         "通知" -> NotificationSettingsPreviewPage(settings, notificationSettings, testNotifications) {
                                             onNotificationSettingsSaved(it)
                                             show("通知设置已保存")
@@ -597,6 +601,8 @@ internal fun MainScreen(
                                             rollcallLoading = rollcall.loading,
                                             rollcallError = rollcall.refreshError,
                                             rollcallUpdatedAtMillis = rollcall.updatedAtMillis,
+                                            onOneTapSignIn = { rollcall.oneTapSignIn() },
+                                            oneTapBusy = rollcall.oneTapBusy,
                                         )
                                     }
                                 }

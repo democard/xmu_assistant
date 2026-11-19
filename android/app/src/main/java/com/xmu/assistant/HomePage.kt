@@ -1,8 +1,10 @@
 package com.xmu.assistant
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -14,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +39,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -64,6 +69,8 @@ fun HomePage(
     rollcallLoading: Boolean = false,
     rollcallError: String = "",
     rollcallUpdatedAtMillis: Long = 0L,
+    onOneTapSignIn: () -> Unit = {},
+    oneTapBusy: Boolean = false,
 ) {
     val focus = LocalFocusManager.current
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
@@ -80,9 +87,11 @@ fun HomePage(
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Column(
             modifier = Modifier.fillMaxWidth()
-                .background(AppHeaderBrush, RoundedCornerShape(17.dp)).heightIn(min = 182.dp).padding(20.dp),
+                .background(AppHeaderBrush, RoundedCornerShape(17.dp))
+                .heightIn(min = if (loggedIn) 142.dp else 160.dp)
+                .padding(horizontal = 18.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.Bottom,
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
         ) {
             Text("XMU / 校园日常", style = MaterialTheme.typography.labelLarge, color = Color(0xFFCDE5F2))
             Text(
@@ -101,7 +110,7 @@ fun HomePage(
                 Button(
                     onClick = if (monitorRunning) onStopMonitor else onStartMonitor,
                     enabled = !monitorTransitionInProgress && !accountTransitionInProgress,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp).heightIn(min = 46.dp),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = Color.White, contentColor = AppPrimary,
                     ),
@@ -146,29 +155,16 @@ fun HomePage(
                 PreviewListRow(R.drawable.ic_nav_check, "账号数据留在手机", "密码、Cookie 与通知配置不会上传到其他服务器。", trailing = {})
             }
         } else {
-            PreviewCard {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PreviewIconBox(R.drawable.ic_nav_check)
-                    Column(Modifier.weight(1f)) {
-                        Text("校园账号已连接", fontWeight = FontWeight.Bold)
-                        Text(username.take(3) + "****" + username.takeLast(4) + " · 登录状态正常", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = { confirmLogout = true }, enabled = !accountTransitionInProgress) { Text("退出登录") }
-                }
-            }
-        }
-
-        if (loggedIn) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HomeShortcut("课程课件", "查找与下载资料", Modifier.weight(1f)) { onNavigate("课程课件") }
-                HomeShortcut("考试安排", "查看时间与考场", Modifier.weight(1f)) { onNavigate("考试安排") }
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                HomeShortcut("课程课件", "资料查找下载", Modifier.weight(1f)) { onNavigate("课程课件") }
+                HomeShortcut("考试安排", "时间与考场", Modifier.weight(1f)) { onNavigate("考试安排") }
             }
             PreviewCard {
                 Row(
                     Modifier.fillMaxWidth().toggleable(
                         value = autoEnabled, role = Role.Switch,
                         enabled = !accountTransitionInProgress, onValueChange = onAutoChanged,
-                    ).padding(vertical = 4.dp),
+                    ).padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -211,16 +207,69 @@ fun HomePage(
                 if (rollcallError.isNotBlank()) {
                     RefreshStateBanner(false, rollcallError, currentRollcalls.isNotEmpty())
                 }
-                OutlinedButton(onClick = { onNavigate("策略") }, modifier = Modifier.fillMaxWidth()) { Text("调整类型与人数条件") }
-                OutlinedButton(onClick = { onNavigate("课程坐标") }, modifier = Modifier.fillMaxWidth()) { Text("雷达签到坐标管理") }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onNavigate("策略") },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Text("调整类型与人数条件", style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2)
+                    }
+                    OutlinedButton(
+                        onClick = { onNavigate("课程坐标") },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Text("雷达签到坐标管理", style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2)
+                    }
+                }
+                Button(
+                    onClick = onOneTapSignIn,
+                    enabled = !oneTapBusy && !accountTransitionInProgress,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                ) {
+                    Text(if (oneTapBusy) "正在签到…" else "一键签到", fontWeight = FontWeight.Bold)
+                }
             }
-            PreviewCard(soft = true, onClick = onOpenBackgroundSettings) {
-                PreviewListRow(
-                    icon = R.drawable.ic_nav_check,
-                    title = "后台提醒正常",
-                    subtitle = "已允许通知与后台运行",
-                    trailing = { PreviewBadge("已检查", PreviewBadgeTone.GREEN) },
-                )
+            PreviewCard(soft = true) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PreviewIconBox(R.drawable.ic_nav_check, Modifier.size(34.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("校园账号已连接", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${maskHomeUsername(username)} · 登录状态正常",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(
+                        onClick = { confirmLogout = true },
+                        enabled = !accountTransitionInProgress,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) { Text("退出登录") }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth().clickable(onClick = onOpenBackgroundSettings).padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("后台提醒正常", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "已允许通知与后台运行",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    PreviewBadge("已检查", PreviewBadgeTone.GREEN)
+                }
             }
         }
     }
@@ -234,6 +283,15 @@ fun HomePage(
             },
             dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } },
         )
+    }
+}
+
+internal fun maskHomeUsername(username: String): String {
+    val trimmed = username.trim()
+    return when {
+        trimmed.length >= 8 -> trimmed.take(3) + "****" + trimmed.takeLast(4)
+        trimmed.length >= 4 -> trimmed.take(2) + "**" + trimmed.takeLast(1)
+        else -> trimmed
     }
 }
 
@@ -258,11 +316,23 @@ internal fun toggleAllAutoAnswer(settings: RollcallSettings, enabled: Boolean): 
 
 @Composable
 private fun HomeShortcut(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
             PreviewIconBox(if (title == "课程课件") R.drawable.ic_nav_folder else R.drawable.ic_nav_calendar, Modifier.size(34.dp))
-            Text(title, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

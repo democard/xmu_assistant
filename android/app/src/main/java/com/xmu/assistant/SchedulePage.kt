@@ -9,15 +9,20 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,10 +34,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import java.io.File
@@ -125,6 +131,7 @@ fun SchedulePage(
     onRefresh: () -> Unit,
     inferredCalendar: XmuAcademicCalendar? = null,
     manualWeek: Int = 0,
+    pinnedHeader: Boolean = false,
 ) {
     val today = LocalDate.now()
     val context = LocalContext.current
@@ -228,7 +235,8 @@ fun SchedulePage(
         exporting = true
         scope.launch(Dispatchers.IO) {
             try {
-                val text = buildScheduleIcs(entries, activeCalendar)
+                val effectiveEntries = overrideStore.applyToEntries(termCode, entries)
+                val text = buildScheduleIcs(effectiveEntries, activeCalendar)
                     ?: error("开学日待校准，暂无法换算上课日期")
                 val dir = File(context.cacheDir, "exports").apply { mkdirs() }
                 val file = File(dir, "xmu课表_${activeCalendar.termCode}.ics")
@@ -256,14 +264,127 @@ fun SchedulePage(
         }
     }
 
+    if (coursePickerExpanded && weekGroupPairs.isNotEmpty()) {
+        val pickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { coursePickerExpanded = false },
+            sheetState = pickerSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("修改课程安排", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "第${clampedWeek}周共 ${weekGroupPairs.size} 门 · 选择要调整的课程",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { coursePickerExpanded = false }) { Text("关闭") }
+                }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(weekGroupPairs) { (base, applied) ->
+                        val hasOverride = overrideStore.has(termCode, base)
+                        val accent = scheduleCourseColor(applied.courseName)
+                        Surface(
+                            onClick = {
+                                coursePickerExpanded = false
+                                selectCourseAndReveal(applied)
+                            },
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(4.dp)
+                                        .height(40.dp)
+                                        .background(accent, RoundedCornerShape(999.dp)),
+                                )
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            applied.courseName,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        if (hasOverride) {
+                                            PreviewBadge("已修改", PreviewBadgeTone.GREEN)
+                                        }
+                                    }
+                                    Text(
+                                        "${weekdayName(applied.weekday)} 第${applied.startSection}—${applied.endSection}节 · ${
+                                            scheduleLocationSummary(applied).replace("\n", " / ")
+                                        }",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Text(
+                                    "编辑 ›",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = themePrimary(),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     selectedCourse?.let { group ->
         val base = selectedBaseCourse ?: group
+        val detailSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         fun closeDetails() {
             selectedCourse = null
             selectedBaseCourse = null
         }
-        ModalBottomSheet(onDismissRequest = ::closeDetails, containerColor = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+        ModalBottomSheet(
+            onDismissRequest = ::closeDetails,
+            sheetState = detailSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 18.dp),
+            ) {
                 ScheduleCourseDetails(
                     group = group,
                     hasLocalOverride = overrideStore.has(termCode, base),
@@ -282,76 +403,58 @@ fun SchedulePage(
             }
         }
     }
-    SectionCard("课表", showTitle = false) {
-        ScheduleAcademicHeader(
+    @Composable
+    fun ScheduleHeaderContent() {
+        ScheduleCompactHeader(
             calendar = calendar,
             academicWeek = academicWeek,
             selectedWeek = selectedWeek,
+            totalWeeks = totalWeeks,
             today = today,
             loading = loading,
             onRefresh = onRefresh,
             onExport = ::exportScheduleIcs,
             canExport = !exporting && entries.isNotEmpty(),
-        )
-
-        ScheduleWeekNavigator(
-            selectedWeek = selectedWeek,
-            totalWeeks = totalWeeks,
-            currentWeek = academicWeek.week,
             onWeekSelected = {
                 selectedWeek = it
                 selectedCourse = null
                 selectedBaseCourse = null
                 if (academicWeek.week == it) selectedDay = todayWeekday
             },
-        )
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) {
-                ScheduleModeToggle(viewMode = viewMode, onModeChanged = { viewModeName = it.name })
-            }
-            TextButton(onClick = {
+            onToday = {
                 selectedWeek = defaultWeek
                 selectedDay = todayWeekday
                 viewModeName = ScheduleViewMode.AGENDA.name
                 selectedCourse = null
                 selectedBaseCourse = null
-            }, enabled = academicWeek.week != null) {
-                Text("今天")
+            },
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.weight(1f)) {
+                ScheduleModeToggle(viewMode = viewMode, onModeChanged = { viewModeName = it.name })
+            }
+            OutlinedButton(
+                onClick = { coursePickerExpanded = true },
+                enabled = weekGroups.isNotEmpty(),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text("修改安排", style = MaterialTheme.typography.labelMedium)
             }
         }
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "点击课程可修改教室、星期、节次和周次",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            Box {
-                TextButton(onClick = { coursePickerExpanded = true }, enabled = weekGroups.isNotEmpty()) {
-                    Text("修改安排")
-                }
-                DropdownMenu(expanded = coursePickerExpanded, onDismissRequest = { coursePickerExpanded = false }) {
-                    weekGroups.forEach { group ->
-                        DropdownMenuItem(
-                            text = { Text("${group.courseName} · ${weekdayName(group.weekday)} ${group.startSection}—${group.endSection}节") },
-                            onClick = {
-                                coursePickerExpanded = false
-                                selectCourseAndReveal(group)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
         RefreshStateBanner(
             loading = loading,
             errorMessage = refreshError,
             hasData = entries.isNotEmpty(),
         )
+    }
 
+    @Composable
+    fun ScheduleBodyContent() {
         if (entries.isEmpty()) {
             // 空态三档之「未登录」：登出后清空缓存时给出登录引导而非"暂无数据"
             if (!loggedIn) {
@@ -359,7 +462,7 @@ fun SchedulePage(
             } else {
                 EmptyState("暂无课表", "点击右上角刷新，从教务系统读取原始排课数据。")
             }
-            return@SectionCard
+            return
         }
 
         if (weekGroups.isEmpty()) {
@@ -367,7 +470,7 @@ fun SchedulePage(
                 "第${clampedWeek}周没有课程",
                 if (selectedIsCurrent) "本周可以安心安排其他事项。" else "切换其他周查看课程安排。",
             )
-            return@SectionCard
+            return
         }
 
         when (viewMode) {
@@ -403,6 +506,28 @@ fun SchedulePage(
             style = MaterialTheme.typography.labelSmall,
         )
     }
+
+    if (pinnedHeader) {
+        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PreviewCard { ScheduleHeaderContent() }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SectionCard("课表", showTitle = false) {
+                    ScheduleBodyContent()
+                }
+            }
+        }
+    } else {
+        SectionCard("课表", showTitle = false) {
+            ScheduleHeaderContent()
+            ScheduleBodyContent()
+        }
+    }
 }
 
 private enum class ScheduleViewMode { WEEK, AGENDA }
@@ -419,96 +544,230 @@ private fun beforeTermLabel(calendar: XmuAcademicCalendar?): String = when (cale
     else -> "假期中"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ScheduleAcademicHeader(
+private fun ScheduleCompactHeader(
     calendar: XmuAcademicCalendar?,
     academicWeek: XmuAcademicWeek,
     selectedWeek: Int,
+    totalWeeks: Int,
     today: LocalDate,
     loading: Boolean,
     onRefresh: () -> Unit,
     onExport: () -> Unit,
     canExport: Boolean,
+    onWeekSelected: (Int) -> Unit,
+    onToday: () -> Unit,
 ) {
-    var actionsExpanded by remember { mutableStateOf(false) }
+    var choosingWeek by remember { mutableStateOf(false) }
+    val currentWeek = academicWeek.week
+    if (choosingWeek) {
+        val weekSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { choosingWeek = false },
+            sheetState = weekSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("选择查看周次", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (currentWeek != null) "当前为第${currentWeek}周 · 共 $totalWeeks 周" else "本学期共 $totalWeeks 周",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (currentWeek != null && selectedWeek != currentWeek) {
+                            TextButton(onClick = {
+                                choosingWeek = false
+                                onWeekSelected(currentWeek)
+                            }) { Text("回到本周") }
+                        }
+                        TextButton(onClick = { choosingWeek = false }) { Text("关闭") }
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    (1..totalWeeks).chunked(4).forEach { rowWeeks ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            rowWeeks.forEach { week ->
+                                val isSelected = week == selectedWeek
+                                val isCurrent = week == currentWeek
+                                Surface(
+                                    onClick = {
+                                        choosingWeek = false
+                                        onWeekSelected(week)
+                                    },
+                                    color = when {
+                                        isSelected -> themeSelectedChip()
+                                        isCurrent -> themeSoftGreen()
+                                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    },
+                                    contentColor = when {
+                                        isSelected -> Color.White
+                                        isCurrent -> themeSuccess()
+                                        else -> MaterialTheme.colorScheme.onSurface
+                                    },
+                                    shape = RoundedCornerShape(11.dp),
+                                    border = when {
+                                        isSelected -> null
+                                        isCurrent -> BorderStroke(1.dp, AppSuccess)
+                                        else -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    },
+                                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center,
+                                    ) {
+                                        Text(
+                                            "第${week}周",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                        if (isCurrent) {
+                                            Text(
+                                                "本周",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            repeat(4 - rowWeeks.size) {
+                                Box(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     val headline = when (academicWeek.phase) {
         XmuTermPhase.BEFORE -> beforeTermLabel(calendar)
-        XmuTermPhase.DURING -> if (academicWeek.week == selectedWeek) "第${selectedWeek}周 · 本周" else "第${selectedWeek}周 · 非本周"
+        XmuTermPhase.DURING -> if (currentWeek == selectedWeek) "第${selectedWeek}周 · 本周" else "第${selectedWeek}周 · 非本周"
         XmuTermPhase.AFTER -> "学期已结束"
         XmuTermPhase.UNKNOWN -> "第${selectedWeek}周"
     }
     val supporting = when (academicWeek.phase) {
         XmuTermPhase.BEFORE -> {
             val days = calendar?.let { ChronoUnit.DAYS.between(today, it.startDate) }
-            if (days != null && days >= 0) "距离开学${days}天 · 正在预览第${selectedWeek}周" else "正在预览第${selectedWeek}周"
+            if (days != null && days >= 0) "距离开学${days}天 · 预览第${selectedWeek}周" else "预览第${selectedWeek}周"
         }
-        XmuTermPhase.AFTER -> "可切换周次回顾本学期课程"
+        XmuTermPhase.AFTER -> "可切换周次回顾课程"
         else -> xmuWeekDateRange(calendar, selectedWeek)
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(headline, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = themePrimary())
-            Text(supporting, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(
+            onClick = { if (selectedWeek > 1) onWeekSelected(selectedWeek - 1) },
+            enabled = selectedWeek > 1,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(9.dp),
+            modifier = Modifier.defaultMinSize(minWidth = 34.dp, minHeight = 36.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text("‹", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
         }
+        Box(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { choosingWeek = true }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        "第${selectedWeek}周 ▾",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = themePrimary(),
+                        maxLines = 1,
+                    )
+                    Text(
+                        headline,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                if (supporting.isNotBlank()) {
+                    Text(
+                        supporting,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Surface(
+            onClick = { if (selectedWeek < totalWeeks) onWeekSelected(selectedWeek + 1) },
+            enabled = selectedWeek < totalWeeks,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(9.dp),
+            modifier = Modifier.defaultMinSize(minWidth = 34.dp, minHeight = 36.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text("›", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+        TextButton(
+            onClick = onToday,
+            enabled = academicWeek.week != null,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+        ) { Text("今天", style = MaterialTheme.typography.labelMedium) }
         OutlinedButton(
             onClick = onRefresh,
             enabled = !loading,
-            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Text(if (loading) "…" else "刷新")
-        }
-        Box {
-            TextButton(onClick = { actionsExpanded = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.width(48.dp)) { Text("更多") }
-            DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
-                DropdownMenuItem(text = { Text("导出日历") }, enabled = canExport, onClick = { actionsExpanded = false; onExport() })
-            }
-        }
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        ) { Text(if (loading) "…" else "刷新", style = MaterialTheme.typography.labelMedium) }
+        TextButton(
+            onClick = onExport,
+            enabled = canExport,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+        ) { Text("导出", style = MaterialTheme.typography.labelMedium) }
     }
 }
 
+@Suppress("unused", "UNUSED_PARAMETER")
 @Composable
 private fun ScheduleWeekNavigator(
     selectedWeek: Int,
     totalWeeks: Int,
     currentWeek: Int?,
     onWeekSelected: (Int) -> Unit,
-) {
-    var choosingWeek by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton(
-            onClick = { onWeekSelected(selectedWeek - 1) }, enabled = selectedWeek > 1,
-            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-        ) { Text("‹", style = MaterialTheme.typography.titleLarge) }
-        Box(Modifier.weight(1f)) {
-            TextButton(onClick = { choosingWeek = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("第${selectedWeek}周 ▾", fontWeight = FontWeight.Bold)
-            }
-            DropdownMenu(expanded = choosingWeek, onDismissRequest = { choosingWeek = false }) {
-                (1..totalWeeks).forEach { week ->
-                    DropdownMenuItem(
-                        text = { Text(if (week == currentWeek) "第${week}周 · 本周" else "第${week}周") },
-                        onClick = { choosingWeek = false; onWeekSelected(week) },
-                    )
-                }
-            }
-        }
-        if (currentWeek != null && selectedWeek != currentWeek) {
-            TextButton(onClick = { onWeekSelected(currentWeek) }) { Text("本周") }
-        }
-        OutlinedButton(
-            onClick = { onWeekSelected(selectedWeek + 1) }, enabled = selectedWeek < totalWeeks,
-            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-        ) { Text("›", style = MaterialTheme.typography.titleLarge) }
-    }
-}
+) = Unit
 @Composable
 private fun ScheduleModeToggle(
     viewMode: ScheduleViewMode,
@@ -517,8 +776,8 @@ private fun ScheduleModeToggle(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-            .padding(4.dp),
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+            .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         listOf(ScheduleViewMode.WEEK to "周课表", ScheduleViewMode.AGENDA to "日程").forEach { (mode, label) ->
@@ -530,12 +789,13 @@ private fun ScheduleModeToggle(
                 border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
                 modifier = Modifier
                     .weight(1f)
-                    .defaultMinSize(minHeight = 48.dp)
+                    .defaultMinSize(minHeight = 36.dp)
                     .clickable { onModeChanged(mode) },
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         label,
+                        style = MaterialTheme.typography.labelLarge,
                         color = if (selected) themePrimary() else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                     )
@@ -586,12 +846,17 @@ private fun ScheduleNextCourseCard(
 }
 
 @Composable
-internal fun ScheduleGridHeaderCell(text: String, width: androidx.compose.ui.unit.Dp, highlighted: Boolean) {
+internal fun ScheduleGridHeaderCell(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    highlighted: Boolean,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         color = if (highlighted) themeSelectedChip() else MaterialTheme.colorScheme.surfaceVariant,
         contentColor = if (highlighted) Color.White else themePrimary(),
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier
+        modifier = modifier
             .width(width)
             .heightIn(min = 44.dp),
     ) {
@@ -600,6 +865,7 @@ internal fun ScheduleGridHeaderCell(text: String, width: androidx.compose.ui.uni
                 text,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
                 maxLines = 2,
             )
         }
@@ -768,130 +1034,184 @@ private fun ScheduleCourseDetails(
     onRestoreOfficial: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var editing by rememberSaveable(group.courseName, group.weekday, group.startSection, group.endSection) { mutableStateOf(false) }
     var room by remember(group) { mutableStateOf(scheduleLocationSummary(group).takeUnless { it == "教室未标注" }.orEmpty()) }
-    var teacher by remember(group) { mutableStateOf(group.teachers.joinToString("、")) }
+    val preservedTeacher = remember(group) { group.teachers.joinToString("、") }
     var weeks by remember(group) { mutableStateOf(group.weeks) }
-    var weekdayText by remember(group) { mutableStateOf(group.weekday.toString()) }
+    var selectedWeekday by remember(group) { mutableIntStateOf(group.weekday.coerceIn(1, 7)) }
     var startSectionText by remember(group) { mutableStateOf(group.startSection.toString()) }
     var endSectionText by remember(group) { mutableStateOf(group.endSection.toString()) }
     var validationError by remember { mutableStateOf("") }
 
-    InfoCard(container = themeInfoCard(), modifier = modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(group.courseName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("我的上课安排", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(42.dp)
+                    .background(scheduleCourseColor(group.courseName), RoundedCornerShape(999.dp)),
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        group.courseName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (hasLocalOverride) PreviewBadge("已修改", PreviewBadgeTone.GREEN)
+                }
+                Text(
+                    "${weekdayName(group.weekday)} · 第${group.startSection}—${group.endSection}节 · ${formatXmuTime(group.startTime)}—${formatXmuTime(group.endTime)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            TextButton(onClick = { if (editing) editing = false else editing = true }) {
-                Text(if (editing) "取消编辑" else "修改安排")
+            TextButton(onClick = onClose) { Text("关闭") }
+        }
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = room,
+                        onValueChange = { room = it },
+                        label = { Text("地点") },
+                        placeholder = { Text("如 坤銮楼 B207") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1.2f),
+                    )
+                    OutlinedTextField(
+                        value = weeks,
+                        onValueChange = { weeks = it },
+                        label = { Text("周次") },
+                        placeholder = { Text("1-16周") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("星期", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        (1..7).forEach { day ->
+                            val active = selectedWeekday == day
+                            Surface(
+                                onClick = { selectedWeekday = day; validationError = "" },
+                                color = if (active) themeSelectedChip() else MaterialTheme.colorScheme.surface,
+                                contentColor = if (active) Color.White else MaterialTheme.colorScheme.onSurface,
+                                shape = RoundedCornerShape(999.dp),
+                                border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier.weight(1f).defaultMinSize(minHeight = 36.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
+                                    Text(
+                                        "周${xmuWeekdayShort(day)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("第几节课（1–11 自由组合）", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = startSectionText,
+                            onValueChange = { startSectionText = it.filter(Char::isDigit).take(2); validationError = "" },
+                            label = { Text("开始") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("—", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = endSectionText,
+                            onValueChange = { endSectionText = it.filter(Char::isDigit).take(2); validationError = "" },
+                            label = { Text("结束") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("节", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
         }
 
-        if (!editing) {
-            if (hasLocalOverride) PreviewBadge("已修改", PreviewBadgeTone.GREEN)
-            Text("${weekdayName(group.weekday)} · ${formatXmuTime(group.startTime)}—${formatXmuTime(group.endTime)}")
-            Text("节次：${group.startSection}—${group.endSection}节")
-            Text("周次：${group.weeks.ifBlank { "未标注" }}")
-            Text("教室：${scheduleLocationSummary(group)}")
-            Text("教师：${group.teachers.joinToString("、").ifBlank { "未标注" }}")
+        if (validationError.isNotBlank()) {
             Text(
-                "教室、星期、节次和周次都可以修改。",
+                validationError,
+                color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             if (hasLocalOverride) {
-                OutlinedButton(onClick = onRestoreOfficial, modifier = Modifier.fillMaxWidth()) {
-                    Text("恢复教务系统安排")
+                OutlinedButton(
+                    onClick = onRestoreOfficial,
+                    modifier = Modifier.weight(1f).heightIn(min = 46.dp),
+                ) {
+                    Text("恢复官方")
                 }
-            }
-        } else {
-            OutlinedTextField(
-                value = room,
-                onValueChange = { room = it },
-                label = { Text("教室或地点") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = weekdayText,
-                    onValueChange = { weekdayText = it.filter(Char::isDigit).take(1) },
-                    label = { Text("星期 1—7") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = startSectionText,
-                    onValueChange = { startSectionText = it.filter(Char::isDigit).take(2) },
-                    label = { Text("开始节次") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = endSectionText,
-                    onValueChange = { endSectionText = it.filter(Char::isDigit).take(2) },
-                    label = { Text("结束节次") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            OutlinedTextField(
-                value = weeks,
-                onValueChange = { weeks = it },
-                label = { Text("周次") },
-                placeholder = { Text("例如：第 1—16 周") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = teacher,
-                onValueChange = { teacher = it },
-                label = { Text("教师与教学班") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (validationError.isNotBlank()) {
-                Text(
-                    validationError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
             Button(
                 onClick = {
-                    val weekday = weekdayText.toIntOrNull()
                     val start = startSectionText.toIntOrNull()
                     val end = endSectionText.toIntOrNull()
                     validationError = when {
-                        weekday == null || weekday !in 1..7 -> "星期请输入 1—7"
                         start == null || start !in 1..11 -> "开始节次请输入 1—11"
-                        end == null || end !in start..11 -> "结束节次不能早于开始节次"
+                        end == null || end !in start..11 -> "结束节次需在 $start—11 之间"
                         else -> ""
                     }
                     if (validationError.isEmpty()) {
                         onSave(
                             ScheduleCourseOverride(
-                                weekday = weekday!!,
+                                weekday = selectedWeekday,
                                 startSection = start!!,
                                 endSection = end!!,
                                 room = room,
-                                teacher = teacher,
+                                teacher = preservedTeacher,
                                 weeks = weeks,
                             ),
                         )
-                        editing = false
+                        onClose()
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.weight(1f).heightIn(min = 46.dp),
             ) {
-                Text("保存")
+                Text("保存修改")
             }
         }
-        TextButton(onClick = onClose, modifier = Modifier.align(Alignment.End)) { Text("关闭") }
     }
 }
 

@@ -124,6 +124,12 @@ internal class RankSectionState(
                 if (working.pending == null) {
                     val choices = withContext(Dispatchers.IO) { client.ranges() }
                     check(active()) { "会话已改变" }
+                    if (choices.isEmpty()) {
+                        ranges = emptyList()
+                        stage = ""
+                        error = "教务系统暂未提供可查询的排名范围"
+                        return@launch
+                    }
                     val choice = choices.singleOrNull() ?: choices.singleOrNull { it.id == rangeId }
                     if (choice == null) {
                         ranges = choices
@@ -219,7 +225,13 @@ internal class RankSectionState(
                 if (epoch.isCurrent(session)) {
                     if (saved) { cache = next; error = "" } else error = "本地保存失败，请重试"
                 }
-            } finally { if (epoch.isCurrent(session)) loading = false; gate.finish("rankings") }
+            } finally {
+                if (epoch.isCurrent(session)) {
+                    loading = false
+                    stage = ""
+                }
+                gate.finish("rankings")
+            }
         }
     }
 

@@ -338,6 +338,43 @@ class LoginCancellationPersistenceTest(unittest.TestCase):
         self.assertFalse(host._login_persisting)
         session.close.assert_called_once_with()
 
+    def test_cancel_during_persistence_falls_back_when_cleanup_thread_cannot_start(self):
+        session = types.SimpleNamespace(close=mock.Mock())
+        undo = {"account_id": 1}
+        host = types.SimpleNamespace(
+            _login_epoch=8,
+            _login_in_progress=True,
+            _login_persisting=True,
+            _login_persist_cancel_remove_cookie=True,
+            events=[],
+            logs=[],
+        )
+        host._emit = host.events.append
+        host.log = host.logs.append
+        host._discard_persisted_login_worker = (
+            lambda *args: DashboardWindow._discard_persisted_login_worker(host, *args)
+        )
+        host._run_thread = mock.Mock(side_effect=RuntimeError("synthetic thread limit"))
+
+        with mock.patch(
+            "xmu_rollcall.desktop_qt.app.login_persistence.rollback_login", return_value=""
+        ) as rollback:
+            DashboardWindow._ev_login_persisted(
+                host, ("login_persisted", session, {"id": 1}, 7, "", undo)
+            )
+
+        host._run_thread.assert_called_once_with(
+            host._discard_persisted_login_worker, session, undo, True
+        )
+        rollback.assert_called_once_with(undo, remove_cookie=True)
+        session.close.assert_called_once_with()
+        self.assertEqual(host.events, [("login_persist_discarded", "")])
+        DashboardWindow._ev_login_persist_discarded(host, host.events.pop())
+        self.assertFalse(host._login_in_progress)
+        self.assertFalse(host._login_persisting)
+        self.assertFalse(host._login_persist_cancel_remove_cookie)
+        self.assertIn("已同步回滚", host.logs[0])
+
     def test_cancel_initial_login_restores_existing_credentials_and_cookie(self):
         import tempfile
         from pathlib import Path

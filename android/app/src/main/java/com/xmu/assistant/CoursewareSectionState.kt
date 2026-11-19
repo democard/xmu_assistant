@@ -149,10 +149,11 @@ internal class CoursewareSectionState(
 
     /** 全选/取消全选（组合侧 CoursewarePage onSelectAll 委托）。 */
     fun toggleSelectAll() {
-        selectedCoursewareIds = if (selectedCoursewareIds.size == coursewareItems.size) {
+        val allIds = coursewareItems.map { it.id }.toSet()
+        selectedCoursewareIds = if (allIds.isNotEmpty() && allIds.all { it in selectedCoursewareIds }) {
             emptySet()
         } else {
-            coursewareItems.map { it.id }.toSet()
+            allIds
         }
     }
 

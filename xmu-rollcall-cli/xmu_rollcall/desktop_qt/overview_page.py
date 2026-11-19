@@ -248,6 +248,8 @@ class OverviewPageMixin:
         events_layout.addWidget(self.events_table, 1)
         layout.addWidget(events_panel, 1)
         # 信号槽集中连接（B5）：仅位置收拢至 build 尾，连接序与语义不变
+        self.username_input.returnPressed.connect(self.password_input.setFocus)
+        self.password_input.returnPressed.connect(self.login)
         login_button.clicked.connect(self.login)
         logout_button.clicked.connect(self.logout)
         start_button.clicked.connect(self.start_monitor)

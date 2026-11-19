@@ -88,7 +88,7 @@ class RadarCoordinatesPageMixin:
         self.radar_add_custom_button = QPushButton("添加并设为首选")
         self.radar_add_custom_button.clicked.connect(self._radar_add_custom)
         grid.addWidget(self.radar_custom_name, 5, 1)
-        grid.addWidget(QLabel("纬度"))
+        grid.addWidget(QLabel("纬度"), 6, 0)
         grid.addWidget(self.radar_custom_lat, 6, 1)
         grid.addWidget(QLabel("经度"), 7, 0)
         grid.addWidget(self.radar_custom_lon, 7, 1)
@@ -190,10 +190,14 @@ class RadarCoordinatesPageMixin:
         if preset is None:
             self._radar_warn("未选择地点", "先在上方选择一个预置地点。")
             return
-        self.radar_coordinates.add(
-            course.course_id, course.title, preset.name, preset.latitude, preset.longitude,
-            source=f"preset:{preset.id}",
-        )
+        try:
+            self.radar_coordinates.add(
+                course.course_id, course.title, preset.name, preset.latitude, preset.longitude,
+                source=f"preset:{preset.id}",
+            )
+        except OSError as exc:
+            self._radar_write_failed(exc)
+            return
         self._radar_saved(f"已把《{preset.name}》设为《{course.title}》的首选地点")
 
     def _radar_add_custom(self) -> None:
@@ -214,6 +218,9 @@ class RadarCoordinatesPageMixin:
         except ValueError as exc:
             self._radar_warn("坐标无效", str(exc))
             return
+        except OSError as exc:
+            self._radar_write_failed(exc)
+            return
         self.radar_custom_name.clear()
         self._radar_saved(f"已添加《{name}》并设为《{course.title}》的首选地点")
 
@@ -222,7 +229,12 @@ class RadarCoordinatesPageMixin:
         if not place_id:
             self._radar_warn("未选择地点", "先在列表中选中一个已保存地点。")
             return
-        if self.radar_coordinates.set_preferred(place_id):
+        try:
+            updated = self.radar_coordinates.set_preferred(place_id)
+        except OSError as exc:
+            self._radar_write_failed(exc)
+            return
+        if updated:
             self._radar_saved("已设为首选地点")
         else:
             self._radar_warn("设置失败", "这个地点可能已被删除，请刷新。")
@@ -232,10 +244,21 @@ class RadarCoordinatesPageMixin:
         if not place_id:
             self._radar_warn("未选择地点", "先在列表中选中要删除的地点。")
             return
-        if self.radar_coordinates.delete(place_id):
+        try:
+            deleted = self.radar_coordinates.delete(place_id)
+        except OSError as exc:
+            self._radar_write_failed(exc)
+            return
+        if deleted:
             self._radar_saved("地点已删除")
         else:
             self._radar_warn("删除失败", "这个地点可能已被删除，请刷新。")
+
+    def _radar_write_failed(self, exc: OSError) -> None:
+        message = f"写入雷达坐标失败：{exc}"
+        if hasattr(self, "log"):
+            self.log(message)
+        self._radar_warn("保存失败", message)
 
     def _radar_saved(self, message: str) -> None:
         self.refresh_radar_place_list()

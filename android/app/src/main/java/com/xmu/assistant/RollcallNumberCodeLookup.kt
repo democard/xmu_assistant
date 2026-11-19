@@ -86,7 +86,10 @@ internal class RollcallNumberCodeLookup(
 
 internal fun rollcallCodeDates(startTime: String = "", endTime: String = "", now: Instant = Instant.now()): List<String> {
     for ((raw, isStart) in listOf(startTime to true, endTime to false)) {
-        val text = raw.trim().replace(' ', 'T')
+        var text = raw.trim().replace(' ', 'T')
+        if (Regex("[+-]\\d{4}$").containsMatchIn(text)) {
+            text = text.replace(Regex("([+-]\\d{2})(\\d{2})$"), "$1:$2")
+        }
         val instant = runCatching { OffsetDateTime.parse(text).toInstant() }
             .recoverCatching { LocalDateTime.parse(text).toInstant(ZoneOffset.ofHours(8)) }
             .getOrNull() ?: continue

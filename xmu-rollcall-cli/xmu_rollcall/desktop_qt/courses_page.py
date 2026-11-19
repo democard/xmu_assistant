@@ -358,42 +358,53 @@ class CoursesPageMixin:
         if self.only_unsigned_check.isChecked():
             records = [record for record in records if self._course_status_text(record.signed_status) == "未签"]
 
-        self.course_table.setRowCount(0)
-        if not records:
-            if not self.course_records:
-                empty_message = "登录后可查看签到情况"
-            elif self.only_unsigned_check.isChecked():
-                # 有记录但都被「只显示未签」滤掉：不能说"暂无签到记录"
-                #（汇总行同时显示未签 0），否则误导用户以为整个范围没有数据。
-                empty_message = "当前筛选下没有未签记录"
-            elif self.time_range_combo.currentText() == "今天":
-                empty_message = "今天暂无签到记录"
-            elif self.time_range_combo.currentText() == "本周":
-                empty_message = "本周暂无签到记录"
+        table = self.course_table
+        has_qt_guards = hasattr(table, "setUpdatesEnabled") and hasattr(table, "blockSignals")
+        if has_qt_guards:
+            signals_blocked = table.blockSignals(True)
+            updates_enabled = table.updatesEnabled()
+            table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(0)
+            if not records:
+                if not self.course_records:
+                    empty_message = "登录后可查看签到情况"
+                elif self.only_unsigned_check.isChecked():
+                    # 有记录但都被「只显示未签」滤掉：不能说"暂无签到记录"
+                    #（汇总行同时显示未签 0），否则误导用户以为整个范围没有数据。
+                    empty_message = "当前筛选下没有未签记录"
+                elif self.time_range_combo.currentText() == "今天":
+                    empty_message = "今天暂无签到记录"
+                elif self.time_range_combo.currentText() == "本周":
+                    empty_message = "本周暂无签到记录"
+                else:
+                    empty_message = "当前学期暂无签到记录"
+                self._set_table_empty_state(table, empty_message)
             else:
-                empty_message = "当前学期暂无签到记录"
-            self._set_table_empty_state(self.course_table, empty_message)
-        else:
-            grouped: dict[str, list[CourseRollcallRecord]] = {}
-            group_dates: dict[str, date | None] = {}
-            for record in records:
-                label, group_date = self._course_group_label(record)
-                grouped.setdefault(label, []).append(record)
-                group_dates[label] = group_date
+                grouped: dict[str, list[CourseRollcallRecord]] = {}
+                group_dates: dict[str, date | None] = {}
+                for record in records:
+                    label, group_date = self._course_group_label(record)
+                    grouped.setdefault(label, []).append(record)
+                    group_dates[label] = group_date
 
-            labels = sorted(
-                grouped,
-                key=lambda label: group_dates[label] or date.min,
-                reverse=True,
-            )
-            row = 0
-            for label in labels:
-                group_records = self._sorted_course_records(grouped[label])
-                self._insert_course_group_row(row, label, len(group_records))
-                row += 1
-                for record in group_records:
-                    self._insert_course_record_row(row, label, record)
+                labels = sorted(
+                    grouped,
+                    key=lambda label: group_dates[label] or date.min,
+                    reverse=True,
+                )
+                row = 0
+                for label in labels:
+                    group_records = self._sorted_course_records(grouped[label])
+                    self._insert_course_group_row(row, label, len(group_records))
                     row += 1
+                    for record in group_records:
+                        self._insert_course_record_row(row, label, record)
+                        row += 1
+        finally:
+            if has_qt_guards:
+                table.blockSignals(signals_blocked)
+                table.setUpdatesEnabled(updates_enabled)
 
         # 摘要行：全量计数 + 筛选可见数（核实事件的定向更新路径复用同一实现）
         self._write_course_summary()
@@ -423,7 +434,11 @@ class CoursesPageMixin:
         unsigned = status_counts.get("未签到", 0)
         unknown = status_counts.get("未知", 0)
         no_rollcalls = status_counts.get("无签到记录", 0)
-        return f"共 {len(self.course_records)} 条；已签 {signed}；未签 {unsigned}；未知 {unknown}；无记录 {no_rollcalls}"
+        leave = status_counts.get("请假", 0)
+        text = f"共 {len(self.course_records)} 条；已签 {signed}；未签 {unsigned}；未知 {unknown}；无记录 {no_rollcalls}"
+        if leave:
+            text += f"；请假 {leave}"
+        return text
 
     def _visible_course_records(self) -> list[CourseRollcallRecord]:
         """按当前表格行序导出最新记录，包含筛选与原位核实后保留的行序。"""

@@ -120,11 +120,9 @@ internal class ExamSectionState(
             refreshError = ""
             checkChanges(term)
         } else if (!loggedIn() || cookieHeader().isBlank() || accountTransitionInProgress()) {
-            // 登录/恢复在途且无该学期缓存：若保留旧学期 summary，ExamPage 不按
-            // selectedTerm 过滤会把「旧学期数据」显示到新切换的标签下（错位）。
-            // 此处清空摘要防串显，并提示用户稍后重试（页面以提示代替错位数据）。
+            // 登录/恢复在途或未登录且无该学期缓存：清空摘要防串显，并按真实原因提示用户。
             summary = null
-            show("登录处理中，请稍候")
+            show(if (accountTransitionInProgress()) "登录处理中，请稍候" else "请先登录")
         } else {
             // 无缓存：拉取该学期（首次查看，允许加载指示）
             summary = null
@@ -190,15 +188,20 @@ internal class ExamSectionState(
                 // 会话过期时客户端内部走与课表/成绩同构的安全续登（进程级单飞门，不并发打登录）。
                 val client = newExamClient(session, accountUsername, accountPassword)
                 val fetched = client.fetchTermExams(term)
-                if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(client.currentCookie())
+                if (sessionEpoch.isCurrent(session)) {
+                    setScoreCookieHeader(client.currentCookie())
+                    // 磁盘落盘放在 IO 线程执行，避免在主线程 onResult 中同步写盘
+                    ExamCache.saveTerm(
+                        activity,
+                        fetched ?: XmuTermExamSummary(term, term, emptyList(), emptyList()),
+                    )
+                }
                 fetched
             },
             onResult = { result ->
                 result.onSuccess { fetched ->
                     refreshError = ""
                     if (fetched != null) {
-                        // 无条件落缓存（任何学期数据都可供切学期/提醒聚合复用）
-                        ExamCache.saveTerm(activity, fetched)
                         // 仅当仍为当前选中学期才更新显示（防止在途请求覆盖用户新切的学期）
                         if (term == selectedTerm) {
                             summary = fetched
@@ -209,10 +212,8 @@ internal class ExamSectionState(
                     } else if (term == selectedTerm) {
                         // 该学期两接口都空（无考试也无已选课未安排）：显示空状态，
                         // 不设错误文案（"暂无数据"不是刷新失败）。
-                        // 空摘要也落缓存 + 重排提醒：清掉该学期已删除考试的旧闹钟（避免残留误触发）。
                         val empty = XmuTermExamSummary(term, term, emptyList(), emptyList())
                         summary = empty
-                        ExamCache.saveTerm(activity, empty)
                         rescheduleReminders()
                     }
                 }
