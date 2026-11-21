@@ -82,6 +82,7 @@ class ScoreSectionStateTest {
         transport: StubScoreTransport,
         loggedIn: Boolean = true,
         transitionInProgress: Boolean = false,
+        factoryFails: Boolean = false,
     ): Harness {
         val gate = RequestGate()
         val epoch = SessionEpoch()
@@ -107,6 +108,7 @@ class ScoreSectionStateTest {
             setScoreRecordsJson = { persistedJson += it },
             setScoreUpdatedAtMillisPref = { persistedAt += it },
             createScoreClient = { accountUsername, accountPassword, cookie, mayRelogin ->
+                if (factoryFails) error("fixture client factory failure")
                 assertEquals("u1", accountUsername)
                 XmuScoreAutoQueryClient(accountUsername, accountPassword, cookie, transport, mayRelogin = mayRelogin)
             },
@@ -131,6 +133,21 @@ class ScoreSectionStateTest {
         assertTrue("持久化 JSON 未写入", await { harness.persistedJson.isNotEmpty() })
         assertTrue(harness.persistedJson.single().contains("CS101"))
         assertTrue(harness.persistedAt.single() > 0L)
+    }
+
+    @Test
+    fun `client factory failure is reported and releases loading and request gate`() {
+        val harness = newHarness(StubScoreTransport(), factoryFails = true)
+
+        val error = runCatching { harness.state.refresh() }.exceptionOrNull()
+        val gateReleased = harness.gate.tryStart("scores")
+        if (gateReleased) harness.gate.finish("scores")
+
+        assertTrue(
+            "factory failure must be surfaced without leaving refresh stuck: error=$error, loading=${harness.state.loading}, gateReleased=$gateReleased, refreshError=${harness.state.refreshError}",
+            error == null && !harness.state.loading && gateReleased && harness.state.refreshError.isNotBlank(),
+        )
+        assertTrue(harness.transport.requests.isEmpty())
     }
 
     @Test

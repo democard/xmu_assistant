@@ -8,11 +8,11 @@
 
 课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
 
-**当前版本：Windows 1.8.4 · Android 1.8.4（versionCode 45）**
+**当前公开版本：Windows 1.8.6 · Android 1.8.6（versionCode 47）**
 
-1.8.4 集中改善登录与任务恢复、课件下载、账号数据隔离和邮件安全，双端安装包同步更新。
+1.8.6 纳入 2026-11-21 三轮维护修复，涵盖桌面课件恢复与安全导出、Android 会话并发、课表缓存、小组件及成绩分享。排查过程见[第一轮维护](documentation/debug-2026-11-21.md)、[第二轮维护](documentation/debug-2026-11-21-round2.md)与[第三轮维护](documentation/debug-2026-11-21-round3.md)。
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.4)
+[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6)
 
 </div>
 
@@ -26,11 +26,11 @@
 
 | 平台 | 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Windows | 1.8.4 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.8.4（versionCode 45） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.8.4 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.4.zip) |
+| Windows | 1.8.6 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant.exe)，下载后运行，无需另装 Python |
+| Android | 1.8.6（versionCode 47） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk)，Android 8.0 及以上 |
+| 对应源码 | v1.8.6 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.6.zip) |
 
-双端文件校验值见 [1.8.4 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
+双端文件校验值见 [1.8.6 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
 
 ```powershell
 Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
@@ -80,7 +80,24 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 ## 本版更新
 
-### 1.8.4 · 双端稳定性与安全更新
+### 1.8.6 · 双端稳定性与分享、导出修复
+
+- **Windows**：修复课程切换失败及线程启动异常后的恢复状态；文件导出改用同目录原子替换，写入失败保留旧文件；CSV 文本单元格中和电子表格公式前缀。
+- **Android 会话与缓存**：修复请求取消或客户端初始化异常后请求门 / loading 残留，收紧排名、考试 Cookie 与成绩初始化的会话接纳；协调 Academic 缓存清理和异步写入。
+- **Android 签到与课表**：前台签到和后台监控共用并发去重门；统一课表修正对周视图、ICS 导出和小组件的投影，修复后台 Worker 与手动保存之间的多种写入时序。
+- **Android 成绩分享**：MediaStore 仅在图片写入并发布成功后返回 URI；失败时清理未完成项目，长图生成和系统分享面板遵循请求门、会话与 Activity 生命周期。
+
+[发布说明](documentation/releases/v1.8.6.md) · [发布验证记录](documentation/verification-1.8.6.md)
+
+### 1.8.5 · 双端界面与交互优化（历史版本）
+
+- Android 首页新增一键签到，改善签到分类卡片、人数统计和缺勤标记。
+- 优化课表与成绩布局、周次与课程安排弹窗、课程坐标 / 课件选择和考试刷新。
+- 改善 Windows 课程 / 课件列表和雷达配置，修复登录取消回滚及下载刷新边界。
+
+[1.8.5 发布说明](documentation/releases/v1.8.5.md)
+
+### 1.8.4 · 双端稳定性与安全更新（历史）
 
 - 修复同账号重新登录后查询或自动任务卡住，阻止手动连点及自动 / 手动重叠提交；暂停监控不影响手动应答。
 - 下载绑定资源与版本，支持安全断点恢复、进度和取消；修复长文件名丢失后缀、配置目录探针竞争。
@@ -162,9 +179,13 @@ $env:PYTHONPATH = (Resolve-Path .\xmu-rollcall-cli).Path
 
 Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 35，再使用仓库的 Gradle 8.7 Wrapper 构建。测试与产物路径见 [Android 构建说明](android/README.md#构建与测试)；Windows 的测试、打包及本地配置见 [Windows 开发说明](xmu-rollcall-cli/README.md)。
 
-### 1.8.4 验证记录
+### 1.8.6 验证记录
 
-Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通过，其中 19 项邮件回归通过。Ruff、编译检查与 Android Lint 通过。详细修复、验证与打包信息见 [1.8.4 验证记录](documentation/verification-1.8.4.md)；历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
+本次发布的完整回归、Lint、Windows EXE 与 Android Release APK 检查结果见 [1.8.6 验证记录](documentation/verification-1.8.6.md)。该记录区分本次实测结果与历史维护报告；真实校园端到端及设备验收范围也在其中说明。
+
+### 1.8.4 验证记录（历史）
+
+Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通过，其中 19 项邮件回归通过。Ruff、编译检查与 Android Lint 通过。以上数字只对应 1.8.4，详见 [1.8.4 验证记录](documentation/verification-1.8.4.md)；历史发布记录见 [TEST_REPORT.md](TEST_REPORT.md)。
 
 ### 项目结构
 

@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
  *   （IO 线程读盘 → 主线程写入，构造期不再做主线程磁盘 IO）。
  * - 会话保护：网络回调先经 sessionEpoch.accepts(...) 校验世代再写状态，
  *   与其它模块共用同一进程级 epoch；续登写回教务 cookie（setScoreCookieHeader）
- *   前同样校验 isCurrent（防登出/换号后旧账号 cookie 写回）。
+ *   在主线程接纳结果后立即提交，与登出/换号清理保持同一线程顺序。
  * - 存储依赖收窄为函数式注入（scoreCookieHeader/setScoreCookieHeader/reminderSettings）：
  *   组合侧绑定 AssistantSettings（加密 prefs），测试注入 fake，互不依赖。
  * - 风控红线：考试内部可能触发教务 CAS 续登（XmuExamClient.fetchTermExams 统一续登，
@@ -189,17 +189,18 @@ internal class ExamSectionState(
                 val client = newExamClient(session, accountUsername, accountPassword)
                 val fetched = client.fetchTermExams(term)
                 if (sessionEpoch.isCurrent(session)) {
-                    setScoreCookieHeader(client.currentCookie())
                     // 磁盘落盘放在 IO 线程执行，避免在主线程 onResult 中同步写盘
                     ExamCache.saveTerm(
                         activity,
                         fetched ?: XmuTermExamSummary(term, term, emptyList(), emptyList()),
+                        isCurrent = { sessionEpoch.isCurrent(session) },
                     )
                 }
-                fetched
+                fetched to client.currentCookie()
             },
             onResult = { result ->
-                result.onSuccess { fetched ->
+                result.onSuccess { (fetched, updatedCookie) ->
+                    setScoreCookieHeader(updatedCookie)
                     refreshError = ""
                     if (fetched != null) {
                         // 仅当仍为当前选中学期才更新显示（防止在途请求覆盖用户新切的学期）
@@ -255,57 +256,40 @@ internal class ExamSectionState(
         val knownTerms = validTerms
         if (term.isBlank()) {
             // 还没有选中学期：先探测有效学期，再取最近一个
+            // 探测和数据读取共用一份准入；只有实际移交后才由 fetchData 释放。
+            val ownsGate = java.util.concurrent.atomic.AtomicBoolean(true)
             scope.launch(Dispatchers.IO) {
-                // 门释放走外层 finally（NonCancellable）：协程取消时 withContext(Main) 整段
-                // 跳过会导致 "exam" 门永久占用；fetchData 路径由 fetchData 自己的 finally 释放，
-                // 用 ownsGate 标记归属避免双重释放
-                var ownsGate = true
-                try {
-                    val probe = runCatching {
-                        val client = newExamClient(session, accountUsername, accountPassword)
-                        val terms = client.probeValidTerms(knownTerms = knownTerms)
-                        if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(client.currentCookie())
-                        terms
-                    }
-                    val result = probe.getOrDefault(ExamProbeResult(emptyList(), null))
-                    val terms = result.terms
-                    val probeError = probe.exceptionOrNull()
-                    val target = terms.firstOrNull()
-                    // 仅探测成功才记录重探时刻（失败不屏蔽 6h 重探，可自愈）；
-                    // 登出竞态守卫（与上方 setScoreCookieHeader 的 isCurrent 同款）：
-                    // clearLoggedOutUi 清缓存后，在途请求的晚到写不得把旧账号数据回填
-                    if (sessionEpoch.isCurrent(session)) {
-                        if (probeError == null) ExamCache.markProbed(activity)
-                        // 窗口内全部有效学期数据落缓存（切学期秒显 + 跨学期提醒聚合）
-                        result.summaries.forEach { (_, s) -> ExamCache.saveTerm(activity, s) }
-                    }
-                    withContext(Dispatchers.Main) {
-                        if (!sessionEpoch.accepts(session, cookieHeader(), loggedIn())) {
-                            loading = false
-                            return@withContext
-                        }
-                        validTerms = terms
-                        ExamCache.saveTerms(activity, terms)
-                        if (target != null) {
-                            // 默认选中最近一个学期；用户已手动选择且仍有效则保留
-                            val desired = selectedTerm.takeIf { it in terms } ?: target
-                            selectedTerm = desired
-                            // 门移交给 fetchData（其 finally 统一释放）
-                            ownsGate = false
-                            fetchData(desired, session, gateKey)
-                        } else {
-                            loading = false
-                            // 探测失败要明确提示（会话过期/网络异常），不能静默成"没有数据"
-                            refreshError = probeError?.let { refreshFailureMessage(it) } ?: "没有找到考试数据"
-                        }
-                    }
-                } finally {
-                    if (ownsGate) {
-                        withContext(kotlinx.coroutines.NonCancellable) {
-                            requestGate.finish(gateKey)
-                        }
+                val probe = runCatching {
+                    val client = newExamClient(session, accountUsername, accountPassword)
+                    val terms = client.probeValidTerms(knownTerms = knownTerms)
+                    terms to client.currentCookie()
+                }
+                val result = probe.getOrNull()?.first ?: ExamProbeResult(emptyList(), null)
+                val terms = result.terms
+                val probeError = probe.exceptionOrNull()
+                val target = terms.firstOrNull()
+                // 每次提交在缓存清理共用的锁内复核会话；失败不屏蔽后续重探。
+                val isCurrent = { sessionEpoch.isCurrent(session) }
+                if (probeError == null) ExamCache.markProbed(activity, isCurrent)
+                result.summaries.forEach { (_, s) -> ExamCache.saveTerm(activity, s, isCurrent) }
+                withContext(Dispatchers.Main) {
+                    if (!sessionEpoch.accepts(session, cookieHeader(), loggedIn())) return@withContext
+                    probe.getOrNull()?.second?.let(setScoreCookieHeader)
+                    validTerms = terms
+                    ExamCache.saveTerms(activity, terms)
+                    if (target != null) {
+                        val desired = selectedTerm.takeIf { it in terms } ?: target
+                        selectedTerm = desired
+                        ownsGate.set(false)
+                        fetchData(desired, session, gateKey)
+                    } else {
+                        loading = false
+                        refreshError = probeError?.let { refreshFailureMessage(it) } ?: "没有找到考试数据"
                     }
                 }
+            }.invokeOnCompletion {
+                // 完成回调也覆盖协程体尚未启动的取消；移交后绝不提前释放另一任务的门。
+                if (ownsGate.get()) requestGate.finish(gateKey)
             }
             return
         }
@@ -325,56 +309,42 @@ internal class ExamSectionState(
         val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
         val accountUsername = username()
         val accountPassword = password()
-        scope.launch(Dispatchers.IO) {
-            try {
-                val outcome = runCatching {
-                    val client = newExamClient(session, accountUsername, accountPassword)
-                    val summary = client.fetchTermExams(term)
-                    if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(client.currentCookie())
-                    summary
+        scope.launchGatedRequest(requestGate, gateKey) {
+            val outcome = runCatching {
+                val client = newExamClient(session, accountUsername, accountPassword)
+                val summary = client.fetchTermExams(term)
+                summary to client.currentCookie()
+            }
+            withContext(Dispatchers.Main) {
+                if (!sessionEpoch.accepts(session, cookieHeader(), loggedIn())) return@withContext
+                outcome.getOrNull()?.second?.let(setScoreCookieHeader)
+                // 用户已切走：结果仅落缓存，不改显示
+                if (term != selectedTerm) {
+                    outcome.getOrNull()?.first?.let { ExamCache.saveTerm(activity, it) }
+                    return@withContext
                 }
-                withContext(Dispatchers.Main) {
-                    if (!sessionEpoch.accepts(session, cookieHeader(), loggedIn())) return@withContext
-                    // 用户已切走：结果仅落缓存，不改显示
-                    if (term != selectedTerm) {
-                        outcome.getOrNull()?.let { ExamCache.saveTerm(activity, it) }
-                        return@withContext
-                    }
-                    val latest = outcome.getOrNull()
-                    if (latest == null && outcome.exceptionOrNull() != null) {
-                        // 请求失败（网络/接口不可用/会话过期/单飞门被占）：fetchTermExams
-                        // 失败一律抛异常，与「真空学期返回 null」的成功态被 runCatching
-                        // 折叠成同一个 null，必须用 exceptionOrNull 区分。失败与
-                        // silentRefresh 的失败分支同款：保留显示与缓存静默跳过，等
-                        // 下一轮/手动刷新——绝不把失败误判成「教务清空该学期」清缓存撤提醒。
-                        return@withContext
-                    }
-                    if (latest == null) {
-                        // 非空→变空（教务清空该学期，成功返回真空）：与 silentRefresh 同构——
-                        // 显示空态、落空缓存、重排提醒（清掉已删考试的旧闹钟），避免切学期
-                        // 路径下空壳学期长期显示过期数据。
-                        if (cached.exams.isNotEmpty() || cached.unarranged.isNotEmpty()) {
-                            val empty = XmuTermExamSummary(term, term, emptyList(), emptyList())
-                            summary = empty
-                            ExamCache.saveTerm(activity, empty)
-                            autoUpdated = true
-                            rescheduleReminders()
-                        }
-                        return@withContext
-                    }
-                    val changed = examsChanged(cached, latest)
-                    if (changed) {
-                        summary = latest
-                        ExamCache.saveTerm(activity, latest)
+                val latest = outcome.getOrNull()?.first
+                if (latest == null && outcome.exceptionOrNull() != null) {
+                    // 请求失败时保留现有显示与缓存，不把接口异常当成教务清空学期。
+                    return@withContext
+                }
+                if (latest == null) {
+                    // 成功返回空学期：更新空态，并撤销已删除考试的提醒。
+                    if (cached.exams.isNotEmpty() || cached.unarranged.isNotEmpty()) {
+                        val empty = XmuTermExamSummary(term, term, emptyList(), emptyList())
+                        summary = empty
+                        ExamCache.saveTerm(activity, empty)
                         autoUpdated = true
-                        // 数据变化后重新调度提醒（新增考试/时间变动）
                         rescheduleReminders()
                     }
+                    return@withContext
                 }
-            } finally {
-                // 门释放提到协程最外层（NonCancellable），协程取消也能执行
-                withContext(kotlinx.coroutines.NonCancellable) {
-                    requestGate.finish(gateKey)
+                val changed = examsChanged(cached, latest)
+                if (changed) {
+                    summary = latest
+                    ExamCache.saveTerm(activity, latest)
+                    autoUpdated = true
+                    rescheduleReminders()
                 }
             }
         }
@@ -400,7 +370,7 @@ internal class ExamSectionState(
         val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
         val accountUsername = username()
         val accountPassword = password()
-        scope.launch(Dispatchers.IO) {
+        scope.launchGatedRequest(requestGate, gateKey) {
             try {
                 val result = runCatching {
                     val client = newExamClient(session, accountUsername, accountPassword)
@@ -413,12 +383,10 @@ internal class ExamSectionState(
                         val probe = client.probeValidTerms(knownTerms = snapshotValidTerms)
                         terms = probe.terms
                         summaries = probe.summaries
-                        // 登出竞态守卫：clearLoggedOutUi 清缓存后，晚到的在途写不得回填旧账号数据
-                        if (sessionEpoch.isCurrent(session)) {
-                            ExamCache.markProbed(activity)
-                            // 窗口内全部有效学期落缓存（切学期秒显 + 跨学期提醒聚合）
-                            summaries.forEach { (_, s) -> ExamCache.saveTerm(activity, s) }
-                        }
+                        val isCurrent = { sessionEpoch.isCurrent(session) }
+                        ExamCache.markProbed(activity, isCurrent)
+                        // 逐学期提交各自复核，登出清理后旧批次也不会继续回填。
+                        summaries.forEach { (_, s) -> ExamCache.saveTerm(activity, s, isCurrent) }
                     } else {
                         terms = snapshotValidTerms
                     }
@@ -430,13 +398,14 @@ internal class ExamSectionState(
                     }
                     // 目标为最近学期且 probe 已拉取时直接复用，不再重复请求（提速）
                     val fetched = summaries[target] ?: target?.let { client.fetchTermExams(it) }
-                    if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(client.currentCookie())
-                    SilentRefreshResult(terms, target, fetched, summaries)
+                    SilentRefreshResult(terms, target, fetched, summaries) to client.currentCookie()
                 }
                 withContext(Dispatchers.Main) {
                     try {
                         if (!sessionEpoch.accepts(session, cookieHeader(), loggedIn())) return@withContext
-                        result.onSuccess { (terms, target, latest, _) ->
+                        result.onSuccess { (refreshed, updatedCookie) ->
+                            setScoreCookieHeader(updatedCookie)
+                            val (terms, target, latest, _) = refreshed
                             refreshError = ""
                             validTerms = terms
                             ExamCache.saveTerms(activity, terms)
@@ -500,9 +469,9 @@ internal class ExamSectionState(
                     }
                 }
             } finally {
-                // 门释放提到协程最外层（NonCancellable），协程取消也能执行
-                withContext(kotlinx.coroutines.NonCancellable) {
-                    requestGate.finish(gateKey)
+                // 取消时完成当前会话的 UI 收尾，门由任务完成回调统一释放。
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    if (sessionEpoch.accepts(session, cookieHeader(), loggedIn())) loading = false
                 }
             }
         }

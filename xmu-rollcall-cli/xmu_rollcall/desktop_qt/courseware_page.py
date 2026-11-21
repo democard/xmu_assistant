@@ -209,10 +209,14 @@ class CoursewarePageMixin:
         self.courseware_courses_refresh_in_progress = True
         self.courseware_summary.setText("正在读取课程列表...")
         self.log("开始读取课件课程列表。")
-        self._run_thread(
-            self._courseware_courses_worker, silent, self.session,
-            str((self.account or {}).get("id") or ""),
-        )
+        worker_source_session = self.session
+        worker_account_id = str((self.account or {}).get("id") or "")
+        try:
+            self._run_thread(
+                self._courseware_courses_worker, silent, worker_source_session, worker_account_id,
+            )
+        except Exception as exc:
+            self._emit(("courseware_courses_error", str(exc), silent, worker_account_id, worker_source_session))
 
     def _courseware_courses_worker(
         self, silent=False, worker_source_session=_QUERY_SOURCE_UNSET, worker_account_id=None,
@@ -257,10 +261,14 @@ class CoursewarePageMixin:
         self.courseware_refresh_in_progress = True
         self.courseware_summary.setText(f"正在读取《{course.title}》课件...")
         self.log(f"开始读取课程课件：{course.title}。")
-        self._run_thread(
-            self._courseware_worker, course, silent, self.session,
-            str((self.account or {}).get("id") or ""),
-        )
+        worker_source_session = self.session
+        worker_account_id = str((self.account or {}).get("id") or "")
+        try:
+            self._run_thread(
+                self._courseware_worker, course, silent, worker_source_session, worker_account_id,
+            )
+        except Exception as exc:
+            self._emit(("courseware_error", str(exc), silent, worker_account_id, course.course_id, worker_source_session))
 
     def _courseware_worker(
         self, course: CourseSummary, silent=False,
@@ -280,14 +288,14 @@ class CoursewarePageMixin:
         try:
             worker_session = clone_session(worker_source_session) if worker_source_session is not None else None
             if worker_session is None:
-                self._emit(("courseware_error", "登录状态已变更，请重新登录。", silent, worker_account_id, worker_source_session))
+                self._emit(("courseware_error", "登录状态已变更，请重新登录。", silent, worker_account_id, course.course_id, worker_source_session))
                 return
             # Keep modules caching scoped to the stable GUI session while this
             # worker uses a detached clone for network safety.
             worker_session._xmu_modules_cache_scope = worker_source_session
             self._emit(("courseware", course, fetch_courseware(worker_session, course.course_id), worker_account_id, worker_source_session))
         except Exception as exc:
-            self._emit(("courseware_error", str(exc), silent, worker_account_id, worker_source_session))
+            self._emit(("courseware_error", str(exc), silent, worker_account_id, course.course_id, worker_source_session))
         finally:
             close_cloned_session(worker_session, worker_source_session)
 
@@ -384,14 +392,32 @@ class CoursewarePageMixin:
         destination = Path(self.courseware_download_dir.text()) / sanitize_filename(course.title)
         self.courseware_summary.setText(f"准备处理 {len(items)} 个课件...")
         self._show_toast(f"开始处理 {len(items)} 个课件")
-        self._run_thread(
-            self._courseware_download_worker,
-            items,
-            destination,
-            batch_token,
-            worker_account_id,
-            worker_source_session,
-        )
+        try:
+            self._run_thread(
+                self._courseware_download_worker,
+                items,
+                destination,
+                batch_token,
+                worker_account_id,
+                worker_source_session,
+            )
+        except Exception as exc:
+            # No worker exists to emit its usual finally events. Complete every
+            # target through the same batch/account-guarded GUI handlers.
+            errors = []
+            raw_errors = []
+            for item in items:
+                name = item.filename or item.activity_title
+                errors.append(f"{name}：课件下载任务启动失败，{friendly_error_message(exc, 'courseware')}")
+                raw_errors.append(f"{name}：{exc}")
+                self._emit((
+                    "courseware_download_item_done", batch_token, worker_account_id,
+                    self._courseware_key(item), "下载失败：任务启动失败",
+                ))
+            self._emit((
+                "courseware_download_done", batch_token, worker_account_id,
+                [], [], errors, destination, raw_errors,
+            ))
 
     def cancel_courseware_download(self):
         if not self.courseware_download_in_progress:

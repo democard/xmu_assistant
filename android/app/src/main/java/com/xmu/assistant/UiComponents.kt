@@ -885,8 +885,9 @@ fun syncScheduleWidget(
     inferredCalendar: XmuAcademicCalendar? = null,
     manualWeek: Int = 0,
 ) {
+    val correctedEntries = ScheduleOverrideStore(context).applyToEntries(termCode, entries)
     val days = projectScheduleWidgetDays(
-        entries, termCode, inferredCalendar ?: xmuAcademicCalendarForTerm(termCode),
+        correctedEntries, termCode, inferredCalendar ?: xmuAcademicCalendarForTerm(termCode),
         manualWeek = if (inferredCalendar == null) manualWeek else 0,
     )
     ScheduleWidgetData.saveUpcoming(context, days)

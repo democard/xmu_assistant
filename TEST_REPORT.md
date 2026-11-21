@@ -1,6 +1,6 @@
 # 项目扫描与修复验证报告
 
-最新双端版本见 [1.8.4 发布与验证](documentation/verification-1.8.4.md)。源码维护见 [2026-10-24 八项修复记录](documentation/repair8-2026-10-24.md)，前一轮见 [复核与 Debug 任务记录](documentation/review-2026-10-24.md)。下文保留各轮当时的源码、测试与发布证据，不作为本轮工作区验证结果。
+当前公开双端版本见 [1.8.6 发布说明](documentation/releases/v1.8.6.md)与[验证记录](documentation/verification-1.8.6.md)，本次源码维护过程见 [2026-11-21 第一轮](documentation/debug-2026-11-21.md)、[第二轮](documentation/debug-2026-11-21-round2.md)与[第三轮](documentation/debug-2026-11-21-round3.md)。历史发布说明见 [1.8.5](documentation/releases/v1.8.5.md)；历史源码维护见 [2026-10-24 八项修复记录](documentation/repair8-2026-10-24.md)与[复核任务记录](documentation/review-2026-10-24.md)，历史发布验证见 [1.8.4 验证记录](documentation/verification-1.8.4.md)。下文保留历史源码、测试与发布证据，不作为当前发布验证结果。
 
 日期：2026-09-22。起始版本：`e40c5d8`。以下保留第一轮验证记录；第二轮全项目扫描与修复结果见文末。两轮均由主代理规划、审核和统一验证，由三个 `gpt-5.6-luna / medium` 子代理分工执行。
 

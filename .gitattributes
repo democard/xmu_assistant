@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Keep executable shell scripts usable in Git Bash, Linux and CI checkouts.
+android/gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

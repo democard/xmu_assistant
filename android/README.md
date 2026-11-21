@@ -2,9 +2,9 @@
 
 虾大助手的 Android 原生客户端，使用 Kotlin 和 Jetpack Compose，提供课程、课表、学习记录与日常提醒等功能。与 Windows 端独立运行，登录态和业务缓存保存在设备本地。
 
-当前公开版本 **1.8.4 / versionCode 45**：改善课件安全续传、登录 Cookie 作用域、历史缓存与账号隔离，并修复邮件 TLS 和重投边界。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35，沿用既有包名和签名。
+当前公开版本 **1.8.6 / versionCode 47**：修复请求取消与账号切换时的缓存写回、课表与小组件时序、签到并发提交及成绩长图分享异常。支持 **Android 8.0（API 26）及以上**，compileSdk / targetSdk 为 35，沿用既有包名和签名。三轮排查过程见[第一轮维护](../documentation/debug-2026-11-21.md)、[第二轮维护](../documentation/debug-2026-11-21-round2.md)与[第三轮维护](../documentation/debug-2026-11-21-round3.md)。
 
-[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
+[下载 APK](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 
 ## 使用入口
 
@@ -31,7 +31,20 @@
 
 v1.7.3 更新了日历事件标识。向已有旧版导入的日历再次导入可能形成重复事件，建议先移除旧导入再导入新版。
 
-### 1.8.4 下载、缓存与邮件修复
+### 1.8.6 稳定性与会话修复
+
+- 请求取消、客户端初始化失败和账号切换后，及时恢复 loading / 请求门状态，旧任务的 Cookie 与缓存写回受会话及修订顺序保护。
+- 修复排名、考试、签到和课件任务的取消 / 异常边界；前台签到与监控共享提交门，避免同一记录并发重复提交。
+- 课表本地修正统一作用于周视图、ICS 和桌面小组件；修复手动修改、后台 Worker、进程快照和持久化文件之间的交错覆盖。
+- 成绩长图保存只有在 MediaStore 完整写入并发布后才返回分享 URI；失败清理未完成项目，分享任务受会话与 Activity 生命周期管理。
+
+完整内容见 [1.8.6 发布说明](../documentation/releases/v1.8.6.md)；构建、回归和包检查结果见 [1.8.6 验证记录](../documentation/verification-1.8.6.md)。三轮维护文档保留排查、红绿回归与时序分析过程。
+
+### 1.8.5 界面与交互优化（历史）
+
+新增一键签到，改善数字 / 雷达 / 二维码卡片、实时人数、成绩与课表布局；周次、课程安排和选课使用可滚动弹窗。完整已发布内容见 [1.8.5 发布说明](../documentation/releases/v1.8.5.md)。
+
+### 1.8.4 下载、缓存与邮件修复（历史）
 
 下载只在资源归属与可靠版本验证器匹配时续传；缺少可靠验证器则重新全量下载。旧版无归属的 `.part` 保留，新下载另起文件名，不与其它同名课件拼接。邮件渠道要求有效 TLS 和服务器身份校验，提交后回执不明不再盲目切换端口重发。历史缓存的会话有效性检查与实际写入共用提交屏障，登出后的旧任务不得写回。
 
@@ -65,7 +78,7 @@ cd android
 | 单元测试报告 | `app/build/reports/tests/testDebugUnitTest/index.html` |
 | Lint 报告 | `app/build/reports/lint-results-debug.html` |
 
-单元测试使用 JUnit、MockWebServer 和 Robolectric，无需启动模拟器。1.8.4 的 Debug 全量 822 项测试通过，其中 19 项邮件回归通过；Lint 0 错误、6 警告。打包、版本与签名检查见 [1.8.4 验证记录](../documentation/verification-1.8.4.md)。
+1.8.4 的 Debug 全量 822 项测试通过，其中 19 项邮件回归通过；Lint 0 错误、6 警告。这些是历史发布数据，不代表当前源码验证。当前 1.8.6 的构建和测试结果见 [1.8.6 验证记录](../documentation/verification-1.8.6.md)。
 
 仓库另带 `gradle/init.gradle` 作为可选镜像配置，可用 `-I gradle/init.gradle` 显式加载。依赖未缓存完整时，不要添加 `--offline`。
 

@@ -850,12 +850,19 @@ def course_rollcall_csv(records: list[CourseRollcallRecord]) -> str:
     - 状态列用显示口径（course_display_status），与页面逐字一致；
     - 日期列取签到时间解析出的 ISO 日期，解析失败留空（不猜）；
     - 字段转义遵循 RFC 4180（csv 模块）；行序与输入一致（导出即所见）。
+    - 公式前缀文本加前置单引号，统计数值与原始记录保持不变。
     """
     import csv
     import io as _io
 
     buffer = _io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
+
+    def safe_cell(value):
+        if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+            return "'" + value
+        return value
+
     writer.writerow([
         "日期", "课程", "签到时间", "类型", "状态", "已签人数", "总人数",
         "已签比例", "签到码", "平台状态", "已核实", "签到ID", "备注",
@@ -863,7 +870,8 @@ def course_rollcall_csv(records: list[CourseRollcallRecord]) -> str:
     for record in records:
         record_time = parse_rollcall_time(record.rollcall_time)
         writer.writerow(
-            [
+            safe_cell(value)
+            for value in [
                 record_time.date().isoformat() if record_time else "",
                 record.course_title,
                 record.rollcall_time,

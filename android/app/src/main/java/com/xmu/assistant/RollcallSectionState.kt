@@ -4,9 +4,11 @@ import android.app.Activity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
@@ -136,8 +138,17 @@ internal class RollcallSectionState(
             gateKey = "rollcall_one_tap",
             acceptsResult = { sessionEpoch.accepts(session, cookieHeader(), loggedIn()) },
             ioWork = {
+                val workContext = currentCoroutineContext()
+                workContext.ensureActive()
+                if (!sessionEpoch.isCurrent(session)) {
+                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                }
                 val engine = createEngine(session.cookieHeader)
-                val polled = engine.pollWithDetails(accountId)
+                val polled = engine.pollWithDetails(accountId).distinctBy { it.id }
+                currentCoroutineContext().ensureActive()
+                if (!sessionEpoch.isCurrent(session)) {
+                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                }
                 if (polled.isEmpty()) {
                     return@runModuleRequest OneTapSignInOutcome(events = emptyList())
                 }
@@ -149,6 +160,10 @@ internal class RollcallSectionState(
                 var failed = 0
                 var firstError = ""
                 for (event in polled) {
+                    currentCoroutineContext().ensureActive()
+                    if (!sessionEpoch.isCurrent(session)) {
+                        return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                    }
                     val resolvedStatus = event.ownStatus ?: event.status
                     if (isTerminalRollcallStatus(resolvedStatus)) {
                         alreadySigned += 1
@@ -161,9 +176,22 @@ internal class RollcallSectionState(
                                 missingCode += 1
                             } else {
                                 try {
-                                    if (engine.answer(event)) submitted += 1 else failed += 1
+                                    val accepted = RollcallAnswerGate.answerOnce(
+                                        accountId = accountId,
+                                        cookieHeader = session.cookieHeader,
+                                        rollcallId = event.id,
+                                        canAnswer = { workContext.ensureActive(); sessionEpoch.isCurrent(session) },
+                                        answer = { engine.answer(event) },
+                                    )
+                                    currentCoroutineContext().ensureActive()
+                                    if (!sessionEpoch.isCurrent(session)) {
+                                        return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                                    }
+                                    if (accepted) submitted += 1 else failed += 1
                                 } catch (expired: MainSessionExpiredException) {
                                     throw expired
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
                                 } catch (error: Throwable) {
                                     failed += 1
                                     if (firstError.isBlank()) firstError = refreshFailureMessage(error)
@@ -172,9 +200,22 @@ internal class RollcallSectionState(
                         }
                         "雷达签到" -> {
                             try {
-                                if (engine.answer(event)) submitted += 1 else failed += 1
+                                val accepted = RollcallAnswerGate.answerOnce(
+                                    accountId = accountId,
+                                    cookieHeader = session.cookieHeader,
+                                    rollcallId = event.id,
+                                    canAnswer = { workContext.ensureActive(); sessionEpoch.isCurrent(session) },
+                                    answer = { engine.answer(event) },
+                                )
+                                currentCoroutineContext().ensureActive()
+                                if (!sessionEpoch.isCurrent(session)) {
+                                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
+                                }
+                                if (accepted) submitted += 1 else failed += 1
                             } catch (expired: MainSessionExpiredException) {
                                 throw expired
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
                             } catch (notSubmitted: RollcallAnswerNotSubmittedException) {
                                 missingCoordinate += 1
                                 if (firstError.isBlank()) firstError = notSubmitted.message.orEmpty()
@@ -185,6 +226,10 @@ internal class RollcallSectionState(
                         }
                         else -> skippedQr += 1
                     }
+                }
+                currentCoroutineContext().ensureActive()
+                if (!sessionEpoch.isCurrent(session)) {
+                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
                 }
                 val refreshed = if (submitted > 0) {
                     runCatching { engine.pollWithDetails(accountId) }.getOrElse { polled }
@@ -208,7 +253,7 @@ internal class RollcallSectionState(
                     events = outcome.events
                     updatedAtMillis = System.currentTimeMillis()
                     when {
-                        outcome.events.isEmpty() -> show("当前暂无进行中的签到")
+                        outcome.submitted == 0 && outcome.events.isEmpty() -> show("当前暂无进行中的签到")
                         outcome.submitted > 0 && outcome.failed == 0 && outcome.missingCoordinate == 0 && outcome.missingCode == 0 -> {
                             val suffix = if (outcome.skippedQr > 0) "（跳过 ${outcome.skippedQr} 项二维码签到）" else ""
                             show("一键签到已提交 ${outcome.submitted} 项$suffix")
@@ -276,7 +321,7 @@ internal class RollcallSectionState(
         historyLoading = true
         val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
         val accountId = username()
-        scope.launch(Dispatchers.IO) {
+        scope.launchGatedRequest(requestGate, "rollcall_history") {
             try {
                 // SWR 缓存先行：IO 线程读盘 → 有缓存先上屏（含上次更新），
                 // 网络回包后原位覆盖；不学 ExamSectionState 构造期同步 IO（体检 P2）
@@ -353,9 +398,9 @@ internal class RollcallSectionState(
                     }
                 }
             } finally {
-                // 门释放提到协程最外层（NonCancellable）：与 refresh() 同款防"门永久占用"
-                withContext(kotlinx.coroutines.NonCancellable) {
-                    requestGate.finish("rollcall_history")
+                // 取消后的 UI 收尾仍受会话守卫约束；门由任务完成回调统一释放。
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    if (sessionEpoch.accepts(session, cookieHeader(), loggedIn())) historyLoading = false
                 }
             }
         }

@@ -112,7 +112,10 @@ internal class HomeActions(
                             settings.scoreCookieHeader = ""
                             settings.scoreRecordsJson = ""
                             settings.scoreUpdatedAtMillis = 0L
-                            settings.academicCacheJson = ""
+                            clearAcademicCachePersistence(
+                                invalidateCache = { setAcademicCache(AcademicCacheSnapshot()) },
+                                clearCacheJson = { settings.academicCacheJson = "" },
+                            )
                             schedule.clearAll()
                             // 等待后台课表的本地提交后再清一次，避免已进入的 setter 回填旧会话。
                             settings.scoreCookieHeader = ""
@@ -121,7 +124,6 @@ internal class HomeActions(
                             deleteRollcallHistoryCacheFile(activity)
                             ScheduleWidgetData.clear(activity)
                             ScheduleWidgetProvider.refreshAll(activity)
-                            setAcademicCache(AcademicCacheSnapshot())
                             setCourses(emptyList())
                             setSelectedCourseId(null)
                             courseware.clearAll()

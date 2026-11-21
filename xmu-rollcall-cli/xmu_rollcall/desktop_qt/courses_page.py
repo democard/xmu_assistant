@@ -34,6 +34,7 @@ from ..utils import clone_session
 from ..worker_sessions import close_cloned_session
 from ..rollcall_progress import summarize_rollcall_progress
 from ..verify import find_number_code
+from .exporting import write_text_atomically
 from .core import (
     COURSE_STATUS_DISPLAY,
     COURSE_STATUS_PRIORITY,
@@ -406,6 +407,9 @@ class CoursesPageMixin:
                 table.blockSignals(signals_blocked)
                 table.setUpdatesEnabled(updates_enabled)
 
+        # 重建清空了选中行，批量更新期间屏蔽的选中信号不会补发。
+        self._update_verify_button_state()
+
         # 摘要行：全量计数 + 筛选可见数（核实事件的定向更新路径复用同一实现）
         self._write_course_summary()
 
@@ -464,10 +468,9 @@ class CoursesPageMixin:
         if not path:
             return
         try:
-            # utf-8-sig：带 BOM，Excel 双击直开不乱码；newline="" 交给 csv 已生成的行尾
-            with open(path, "w", encoding="utf-8-sig", newline="") as file:
-                file.write(course_rollcall_csv(records))
-        except OSError as exc:
+            # utf-8-sig：带 BOM，Excel 双击直开不乱码；同目录临时文件完整写入后再替换。
+            write_text_atomically(path, course_rollcall_csv(records))
+        except (OSError, UnicodeError) as exc:
             QMessageBox.warning(self, "导出失败", f"写入文件失败：{exc}")
             return
         QMessageBox.information(self, "导出成功", f"已导出 {len(records)} 条签到记录：\n{path}")

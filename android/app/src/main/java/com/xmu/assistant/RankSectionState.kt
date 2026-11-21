@@ -81,10 +81,21 @@ internal class RankSectionState(
         val stored = if (cache.owner == rankDigest(account)) cache else RankCache(rankDigest(account))
         val rangeId = selectedRange
         loading = true; stage = "正在准备"; error = ""
-        val client = clientFactory(academicCookie(), { old ->
-            XmuScoreAutoQueryClient(account, pass, old, mayRelogin = active).forceAcademicLogin()
-        }, active)
-        scope.launch(Dispatchers.Main) {
+        scope.launchGatedRequest(gate, "rankings", Dispatchers.Main) {
+            val client = try {
+                clientFactory(academicCookie(), { old ->
+                    XmuScoreAutoQueryClient(account, pass, old, mayRelogin = active).forceAcademicLogin()
+                }, active)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (active()) {
+                    error = failure.message ?: "排名客户端初始化失败，请重试"
+                    loading = false
+                    stage = ""
+                }
+                return@launchGatedRequest
+            }
             var working = stored
             suspend fun update(value: RankCache) {
                 val json = rankCacheToJson(value)
@@ -128,13 +139,13 @@ internal class RankSectionState(
                         ranges = emptyList()
                         stage = ""
                         error = "教务系统暂未提供可查询的排名范围"
-                        return@launch
+                        return@launchGatedRequest
                     }
                     val choice = choices.singleOrNull() ?: choices.singleOrNull { it.id == rangeId }
                     if (choice == null) {
                         ranges = choices
                         stage = "请选择计算范围"
-                        return@launch
+                        return@launchGatedRequest
                     }
                     val snapshot = withContext(Dispatchers.IO) { client.records() }
                     check(active()) { "会话已改变" }
@@ -148,7 +159,7 @@ internal class RankSectionState(
                             RankPending(snapshot.map { it.id }.toSet(), choice, System.currentTimeMillis(), startFingerprint),
                             reuseNote = "所选范围已有计算记录（计算于 ${existing.calculatedAt.ifBlank { "未知时间" }}），已直接读取复用，未重复提交申请。",
                         )
-                        return@launch
+                        return@launchGatedRequest
                     }
                     val before = snapshot.map { it.id }.toSet()
                     val pending = RankPending(before, choice, System.currentTimeMillis(), startFingerprint)
@@ -176,7 +187,7 @@ internal class RankSectionState(
                         if (pending.recordId.isBlank()) update(working.copy(pending = pending.copy(recordId = record.id)))
                         if (record.participants > 0) {
                             finishWith(record, pending, reuseNote = null)
-                            return@launch
+                            return@launchGatedRequest
                         }
                     }
                     latestCompleteRecordForRange(records, pending.range.id)?.let { fallback = it }
@@ -191,7 +202,7 @@ internal class RankSectionState(
                     // 完整计算，明确标注来源，避免用户无限等待；下次点击仍会重新尝试申请。
                     finishWith(adopt, working.pending ?: error("申请状态缺失"),
                         reuseNote = "教务未生成新记录，已采用所选范围最近一次计算结果（计算于 ${adopt.calculatedAt.ifBlank { "未知时间" }}）。")
-                    return@launch
+                    return@launchGatedRequest
                 }
                 error = ambiguity ?: "本次计算尚未完成。点击继续查询，不会重复申请。"
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -200,10 +211,16 @@ internal class RankSectionState(
             } finally {
                 withContext(NonCancellable) {
                     if (active()) {
-                        withContext(Dispatchers.IO) { if (active()) saveCookie(client.cookieHeader()) }
-                        loading = false
+                        try {
+                            // 小值在 Main 接纳后立即提交，与登出/换号清理保持同线程顺序。
+                            saveCookie(client.cookieHeader())
+                        } catch (failure: Exception) {
+                            if (failure is CancellationException) throw failure
+                            error = "教务会话保存失败，请重试"
+                        } finally {
+                            loading = false
+                        }
                     }
-                    gate.finish("rankings")
                 }
             }
         }
@@ -219,7 +236,7 @@ internal class RankSectionState(
         val session = epoch.snapshot(owner, cookie())
         val next = transform(cache)
         loading = true; stage = "正在保存"
-        scope.launch(Dispatchers.Main) {
+        scope.launchGatedRequest(gate, "rankings", Dispatchers.Main) {
             try {
                 val saved = withContext(Dispatchers.IO) { writeCache(rankCacheToJson(next)) { epoch.isCurrent(session) } }
                 if (epoch.isCurrent(session)) {
@@ -230,7 +247,6 @@ internal class RankSectionState(
                     loading = false
                     stage = ""
                 }
-                gate.finish("rankings")
             }
         }
     }

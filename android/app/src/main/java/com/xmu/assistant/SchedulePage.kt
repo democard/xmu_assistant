@@ -205,9 +205,17 @@ fun SchedulePage(
     var coursePickerExpanded by remember { mutableStateOf(false) }
 
     val clampedWeek = selectedWeek.coerceIn(1, totalWeeks)
-    val weekIndex = remember(entries) { indexXmuScheduleByWeek(entries) }
-    val rawWeekGroups = remember(entries, weekIndex, clampedWeek) {
-        (weekIndex[clampedWeek] ?: emptyList()).groupForDisplay()
+    val effectiveEntries = remember(entries, termCode, overrideRevision) {
+        overrideStore.applyToEntries(termCode, entries)
+    }
+    val weekIndex = remember(effectiveEntries) { indexXmuScheduleByWeek(effectiveEntries) }
+    val rawWeekGroups = remember(entries, effectiveEntries, weekIndex, clampedWeek) {
+        val visibleEntries = (weekIndex[clampedWeek] ?: emptyList()).toSet()
+        // Keep the original arrangement as the override key, but filter by corrected weeks.
+        entries.zip(effectiveEntries)
+            .filter { (_, effective) -> effective in visibleEntries }
+            .map { (original, _) -> original }
+            .groupForDisplay()
     }
     val weekGroupPairs = remember(rawWeekGroups, termCode, overrideRevision) {
         rawWeekGroups.map { base -> base to overrideStore.apply(termCode, base) }
@@ -235,8 +243,8 @@ fun SchedulePage(
         exporting = true
         scope.launch(Dispatchers.IO) {
             try {
-                val effectiveEntries = overrideStore.applyToEntries(termCode, entries)
-                val text = buildScheduleIcs(effectiveEntries, activeCalendar)
+                val exportEntries = overrideStore.applyToEntries(termCode, entries)
+                val text = buildScheduleIcs(exportEntries, activeCalendar)
                     ?: error("开学日待校准，暂无法换算上课日期")
                 val dir = File(context.cacheDir, "exports").apply { mkdirs() }
                 val file = File(dir, "xmu课表_${activeCalendar.termCode}.ics")
@@ -393,11 +401,13 @@ fun SchedulePage(
                         overrideStore.save(termCode, base, value)
                         overrideRevision += 1
                         selectedCourse = applyScheduleOverride(base, value)
+                        syncScheduleWidget(context, entries, termCode, inferredCalendar, manualWeek)
                     },
                     onRestoreOfficial = {
                         overrideStore.remove(termCode, base)
                         overrideRevision += 1
                         selectedCourse = base
+                        syncScheduleWidget(context, entries, termCode, inferredCalendar, manualWeek)
                     },
                 )
             }

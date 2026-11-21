@@ -24,9 +24,14 @@ internal object ExamCache {
     private const val FRESHNESS_DAYS = 12L
     // 学期槽上限：最近 12 个学期（约 4 学年）足够日常查看与提醒聚合，超出淘汰最旧
     private const val MAX_TERM_SLOTS = 12
+    private val writeLock = Any()
 
     /** 保存单个学期的考试汇总（多槽：每学期一个 key；超上限时淘汰最旧学期槽）。 */
-    fun saveTerm(context: Context, summary: XmuTermExamSummary) {
+    fun saveTerm(
+        context: Context,
+        summary: XmuTermExamSummary,
+        isCurrent: () -> Boolean = { true },
+    ) {
         val exams = JSONArray()
         summary.exams.forEach { exam ->
             exams.put(
@@ -47,21 +52,24 @@ internal object ExamCache {
             .put("termLabel", summary.termLabel)
             .put("exams", exams)
             .put("unarranged", unarranged)
-        val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        editor
-            .putString("$KEY_TERM_PREFIX${summary.termCode}", payload.toString())
-            .putString(KEY_TERM, summary.termCode)
-            .putLong(KEY_SAVED_EPOCH_DAY, java.time.LocalDate.now().toEpochDay())
-        // 淘汰：学期槽只保留最近 MAX_TERM_SLOTS 个（多年累积不会无限膨胀）。
-        // 注意并入本次新写入的 key：prefs.all 读的是 apply() 前的快照，不含新键，
-        // 否则新增第 13 个学期时 dropLast 删不到任何键、槽位上限失效。
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val termKeys = (prefs.all.keys + "$KEY_TERM_PREFIX${summary.termCode}")
-            .filter { it.startsWith(KEY_TERM_PREFIX) }
-            .distinct()
-            .sorted() // term_YYYY-YYYY-S 前缀一致，字典序 = 时间序（旧在前）
-        termKeys.dropLast(MAX_TERM_SLOTS).forEach { editor.remove(it) }
-        editor.apply()
+            .toString()
+        writeIfCurrent(isCurrent) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+            editor
+                .putString("$KEY_TERM_PREFIX${summary.termCode}", payload)
+                .putString(KEY_TERM, summary.termCode)
+                .putLong(KEY_SAVED_EPOCH_DAY, java.time.LocalDate.now().toEpochDay())
+            // 淘汰：学期槽只保留最近 MAX_TERM_SLOTS 个（多年累积不会无限膨胀）。
+            // 注意并入本次新写入的 key：prefs.all 读的是 apply() 前的快照，不含新键，
+            // 否则新增第 13 个学期时 dropLast 删不到任何键、槽位上限失效。
+            val termKeys = (prefs.all.keys + "$KEY_TERM_PREFIX${summary.termCode}")
+                .filter { it.startsWith(KEY_TERM_PREFIX) }
+                .distinct()
+                .sorted() // term_YYYY-YYYY-S 前缀一致，字典序 = 时间序（旧在前）
+            termKeys.dropLast(MAX_TERM_SLOTS).forEach { editor.remove(it) }
+            editor.apply()
+        }
     }
 
     /** 读取指定学期的缓存；兼容旧版单槽缓存（data/term 字段）迁移。 */
@@ -74,13 +82,16 @@ internal object ExamCache {
     }.getOrNull()
 
     /** 缓存有效学期列表（新→旧，最近在前）。 */
-    fun saveTerms(context: Context, terms: List<String>) {
+    fun saveTerms(context: Context, terms: List<String>, isCurrent: () -> Boolean = { true }) {
         val array = JSONArray()
         terms.forEach { array.put(it) }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_TERMS, array.toString())
-            .apply()
+        val payload = array.toString()
+        writeIfCurrent(isCurrent) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_TERMS, payload)
+                .apply()
+        }
     }
 
     /** 读取有效学期列表（新→旧，最近在前）；无列表但有旧版单槽缓存时，用该学期作为初始列表。 */
@@ -128,15 +139,26 @@ internal object ExamCache {
     }
 
     /** 记录一次学期列表探测（节流基准）。 */
-    fun markProbed(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_LAST_PROBE, System.currentTimeMillis())
-            .apply()
+    fun markProbed(context: Context, isCurrent: () -> Boolean = { true }) {
+        writeIfCurrent(isCurrent) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_LAST_PROBE, System.currentTimeMillis())
+                .apply()
+        }
     }
 
     fun clear(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        synchronized(writeLock) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        }
+    }
+
+    /** 会话检查与提交共用 clear 的锁：旧写先完成则随后清除，清除先完成则旧写失效。 */
+    private fun writeIfCurrent(isCurrent: () -> Boolean, write: () -> Unit) {
+        synchronized(writeLock) {
+            if (isCurrent()) write()
+        }
     }
 
     private fun parseSummary(raw: String): XmuTermExamSummary {

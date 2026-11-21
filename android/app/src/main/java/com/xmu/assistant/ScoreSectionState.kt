@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -90,27 +92,38 @@ internal class ScoreSectionState(
         // 登录态检查与 schedule/rollcall/courseware 入口对齐：登出后凭据（学号密码）仍残留，
         // 缺此检查会用残留凭据直接发起教务 CAS 登录——回调虽被 loggedIn 守卫丢弃，
         // 但登录请求已打出（登出后幽灵登录 = 风控暴露）
-        if (!loggedIn() || cookieHeader().isBlank()) {
+        val loginCookie = cookieHeader()
+        if (!loggedIn() || loginCookie.isBlank()) {
             showWarning("请先登录")
             return false
         }
-        if (username().isBlank() || password().isBlank()) {
+        val accountUsername = username()
+        val accountPassword = password()
+        if (accountUsername.isBlank() || accountPassword.isBlank()) {
             show("请先在首页填写学号和密码")
             return false
         }
         if (!requestGate.tryStart("scores")) return false
         refreshError = ""
         loading = true
-        val accountUsername = username()
-        val accountPassword = password()
-        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
         // client 建在 scope 外（B1 收尾）：成功/失败分支都要回写续登后的 cookie，
         // 原形态 client 建在 IO 协程内、跨 runCatching 边界；工厂化后构造零 IO，经闭包传入。
-        val client = createScoreClient(
-            accountUsername,
-            accountPassword,
-            scoreCookieHeader(),
-        ) { sessionEpoch.isCurrent(session) }
+        val sessionAndClient = try {
+            val session = sessionEpoch.snapshot(sessionOwner, loginCookie)
+            val client = createScoreClient(
+                accountUsername,
+                accountPassword,
+                scoreCookieHeader(),
+            ) { sessionEpoch.isCurrent(session) }
+            session to client
+        } catch (error: Exception) {
+            loading = false
+            requestGate.finish("scores")
+            refreshError = refreshFailureMessage(error)
+            showError("成绩读取失败：$refreshError")
+            return false
+        }
+        val (session, client) = sessionAndClient
         scope.runModuleRequest(
             requestGate = requestGate,
             gateKey = "scores",
@@ -185,28 +198,53 @@ internal class ScoreSectionState(
         }
     }
 
-    /** 生成成绩长图并分享（后台生成位图，避免主线程卡顿；生成失败明确提示不崩溃）。 */
+    /** 生成成绩长图并分享；同一时刻仅生成一张，旧会话结果不再触发界面。 */
     fun shareLongImage() {
         val records = scoreRecords
         if (records.isEmpty()) {
             showWarning("请先刷新成绩")
             return
         }
-        scope.launch(Dispatchers.IO) {
+        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
+        if (!requestGate.tryStart("score_share")) return
+        scope.launchGatedRequest(requestGate, "score_share", Dispatchers.IO) {
+            currentCoroutineContext().ensureActive()
+            if (!sessionEpoch.isCurrent(session)) return@launchGatedRequest
             val bitmap = runCatching { renderScoreLongImage(records, xmuScoreSummary(records)) }
                 .getOrNull()
             if (bitmap == null) {
-                // 长图生成失败（超长成绩单 OOM 等）：明确提示，不崩溃
-                withContext(Dispatchers.Main) { show("成绩单过长，生成长图失败") }
-                return@launch
+                withContext(Dispatchers.Main) {
+                    if (sessionEpoch.isCurrent(session) && !activity.isFinishing && !activity.isDestroyed) {
+                        show("成绩单过长，生成长图失败")
+                    }
+                }
+                return@launchGatedRequest
             }
-            val uri = saveScoreImageToGallery(activity, bitmap)
-            bitmap.recycle()
+            val uri = try {
+                currentCoroutineContext().ensureActive()
+                if (!sessionEpoch.isCurrent(session)) return@launchGatedRequest
+                try {
+                    saveScoreImageToGallery(activity, bitmap)
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    Log.w("XmuScoreDebug", "score image save failed", error)
+                    null
+                }
+            } finally {
+                bitmap.recycle()
+            }
             withContext(Dispatchers.Main) {
-                if (uri != null) {
-                    shareScoreImage(activity, uri)
-                } else {
+                if (!sessionEpoch.isCurrent(session) || activity.isFinishing || activity.isDestroyed) return@withContext
+                if (uri == null) {
                     showError("生成成绩长图失败")
+                } else {
+                    try {
+                        shareScoreImage(activity, uri)
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        Log.w("XmuScoreDebug", "score image share failed", error)
+                        showError("打开系统分享面板失败")
+                    }
                 }
             }
         }

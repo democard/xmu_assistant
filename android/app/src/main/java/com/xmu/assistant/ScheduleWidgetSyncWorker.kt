@@ -61,6 +61,7 @@ internal class ScheduleWidgetSyncRun(
         syncScheduleWidget(context, snapshot.entries, snapshot.termCode,
             inferredCalendar = snapshot.inferredCalendars[snapshot.termCode], manualWeek = manualWeek)
     },
+    private val readSnapshot: () -> XmuScheduleSnapshot = { loadScheduleSnapshotFromFile(context) },
 ) {
     suspend fun execute(): Result {
         if (AppForegroundTracker.foreground) return Result.success()
@@ -109,7 +110,7 @@ internal class ScheduleWidgetSyncRun(
             val entries = result.entries
             // 保留已有反推日历；官方表没有的学期继续用「服务端当前周次 + 当天」反推并缓存，
             // 与 MainActivity.refreshSchedule 保持同一套逻辑。
-            val calendars = HashMap(loadScheduleSnapshotFromFile(context).inferredCalendars)
+            val calendars = HashMap(readSnapshot().inferredCalendars)
             val official = xmuAcademicCalendarForTerm(termCode)
             if (official != null) {
                 // 官方校历表已覆盖该学期：删除旧反推条目，防止过期反推数据继续生效
@@ -134,7 +135,9 @@ internal class ScheduleWidgetSyncRun(
                 if (!persistenceGate.advanceIfCurrent(revision)) return@persistIfLatest
                 writeCookie(settings, result.jwCookie)
                 writeSnapshot(snapshot)
-                updateWidget(snapshot, settings.manualAcademicWeek(termCode))
+                ScheduleSectionState.updateProcessScheduleSnapshotIfCurrent(snapshot, revision + 1) {
+                    updateWidget(snapshot, settings.manualAcademicWeek(termCode))
+                }
             }
             Result.success()
         } catch (error: kotlinx.coroutines.CancellationException) {

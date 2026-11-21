@@ -133,24 +133,27 @@ private fun saveToMediaStore(context: Context, bitmap: Bitmap): Uri? {
         put(MediaStore.Images.Media.DISPLAY_NAME, "xmu成绩_$stamp.png")
         put(MediaStore.Images.Media.MIME_TYPE, "image/png")
         put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/xmu助手")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
     }
     val resolver = context.contentResolver
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        ?: return null
+    var insertedUri: Uri? = null
     return try {
-        // openOutputStream 可能返回 null、compress 可能返回 false：两种失败都不能把
-        // 指向零字节图片的 uri 返回给分享方，且要删掉 MediaStore 残留的空记录
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+        insertedUri = uri
+        // 写完并关闭输出流后才向相册发布，避免其它应用看到未完成的图片。
         val written = resolver.openOutputStream(uri)?.use { output ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
         } ?: false
-        if (written) {
-            uri
-        } else {
-            resolver.delete(uri, null, null)
-            null
-        }
-    } catch (_: Throwable) {
-        runCatching { resolver.delete(uri, null, null) }
+        check(written) { "成绩长图写入失败" }
+        val published = resolver.update(uri, ContentValues().apply {
+            put(MediaStore.Images.Media.IS_PENDING, 0)
+        }, null, null)
+        check(published > 0) { "成绩长图发布失败" }
+        uri
+    } catch (error: Exception) {
+        insertedUri?.let { uri -> runCatching { resolver.delete(uri, null, null) } }
+        Log.w("ScoreShare", "成绩长图保存失败", error)
         null
     }
 }

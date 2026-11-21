@@ -45,6 +45,8 @@ class ScheduleWidgetWorkerTimelineTest {
         val blockFetch: Boolean = false,
         val blockWrite: Boolean = false,
         val blockCookie: Boolean = false,
+        val blockWidget: Boolean = false,
+        val blockSnapshotRead: Boolean = false,
     ) : AutoCloseable {
         private val controller = Robolectric.buildActivity(Activity::class.java).setup()
         val context = controller.get()
@@ -61,6 +63,13 @@ class ScheduleWidgetWorkerTimelineTest {
         val releaseWrite = CountDownLatch(1)
         val cookieEntered = CountDownLatch(1)
         val releaseCookie = CountDownLatch(1)
+        val widgetEntered = CountDownLatch(1)
+        val releaseWidget = CountDownLatch(1)
+        val snapshotReadEntered = CountDownLatch(1)
+        val releaseSnapshotRead = CountDownLatch(1)
+        val pauseManualSessionRead = AtomicBoolean(false)
+        val manualSessionReadEntered = CountDownLatch(1)
+        val releaseManualSessionRead = CountDownLatch(1)
         val writerThread = AtomicReference<Thread>()
         val mayReloginAfterPause = AtomicBoolean()
         val fetches = AtomicInteger()
@@ -85,14 +94,43 @@ class ScheduleWidgetWorkerTimelineTest {
             ScheduleSectionState.updateProcessScheduleSnapshot(null)
         }
 
-        val frontState = ScheduleSectionState(
+        private fun newFrontState(initial: XmuScheduleSnapshot = XmuScheduleSnapshot()) = ScheduleSectionState(
             context, RequestGate(), epoch, owner, scope, {}, requireLogin = { true }, loggedIn = { true },
-            cookieHeader = { settings.cookieHeader }, username = { settings.username }, password = { settings.password },
+            cookieHeader = {
+                if (pauseManualSessionRead.get()) {
+                    manualSessionReadEntered.countDown()
+                    check(releaseManualSessionRead.await(5, TimeUnit.SECONDS))
+                }
+                settings.cookieHeader
+            }, username = { settings.username }, password = { settings.password },
             accountTransitionInProgress = { false }, setAccountTransitionInProgress = {}, busy = { "" }, setBusy = {},
             scoreCookieHeader = { settings.scoreCookieHeader }, setScoreCookieHeader = { settings.scoreCookieHeader = it },
             manualAcademicWeek = { 1 }, setStartupSessionReady = {}, setPendingSessionRetry = {}, clearToast = {},
-            fetchSchedule = ScheduleFetcher { _, _, _, _ -> fetched("foreground", "20312") }, cacheDispatcher = fileQueue,
+            fetchSchedule = ScheduleFetcher { _, _, _, _ -> fetched("foreground", "20312") },
+            snapshotInitial = initial, cacheDispatcher = fileQueue,
         )
+
+        val frontState = newFrontState()
+
+        fun recreateState(): ScheduleSectionState {
+            val state = newFrontState(ScheduleSectionState.currentProcessScheduleSnapshot() ?: XmuScheduleSnapshot())
+            state.loadCachedSnapshotOnStartup(context, settings) { true }
+            fileQueue.drain()
+            shadowOf(Looper.getMainLooper()).idle()
+            fileQueue.drain()
+            return state
+        }
+
+        fun drainPersistence() {
+            fileQueue.drain()
+            shadowOf(Looper.getMainLooper()).idle()
+            fileQueue.drain()
+        }
+
+        fun cancelQueuedPersistence() {
+            parent.children.toList().forEach { it.cancel() }
+            drainPersistence()
+        }
 
         private val runner = ScheduleWidgetSyncRun(
             context, settingsFactory = { settings },
@@ -116,11 +154,19 @@ class ScheduleWidgetWorkerTimelineTest {
                 target.scoreCookieHeader = cookie
             },
             updateWidget = { snapshot, _ ->
+                widgetEntered.countDown()
+                if (blockWidget) check(releaseWidget.await(5, TimeUnit.SECONDS))
                 widgetWrites.incrementAndGet()
                 ScheduleWidgetData.save(context, ScheduleWidgetSnapshot(
                     LocalDate.now().dayOfWeek.value, 1, snapshot.termCode,
                     snapshot.entries.map { ScheduleWidgetCourse(it.courseName, it.startTime, it.endTime, it.startSection, it.endSection, it.room) },
                 ))
+            },
+            readSnapshot = {
+                val snapshot = loadScheduleSnapshotFromFile(context)
+                snapshotReadEntered.countDown()
+                if (blockSnapshotRead) check(releaseSnapshotRead.await(5, TimeUnit.SECONDS))
+                snapshot
             },
         )
 
@@ -171,6 +217,9 @@ class ScheduleWidgetWorkerTimelineTest {
             releaseFetch.countDown()
             releaseWrite.countDown()
             releaseCookie.countDown()
+            releaseWidget.countDown()
+            releaseSnapshotRead.countDown()
+            releaseManualSessionRead.countDown()
             scope.cancel()
             fileQueue.drain()
             shadowOf(Looper.getMainLooper()).idle()
@@ -193,6 +242,198 @@ class ScheduleWidgetWorkerTimelineTest {
             assertEquals("academic=background", h.settings.scoreCookieHeader)
             assertEquals("background", ScheduleWidgetData.load(h.context)?.courses?.single()?.courseName)
             assertTrue(h.epoch.isOwnerActive(h.owner))
+        }
+    }
+
+    @Test
+    fun `completed background synchronization is visible when an activity reconstructs from the process cache`() {
+        Harness().use { h ->
+            val old = XmuScheduleSnapshot(
+                entries = listOf(XmuScheduleEntry(LocalDate.now().dayOfWeek.value, 1, 2, 800, 950,
+                    "previous", "旧教室", "教师", "1-18", "20311")),
+                termCode = "20311", updatedAtMillis = 100L,
+            )
+            h.frontState.applySnapshot(old)
+            assertEquals(Result.success(), h.finish(h.start()))
+            val latest = loadScheduleSnapshotFromFile(h.context)
+            assertEquals("background", latest.entries.single().courseName)
+
+            val recreated = h.recreateState()
+            assertEquals("reconstruction must not prefer an obsolete process snapshot over the completed worker", latest, recreated.cache)
+            assertEquals(latest, ScheduleSectionState.currentProcessScheduleSnapshot())
+        }
+    }
+
+    @Test
+    fun `startup widget synchronization after reconstruction cannot roll back a background refresh`() {
+        Harness().use { h ->
+            h.frontState.applySnapshot(XmuScheduleSnapshot(
+                entries = listOf(XmuScheduleEntry(LocalDate.now().dayOfWeek.value, 1, 2, 800, 950,
+                    "previous", "旧教室", "教师", "1-18", "20311")),
+                termCode = "20311", updatedAtMillis = 100L,
+            ))
+            assertEquals(Result.success(), h.finish(h.start()))
+            assertEquals("background", ScheduleWidgetData.load(h.context)?.courses?.single()?.courseName)
+
+            val recreated = h.recreateState()
+            syncScheduleWidget(h.context, recreated.entries, recreated.termCode,
+                inferredCalendar = recreated.cache.inferredCalendars[recreated.termCode], manualWeek = 1)
+
+            assertEquals("startup must retain the newer background projection", "background",
+                ScheduleWidgetData.load(h.context)?.courses?.single()?.courseName)
+        }
+    }
+
+    private fun manualCalendar(): XmuAcademicCalendar {
+        val monday = LocalDate.now().minusDays(LocalDate.now().dayOfWeek.value - 1L)
+        return XmuAcademicCalendar("20311", "2031-2032", "第一学期", monday.minusWeeks(2), monday.plusWeeks(16))
+    }
+
+    private fun previousSnapshot(calendar: XmuAcademicCalendar? = null) = XmuScheduleSnapshot(
+        entries = listOf(XmuScheduleEntry(LocalDate.now().dayOfWeek.value, 1, 2, 800, 950,
+            "previous", "旧教室", "教师", "1-18", "20311")),
+        termCode = "20311", updatedAtMillis = 100L,
+        inferredCalendars = if (calendar == null) emptyMap() else mapOf("20311" to calendar),
+    )
+
+    @Test
+    fun `manual calendar publish cannot be replaced while its persistence entry captures the session`() {
+        listOf(false, true).forEach { restoreAutomatic ->
+            Harness(blockWrite = true).use { h ->
+                val calendar = manualCalendar()
+                h.frontState.applySnapshot(previousSnapshot(if (restoreAutomatic) calendar else null))
+                val work = h.start()
+                assertTrue(h.writeEntered.await(5, TimeUnit.SECONDS))
+                h.pauseManualSessionRead.set(true)
+                val executor = Executors.newSingleThreadExecutor()
+                try {
+                    val releaser = executor.submit<Result> {
+                        assertTrue("manual persistence must reach the actual session-read seam",
+                            h.manualSessionReadEntered.await(5, TimeUnit.SECONDS))
+                        h.releaseWrite.countDown()
+                        val result = h.finish(work)
+                        h.releaseManualSessionRead.countDown()
+                        result
+                    }
+                    if (restoreAutomatic) h.frontState.removeInferredCalendar("20311")
+                    else h.frontState.setInferredCalendar("20311", calendar)
+                    assertEquals(Result.success(), releaser.get(5, TimeUnit.SECONDS))
+
+                    assertEquals("worker must not replace a manually accepted calendar snapshot",
+                        h.frontState.cache, ScheduleSectionState.currentProcessScheduleSnapshot())
+                    assertEquals(h.frontState.cache, h.recreateState().cache)
+                } finally {
+                    h.releaseManualSessionRead.countDown()
+                    h.releaseWrite.countDown()
+                    executor.shutdownNow()
+                    assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `manual widget projection stays latest when an accepted worker widget callback is paused`() {
+        Harness(blockWidget = true).use { h ->
+            h.frontState.applySnapshot(previousSnapshot())
+            val work = h.start()
+            assertTrue("worker must reach its real local widget callback", h.widgetEntered.await(5, TimeUnit.SECONDS))
+            val expected = AtomicReference<ScheduleWidgetSnapshot?>()
+            val manualStarted = CountDownLatch(1)
+            val manualFinished = CountDownLatch(1)
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val releaser = executor.submit<Result> {
+                    assertTrue(manualStarted.await(5, TimeUnit.SECONDS))
+                    // The old split publication lets manual sync finish first; the
+                    // atomic local publication waits until this worker is released.
+                    manualFinished.await(150, TimeUnit.MILLISECONDS)
+                    h.releaseWidget.countDown()
+                    h.finish(work)
+                }
+                manualStarted.countDown()
+                try {
+                    h.frontState.setInferredCalendar("20311", manualCalendar())
+                    syncScheduleWidget(h.context, h.frontState.entries, h.frontState.termCode,
+                        inferredCalendar = h.frontState.cache.inferredCalendars["20311"], manualWeek = 1)
+                    expected.set(ScheduleWidgetData.load(h.context))
+                } finally { manualFinished.countDown() }
+                assertEquals(Result.success(), releaser.get(5, TimeUnit.SECONDS))
+
+                assertEquals("manual calibration must finish with its own widget projection",
+                    "previous", expected.get()?.courses?.single()?.courseName)
+                assertEquals("a previously accepted worker widget must not roll back a later manual sync",
+                    expected.get(), ScheduleWidgetData.load(h.context))
+                assertEquals(h.frontState.cache, ScheduleSectionState.currentProcessScheduleSnapshot())
+            } finally {
+                h.releaseWidget.countDown()
+                executor.shutdownNow()
+                assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    @Test
+    fun `worker starting after a manual calendar reservation cannot commit its older disk projection`() {
+        Harness().use { h ->
+            h.frontState.applySnapshot(previousSnapshot())
+            val calendar = manualCalendar()
+            AppForegroundTracker.foreground = true
+            h.frontState.setInferredCalendar("20311", calendar)
+            AppForegroundTracker.foreground = false
+
+            assertEquals(calendar, ScheduleSectionState.currentProcessScheduleSnapshot()
+                ?.inferredCalendars?.get("20311"))
+            assertTrue("the queued manual snapshot must still be waiting to persist",
+                loadScheduleSnapshotFromFile(h.context).inferredCalendars.isEmpty())
+
+            assertEquals(Result.success(), h.finish(h.start()))
+            h.drainPersistence()
+
+            assertEquals("the newer manual snapshot must survive the later worker commit",
+                calendar, ScheduleSectionState.currentProcessScheduleSnapshot()?.inferredCalendars?.get("20311"))
+            assertEquals(calendar, loadScheduleSnapshotFromFile(h.context).inferredCalendars["20311"])
+            assertEquals(calendar, h.recreateState().cache.inferredCalendars["20311"])
+        }
+    }
+
+    @Test
+    fun `worker that read before a queued manual snapshot persists cannot publish its stale calendars`() {
+        Harness(blockSnapshotRead = true).use { h ->
+            h.frontState.applySnapshot(previousSnapshot())
+            val calendar = manualCalendar()
+            AppForegroundTracker.foreground = true
+            h.frontState.setInferredCalendar("20311", calendar)
+            AppForegroundTracker.foreground = false
+
+            val work = h.start()
+            assertTrue(h.snapshotReadEntered.await(5, TimeUnit.SECONDS))
+            h.drainPersistence()
+            assertEquals(calendar, loadScheduleSnapshotFromFile(h.context).inferredCalendars["20311"])
+            h.releaseSnapshotRead.countDown()
+
+            assertEquals(Result.success(), h.finish(work))
+            assertEquals(calendar, ScheduleSectionState.currentProcessScheduleSnapshot()?.inferredCalendars?.get("20311"))
+            assertEquals(calendar, loadScheduleSnapshotFromFile(h.context).inferredCalendars["20311"])
+            assertEquals(calendar, h.recreateState().cache.inferredCalendars["20311"])
+        }
+    }
+
+    @Test
+    fun `cancelled queued manual persistence still commits before later workers read the cache`() {
+        Harness().use { h ->
+            h.frontState.applySnapshot(previousSnapshot())
+            val calendar = manualCalendar()
+            h.frontState.setInferredCalendar("20311", calendar)
+            h.cancelQueuedPersistence()
+            assertEquals(calendar, loadScheduleSnapshotFromFile(h.context).inferredCalendars["20311"])
+
+            assertEquals(Result.success(), h.finish(h.start()))
+            assertEquals("background", loadScheduleSnapshotFromFile(h.context).entries.single().courseName)
+            assertEquals("background", ScheduleSectionState.currentProcessScheduleSnapshot()?.entries?.single()?.courseName)
+            assertEquals(calendar, ScheduleSectionState.currentProcessScheduleSnapshot()?.inferredCalendars?.get("20311"))
+            assertEquals(calendar, loadScheduleSnapshotFromFile(h.context).inferredCalendars["20311"])
+            assertEquals("background", ScheduleWidgetData.load(h.context)?.courses?.single()?.courseName)
         }
     }
 

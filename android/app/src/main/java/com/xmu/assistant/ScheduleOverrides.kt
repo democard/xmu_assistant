@@ -40,9 +40,9 @@ internal class ScheduleOverrideStore(context: Context) {
                 endSection = override.endSection,
                 startTime = scheduleSectionStartTime(override.startSection, entry.startTime),
                 endTime = scheduleSectionEndTime(override.endSection, entry.endTime),
-                room = override.room.ifBlank { entry.room },
-                teacher = override.teacher.ifBlank { entry.teacher },
-                weeks = override.weeks.ifBlank { entry.weeks },
+                room = override.room,
+                teacher = override.teacher,
+                weeks = override.weeks,
             )
         }
     }

@@ -1,27 +1,71 @@
 package com.xmu.assistant
 
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * 整快照异步落盘的顺序门：课程列表与不同课程的课件允许并行刷新，完成后都会写同一个
- * academic_cache_json。revision 在主线程接纳新快照时递增；后台写任务串行进入，只有仍是
- * 最新 revision 的任务可以写，避免旧快照晚到覆盖新快照。
+ * academic_cache_json。revision 会在新快照接纳、前台 reservation 完成和后台成功接替时推进；后台写任务串行进入，
+ * 只有仍是最新 revision 且没有待落盘前台快照的任务可以提交，避免旧快照晚到覆盖新快照。
  */
 internal class LatestSnapshotWriteGate {
     private val latestRevision = AtomicLong(0L)
     private val writeLock = Any()
+    private val revisionLock = Any()
+    private val pendingSnapshotRevisions = mutableSetOf<Long>()
 
-    fun nextRevision(): Long = latestRevision.incrementAndGet()
+    fun nextRevision(): Long = synchronized(revisionLock) { latestRevision.incrementAndGet() }
+
+    fun reserveSnapshotRevision(): Long = synchronized(revisionLock) {
+        latestRevision.incrementAndGet().also(pendingSnapshotRevisions::add)
+    }
 
     fun currentRevision(): Long = latestRevision.get()
 
-    /** 后台读取只能接替它发起时的版本，不能抢走期间已被前台推进的新版本。 */
-    fun advanceIfCurrent(revision: Long): Boolean = latestRevision.compareAndSet(revision, revision + 1)
+    /** 后台读取只能接替它发起时的版本，不能越过尚未落盘的前台快照。 */
+    fun advanceIfCurrent(revision: Long): Boolean = synchronized(revisionLock) {
+        if (revision != latestRevision.get() || pendingSnapshotRevisions.isNotEmpty()) return@synchronized false
+        latestRevision.set(revision + 1)
+        true
+    }
+
+    /** 后台写只能提交当前预留快照；预留在任务取消前也会由完成回调释放。 */
+    fun persistSnapshotIfLatest(revision: Long, persist: () -> Unit): Boolean = synchronized(writeLock) {
+        val allowed = synchronized(revisionLock) {
+            revision == latestRevision.get() && revision in pendingSnapshotRevisions
+        }
+        if (!allowed) {
+            finishSnapshotRevision(revision)
+            return@synchronized false
+        }
+        try {
+            persist()
+            true
+        } finally {
+            finishSnapshotRevision(revision)
+        }
+    }
+
+    /** 完成预留：当前最新写入推进版本，使已捕获同一版本的后台读取失效。 */
+    fun finishSnapshotRevision(revision: Long) {
+        synchronized(revisionLock) {
+            if (pendingSnapshotRevisions.remove(revision) && latestRevision.get() == revision) {
+                latestRevision.incrementAndGet()
+            }
+        }
+    }
 
     /** 清理方等待已进入的同步本地写入结束，再作废其余排队快照后清空持久化。 */
-    fun invalidateAndWait(): Long = synchronized(writeLock) { nextRevision() }
+    fun invalidateAndWait(): Long = synchronized(writeLock) {
+        synchronized(revisionLock) {
+            pendingSnapshotRevisions.clear()
+            latestRevision.incrementAndGet()
+        }
+    }
 
     fun persistIfLatest(revision: Long, persist: () -> Unit): Boolean = synchronized(writeLock) {
         if (revision != latestRevision.get()) return@synchronized false
@@ -48,6 +92,8 @@ data class AcademicCacheSnapshot(
 
         fun currentProcessCache(): AcademicCacheSnapshot? = processCache
 
+        fun currentRevision(): Long = persistenceGate.currentRevision()
+
         fun updateProcessCache(snapshot: AcademicCacheSnapshot?): Long {
             processCache = snapshot
             return persistenceGate.nextRevision()
@@ -55,6 +101,38 @@ data class AcademicCacheSnapshot(
 
         fun persistIfLatest(revision: Long, persist: () -> Unit): Boolean =
             persistenceGate.persistIfLatest(revision, persist)
+
+        internal fun invalidatePersistenceAndWait() {
+            persistenceGate.invalidateAndWait()
+        }
+    }
+}
+
+/** 先作废界面/进程快照，再等待已准入的本地写入，最后清除持久化。 */
+internal fun clearAcademicCachePersistence(
+    invalidateCache: () -> Unit,
+    clearCacheJson: () -> Unit,
+) {
+    invalidateCache()
+    AcademicCacheSnapshot.invalidatePersistenceAndWait()
+    clearCacheJson()
+}
+
+/** 启动缓存恢复的实际路径；读盘/解析在后台，接纳与组合状态更新由调用方的主线程执行。 */
+internal suspend fun restoreAcademicCacheOnStartup(
+    currentCache: () -> AcademicCacheSnapshot,
+    readCacheJson: () -> String,
+    applyCache: (AcademicCacheSnapshot) -> Unit,
+    cacheDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
+    val revision = AcademicCacheSnapshot.currentRevision()
+    if (currentCache().courses.isEmpty() && currentCache().coursewareByCourse.isEmpty()) {
+        val initial = withContext(cacheDispatcher) { academicCacheFromJson(readCacheJson()) }
+        if (AcademicCacheSnapshot.currentRevision() == revision &&
+            currentCache().courses.isEmpty() && currentCache().coursewareByCourse.isEmpty()
+        ) {
+            applyCache(initial)
+        }
     }
 }
 

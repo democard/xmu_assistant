@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -276,8 +277,8 @@ internal class ScheduleSectionState(
         calendars[termCode] = calendar
         val updated = cache.copy(inferredCalendars = calendars)
         cache = updated
-        updateProcessScheduleSnapshot(updated)
         persistSnapshotAsync(updated)
+        updateProcessScheduleSnapshot(updated)
     }
 
     /** 恢复自动判断周次：移除该学期的手动校准日历并落盘。 */
@@ -287,8 +288,8 @@ internal class ScheduleSectionState(
         calendars.remove(termCode)
         val updated = cache.copy(inferredCalendars = calendars)
         cache = updated
-        updateProcessScheduleSnapshot(updated)
         persistSnapshotAsync(updated)
+        updateProcessScheduleSnapshot(updated)
     }
 
     /** 落盘挪到后台线程：策略页每次校准/清除都在 UI 线程写整个学期 JSON 会卡顿
@@ -303,15 +304,22 @@ internal class ScheduleSectionState(
     ) {
         val context = activity
         val session = request ?: sessionEpoch.snapshot(sessionOwner, cookieHeader())
-        val revision = persistenceGate.nextRevision()
-        // 下一次教务请求立即读取 cookie；只把大快照的文件写入留在后台。
-        if (cookie != null) persistenceGate.persistIfLatest(revision) {
-            if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(cookie)
-        }
-        scope.launch(cacheDispatcher) {
-            persistenceGate.persistIfLatest(revision) {
-                if (sessionEpoch.isCurrent(session)) writeCacheSnapshot(context, snapshot)
+        val revision = persistenceGate.reserveSnapshotRevision()
+        var scheduled = false
+        try {
+            // 下一次教务请求立即读取 cookie；只把大快照的文件写入留在后台。
+            if (cookie != null) persistenceGate.persistIfLatest(revision) {
+                if (sessionEpoch.isCurrent(session)) setScoreCookieHeader(cookie)
             }
+            val persistenceJob = scope.launch(cacheDispatcher, start = CoroutineStart.ATOMIC) {
+                persistenceGate.persistSnapshotIfLatest(revision) {
+                    if (sessionEpoch.isCurrent(session)) writeCacheSnapshot(context, snapshot)
+                }
+            }
+            persistenceJob.invokeOnCompletion { persistenceGate.finishSnapshotRevision(revision) }
+            scheduled = true
+        } finally {
+            if (!scheduled) persistenceGate.finishSnapshotRevision(revision)
         }
     }
 
@@ -345,11 +353,24 @@ internal class ScheduleSectionState(
          *  三方读写点统一经唯一访问器（B5，行为零变化）。 */
         @Volatile
         private var processScheduleSnapshot: XmuScheduleSnapshot? = null
+        private val processSnapshotLock = Any()
 
         fun currentProcessScheduleSnapshot(): XmuScheduleSnapshot? = processScheduleSnapshot
 
         fun updateProcessScheduleSnapshot(snapshot: XmuScheduleSnapshot?) {
+            synchronized(processSnapshotLock) { processScheduleSnapshot = snapshot }
+        }
+
+        /** 与前台发布共用本地锁；快照及对应 Widget 一起提交，不在锁内发网络请求。 */
+        internal fun updateProcessScheduleSnapshotIfCurrent(
+            snapshot: XmuScheduleSnapshot,
+            revision: Long,
+            onPublished: () -> Unit,
+        ): Boolean = synchronized(processSnapshotLock) {
+            if (persistenceGate.currentRevision() != revision) return@synchronized false
             processScheduleSnapshot = snapshot
+            onPublished()
+            true
         }
     }
 }

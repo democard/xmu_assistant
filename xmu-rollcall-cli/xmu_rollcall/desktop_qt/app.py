@@ -102,6 +102,7 @@ from .core import (
     format_duration,
     format_log_export,
 )
+from .exporting import write_text_atomically
 from .theme import (
     WINDOW_MIN_HEIGHT,
     WINDOW_MIN_WIDTH,
@@ -644,9 +645,8 @@ class DashboardWindow(
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8-sig", newline="") as file:
-                file.write(format_log_export(self.log_messages))
-        except OSError as exc:
+            write_text_atomically(path, format_log_export(self.log_messages))
+        except (OSError, UnicodeError) as exc:
             QMessageBox.warning(self, "导出失败", f"写入文件失败：{exc}")
             return
         self.log(f"已导出 {len(self.log_messages)} 条运行日志")
@@ -1933,7 +1933,9 @@ class DashboardWindow(
         self._update_nav_badges()
 
     def _ev_courseware_error(self, event):
-        if len(event) > 4 and self.session is not event[4]:
+        # 新事件在会话令牌前附课程 ID，兼容旧四 / 五元组并保留会话令牌在末尾。
+        source_index = 5 if len(event) > 5 else 4
+        if len(event) > source_index and self.session is not event[source_index]:
             self.log("忽略旧会话迟到的查询结果或错误。")
             return
         worker_account_id = event[3] if len(event) > 3 else ""
@@ -1941,6 +1943,15 @@ class DashboardWindow(
             self.log("忽略晚到的课件读取失败（账号已切换或已登出）。")
             return
         self.courseware_refresh_in_progress = False
+        if len(event) > 5:
+            # 与成功回填一致：旧课程读取结束后追赶当前选择，不把旧错误展示到新课程。
+            selected = self._selected_courseware_course()
+            if selected is None:
+                self._reset_courseware_selection_prompt()
+                return
+            if selected.course_id != event[4]:
+                self.refresh_selected_courseware(silent=True)
+                return
         self.courseware_summary.setText("课件读取失败")
         self._refresh_courseware_empty_state()
         self._show_toast("课件读取失败", ok=False)

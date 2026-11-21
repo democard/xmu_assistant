@@ -180,7 +180,7 @@ internal class CoursewareSectionState(
         }
         coursewareDownloadProgress = "下载进度：下载中 ${targets.size} / 成功 0 / 失败 0"
         setBusy(BusyStates.DOWNLOADING_COURSEWARE)
-        scope.launch(Dispatchers.IO) {
+        scope.launchGatedRequest(requestGate, "downloads") {
             try {
                 val files = AtomicInteger(0)
                 val entries = AtomicInteger(0)
@@ -234,12 +234,10 @@ internal class CoursewareSectionState(
                     }
                 }
             } finally {
-                // 收尾（复位 busy/loading、释放互斥门）必须随取消也能执行：
-                // 放 withContext(Main) 内层时，协程取消会整段跳过，"downloads" 门永久占用
+                // UI 收尾在 Main 完成；互斥门由任务完成回调释放，覆盖启动前取消。
                 withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     if (busy() == BusyStates.DOWNLOADING_COURSEWARE) setBusy(BusyStates.IDLE)
                     downloadLoading = false
-                    requestGate.finish("downloads")
                 }
             }
         }

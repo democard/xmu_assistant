@@ -163,7 +163,19 @@ class RollcallMonitorService : Service() {
                                 monitorWorkerCoordinator.runIfCurrent(token, settings.monitorDesired, action)
                             },
                             onNotify = { notifyRollcall(it) },
-                            onAnswer = engine::answer,
+                            onAnswer = { event ->
+                                RollcallAnswerGate.answerOnce(
+                                    accountId = settings.username,
+                                    cookieHeader = cookieSnapshot,
+                                    rollcallId = event.id,
+                                    canAnswer = {
+                                        isMonitorRunActive(token, settings) &&
+                                            settings.cookieHeader == cookieSnapshot &&
+                                            settings.rollcall() == rollcallSettings
+                                    },
+                                    answer = { engine.answer(event) },
+                                )
+                            },
                             onSuccess = settings::recordMonitorSuccess,
                             settingsStillCurrent = {
                                 settings.cookieHeader == cookieSnapshot && settings.rollcall() == rollcallSettings

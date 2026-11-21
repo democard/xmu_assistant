@@ -197,8 +197,8 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
     var rollcallSettings by remember { mutableStateOf(settings.rollcall()) }
     // 课件缓存 JSON 异步解析（8-22 遗留深度版）：org.json 解析课程+课件大 JSON
     // 原在组合期 remember 内主线程执行（拖首帧）；改为初始空快照 + IO 协程解析
-    // （与课表 loadCachedSnapshotOnStartup 同款约定）。守卫：仅当组合期仍是初始
-    // 空快照才应用，防止覆盖启动期间网络刷新已带回的新数据。
+    // （与课表 loadCachedSnapshotOnStartup 同款约定）。接纳前复核快照 revision，
+    // 登出、换号和网络刷新（包括新的空结果）均使在途启动读失效。
     // 转屏/重建时优先复用进程级快照（与 ScheduleSectionState 同范式），
     // 避免每次 Activity 重建都把大 JSON 全量重解析一遍。
     var academicCache by remember {
@@ -212,13 +212,14 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         return revision
     }
     LaunchedEffect(Unit) {
-        if (academicCache.courses.isEmpty() && academicCache.coursewareByCourse.isEmpty()) {
-            val initial = withContext(Dispatchers.IO) { academicCacheFromJson(settings.academicCacheJson) }
-            if (academicCache.courses.isEmpty() && academicCache.coursewareByCourse.isEmpty()) {
+        restoreAcademicCacheOnStartup(
+            currentCache = { academicCache },
+            readCacheJson = { settings.academicCacheJson },
+            applyCache = { initial ->
                 updateAcademicCache(initial)
                 courses = initial.courses
-            }
-        }
+            },
+        )
     }
     // 记住选中的课程 id（rememberSaveable：转屏/进程重建后恢复），课程对象从 courses 派生。
     // 不直接保存 CourseSummary，避免自定义 Saver，也保证课程列表刷新后仍能对应。
@@ -475,14 +476,15 @@ fun XmuAssistantApp(activity: ComponentActivity, openedEventId: String, openedPa
         deleteRollcallHistoryCacheFile(activity)
         ScheduleWidgetData.clear(activity)
         settings.clearManualAcademicWeeks()
-        updateAcademicCache(null)
+        clearAcademicCachePersistence(
+            invalidateCache = { updateAcademicCache(null) },
+            clearCacheJson = { settings.academicCacheJson = "" },
+        )
         courses = emptyList()
         coursesLoading = false
         coursesRefreshError = ""
         selectedCourseId = null
         courseware.clearAll()
-        // 课程/课件缓存持久化同样清掉（与成绩清理对齐）：登出后重启不残留旧账号课程
-        settings.academicCacheJson = ""
         // 退出登录：清考试数据缓存与提醒（考试数据不含个人信息，但跟随账号会话）
         exam.clearAll()
         // 登出后立即刷新桌面小卡片落空态：仅清数据不刷新会让 widget 残留旧课表画面
