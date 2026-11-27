@@ -7,14 +7,15 @@
 一个面向厦门大学学生的 **Android 校园日常工具**，帮助整理课表、查看成绩与考试、下载课件，并提供课堂签到状态监控与提醒。
 
 > **重要变更说明**
-> - **自动签到与一键签到已下线**：因原签到接口已不可用，Android 端已移除自动签到、一键签到、数字签到码抓取与雷达坐标管理，仅保留**签到监控提醒**与**签到情况查看**（保留数字 / 雷达 / 二维码类型标注、实时进度与近期出勤记录）。
+> - **因学校方面已拉闸限制相关策略与接口，自动签到等功能已正式下线**：Android 端已彻底移除自动签到、一键签到、数字签到码抓取与课程雷达坐标管理模块（从源码及安装包中完全剥离），不再提供代签或自动提交功能。
+> - **软件定位已调整为「课堂监听提醒 + 畅课直达 + 校园日常工具」**：保留前台课堂监听多渠道提醒与签到记录查看，新增应用内**畅课签到网页**（进入前同步已登录会话 Cookie，免手动重复登录即可直达畅课完成签到），并重做单屏「今日概览」首页；保留课表、桌面小组件、成绩与专业排名、课件下载及考试提醒功能。
 > - **Windows 桌面端已声明废弃（停止维护）**：后续仅维护 Android 端，不再对 Windows 客户端提供功能更新或接口适配。
 
-课程、课件、课表、成绩、考试与签到监控提醒，集中在一个轻量客户端中。
+课程、课件、课表、成绩、考试、课堂监听提醒与畅课直达，集中在一个轻量客户端中。
 
-**当前版本：Android 端持续维护（上个公开包 v1.8.6 · versionCode 47） · Windows 桌面端已废弃（历史归档 v1.8.6）**
+**当前版本：Android v1.9.0（versionCode 48） · Windows 桌面端已废弃（历史归档 v1.8.6）**
 
-[下载 Android 安装包（v1.8.6）](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6)
+[下载 Android 安装包（v1.9.0）](https://github.com/democard/xmu_assistant/releases/download/v1.9.0/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.9.0)
 
 </div>
 
@@ -22,7 +23,7 @@
 
 | 平台 | 当前状态 | 说明 |
 | --- | --- | --- |
-| Android | **维护中（推荐）** | 覆盖课表、成绩、课件、考试、签到监控提醒及重做后的今日概览首页 |
+| Android | **维护中（推荐）** | 重做「今日概览」首页，新增应用内畅课签到网页；保留课堂监听提醒、签到记录、课表、成绩与排名、课件、考试提醒 |
 | Windows | **已废弃（停止维护）** | 原 `xmu-rollcall-cli` 代码仅作历史归档，不再更新或适配新接口 |
 
 [安装与使用](#安装与使用) · [Android 功能概览](#android-功能概览) · [数据与隐私](#数据与隐私) · [开发与验证](#开发与验证) · [问题反馈](#问题反馈)
@@ -33,14 +34,13 @@
 
 | 平台 | 状态 / 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Android | 1.8.6（versionCode 47） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk)，Android 8.0 及以上（新界面改动尚未单独发布 APK，可通过源码构建） |
-| Windows（已废弃） | 历史归档 1.8.6 | 不再推荐使用，历史发布文件见 [Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6) |
-| 对应源码 | 仓库当前分支 | 通过 GitHub 源码构建最新版本 |
+| Android | 1.9.0（versionCode 48） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.9.0/xmu-assistant-release.apk)，Android 8.0 及以上，覆盖安装保留本地账号与缓存 |
+| Windows（已废弃） | 历史归档 1.8.6 | 不再维护或推荐，历史发布文件见 [v1.8.6 Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6) |
+| 对应源码 | 仓库 `main` 分支 | 通过 GitHub 源码构建最新版本 |
 
-双端文件校验值见 [1.8.6 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
+本版发布文件校验值见 [v1.9.0 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.9.0/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
 
 ```powershell
-Get-FileHash .\xmu-assistant.exe -Algorithm SHA256
 Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 ```
 
@@ -58,9 +58,9 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 | 功能 | 说明 |
 | --- | --- |
-| 今日概览首页 | 展示今日课程与教室、近期考试倒计时、签到监控状态及快捷功能入口 |
-| 登录态保存与恢复 | 本地加密保存账号与会话，支持会话过期安全续登 |
-| 签到监控与情况查看 | 后台监控新签到并推送系统 / PushPlus / QQ 邮箱提醒；保留签到类型标注，查看实时进度与历史出勤记录（已下线自动签到、一键签到与签到码抓取） |
+| 今日概览首页 | 单屏展示当前课程 / 下一节课与教室、近期考试倒计时、课堂监听状态开关、进行中签到快捷条及常用功能直达入口 |
+| 登录态保存与恢复 | 本地加密保存账号与会话，支持会话过期安全续登，并在打开畅课网页前同步统一认证 Cookie |
+| 课堂监听与畅课直达 | 后台监听新发布的签到并推送系统 / PushPlus / QQ 邮箱提醒；保留进行中类型标注、实时进度与近期出勤记录，支持应用内一键直达畅课完成签到（已彻底移除自动签到、一键签到、数字码抓取与雷达坐标） |
 | 课程课件浏览与批量下载 | 支持课程搜索、学年学期筛选与断点续传 |
 | 全学期课表与日历导出 | 周课表 / 日程视图、本地微调上课安排、导出 `.ics` 日历 |
 | 今日课程桌面小组件 | 预投影未来 14 天课程摘要，跨日可读本地缓存 |
@@ -68,11 +68,11 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 | 考试安排与考前提醒 | 按学期展示考试，支持精确闹钟与锁屏全屏提醒 |
 | 常驻与快捷操作 | 快捷设置「签到监控」磁贴、桌面图标长按直达、浅色 / 深色 / 跟随系统主题 |
 
-### 签到监控与课件
+### 课堂监听、畅课网页与课件
 
-已下线自动提交签到、一键签到与数字签到码抓取功能，仅保留签到状态监测、类型标注（数字 / 雷达 / 二维码）、近期出勤记录查看以及多渠道提醒；实际签到请在畅课完成。
+因学校已对相关策略与接口采取限制，本版彻底移除自动提交签到、一键签到、数字签到码抓取与雷达定位模块，仅保留课堂状态监听提醒、进行中签到类型标注（数字 / 雷达 / 二维码）与近期出勤记录查看。收到监听提醒或首页检测到进行中签到时，可通过首页进行中签到卡片、签到页或「更多 → 畅课网页」直接打开应用内**畅课签到**页面完成签到（打开前会预检并同步本地已登录会话 Cookie，无需重复输密码）。
 
-课件可按课程浏览并批量下载。Windows 按平台章节组织列表、按课程目录保存，重名文件不直接覆盖；Android 支持课程搜索和学年学期筛选，无法直接下载时保留平台入口。下载是否成功仍取决于当前账号权限、链接有效性和服务器响应。
+课件可按课程浏览并批量下载；Android 支持课程搜索和学年学期筛选，无法直接下载时保留平台入口。下载是否成功仍取决于当前账号权限、链接有效性和服务器响应。
 
 续传前会核对资源归属和强 ETag；缺少可靠验证器时从头下载，避免拼接不同资源或版本。旧版没有归属信息的断点保留在原位置，新下载另起文件名。
 
@@ -86,7 +86,16 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 ## 本版更新
 
-### 1.8.6 · 双端稳定性与分享、导出修复
+### 1.9.0 · 过渡版：下线自动签到、重做今日概览首页与畅课网页直达
+
+- **功能收口与包体瘦身**：因学校方面对相关接口采取限制，正式移除自动签到、一键签到、数字签到码抓取与课程雷达坐标管理源码及界面；启用严格资源压缩（`shrinkMode="strict"`），剥离未引用的大图与旧资源，Release APK 体积精简回 `~3.86 MB` 档位。
+- **重做「今日概览」单屏首页**：采用更紧凑的单屏信息层级展示今日课程、下节教室、近期考试倒计时、课堂监听启停开关与快捷功能矩阵。
+- **新增应用内「畅课签到」网页**：支持从首页进行中签到卡片、签到详情页及「更多 → 畅课网页」直达畅课课程/签到页；进入前自动预检登录态并将本地加密存储的会话 Cookie 异步同步到 WebView，减少重复登录。
+- **桌面端状态明确**：声明 Windows 桌面端（`xmu-rollcall-cli`）废弃归档，本版仅发布 Android 安装包。
+
+[1.9.0 发布说明](documentation/releases/v1.9.0.md)
+
+### 1.8.6 · 双端稳定性与分享、导出修复（历史版本）
 
 - **Windows**：修复课程切换失败及线程启动异常后的恢复状态；文件导出改用同目录原子替换，写入失败保留旧文件；CSV 文本单元格中和电子表格公式前缀。
 - **Android 会话与缓存**：修复请求取消或客户端初始化异常后请求门 / loading 残留，收紧排名、考试 Cookie 与成绩初始化的会话接纳；协调 Academic 缓存清理和异步写入。
@@ -162,7 +171,7 @@ v1.7.3 主要修复下载、账号切换和导出中的边界问题：
 | Android 账号、Cookie 等凭据 | 使用 EncryptedSharedPreferences 保存；不等于所有业务缓存和导出文件均已加密 |
 | 课表、成绩、考试与学习记录缓存 | 用于本地展示；换号和登出时按业务清理或隔离，外部导出副本不随登出自动删除 |
 | Android 小组件摘要 | 包含课程名、时间和地点，不包含密码或 Cookie；课程安排本身仍可能涉及个人隐私 |
-| 课程雷达地点、Android 本地课表修正 | 持久设置，按课程匹配，沿用跨账号保留行为，不随登出删除；共用设备时请在管理页检查和删除不再需要的设置 |
+| Android 本地课表修正 | 持久设置，按课程匹配，沿用跨账号保留行为，不随登出删除；共用设备时请在对应管理页检查和删除不再需要的设置 |
 
 Windows 默认配置目录为当前用户主目录下的 `.xmu_rollcall`。需要独立测试配置时，可在启动前设置 `XMU_ROLLCALL_CONFIG_DIR`。目录结构、加密限制及开发方式见 [Windows 文档](xmu-rollcall-cli/README.md)。
 
@@ -170,22 +179,19 @@ Windows 默认配置目录为当前用户主目录下的 `.xmu_rollcall`。需�
 
 ## 开发与验证
 
-### 从源码运行
+### 从源码构建与运行
 
-先获取源码，再在项目根目录执行环境准备和启动命令。以下示例使用 PowerShell，需要 Python 3.11 或以上；独立虚拟环境无需 Conda：
+Android 端使用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 35，使用仓库携带的 Gradle 8.7 Wrapper 构建与测试：
 
 ```powershell
 git clone https://github.com/democard/xmu_assistant.git
-cd xmu_assistant
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r .\xmu-rollcall-cli\requirements.txt
-$env:PYTHONPATH = (Resolve-Path .\xmu-rollcall-cli).Path
-.\.venv\Scripts\python.exe -m xmu_rollcall.desktop
+cd xmu_assistant\android
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
 ```
 
-Android 可用 Android Studio 打开 `android/`，配置 JDK 17 和 Android SDK 35，再使用仓库的 Gradle 8.7 Wrapper 构建。测试与产物路径见 [Android 构建说明](android/README.md#构建与测试)；Windows 的测试、打包及本地配置见 [Windows 开发说明](xmu-rollcall-cli/README.md)。
+详细测试与安装命令见 [Android 构建说明](android/README.md#构建与测试)。历史已废弃的 Windows 桌面端（`xmu-rollcall-cli`）仅作归档，运行与打包方式见 [Windows 开发说明](xmu-rollcall-cli/README.md)。
 
-### 1.8.6 验证记录
+### 1.8.6 验证记录（历史）
 
 本次发布的完整回归、Lint、Windows EXE 与 Android Release APK 检查结果见 [1.8.6 验证记录](documentation/verification-1.8.6.md)。该记录区分本次实测结果与历史维护报告；真实校园端到端及设备验收范围也在其中说明。
 
