@@ -85,7 +85,7 @@ class MonitorScenarioSimulationTest {
         val scenario = Scenario(mapOf("a" to listOf(200), "b" to listOf(200)))
         val oldToken = scenario.token
         scenario.poll(listOf(scenario.number("a"), scenario.number("b")), answer = { event ->
-            scenario.engine.answer(event).also {
+            scenario.answer(event).also {
                 scenario.coordinator.requestInvalidateCurrent()
                 scenario.token = requireNotNull(scenario.coordinator.start(true))
             }
@@ -182,7 +182,15 @@ class MonitorScenarioSimulationTest {
         val attempts = mutableMapOf<String, Int>()
         val notifications = mutableListOf<String>()
         val transport = ScriptedTransport(outcomes)
-        val engine = RollcallEngine("offline-session", transport, transport)
+
+        fun answer(event: RollcallEvent): Boolean {
+            val response = transport.execute(
+                QueryHttpRequest(url = "https://lnt.xmu.edu.cn/api/rollcall/${event.id}/answer", method = "PUT"),
+            )
+            if (response.body == LOGIN_FORM) throw MainSessionExpiredException()
+            if (response.code == 400) throw RollcallAnswerRejectedException(400, "simulated rejection")
+            return response.code in 200..299
+        }
 
         fun number(id: String, deadline: Long = 60) = RollcallEvent(
             id, "课程 $id", "模拟教师", "数字签到", "未签", numberCode = "0042",
@@ -192,7 +200,7 @@ class MonitorScenarioSimulationTest {
         fun poll(
             events: List<RollcallEvent>,
             settings: RollcallSettings = RollcallSettings(autoAnswerNumber = true),
-            answer: (RollcallEvent) -> Boolean = engine::answer,
+            answer: (RollcallEvent) -> Boolean = ::answer,
             token: Long = this.token,
         ) = processRollcallMonitorPoll(
             events, settings, notified, completed, attempts,

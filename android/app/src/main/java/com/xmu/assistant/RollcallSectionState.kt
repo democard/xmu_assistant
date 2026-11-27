@@ -4,11 +4,8 @@ import android.app.Activity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
@@ -44,14 +41,11 @@ internal class RollcallSectionState(
     eventsInitial: List<RollcallEvent> = emptyList(),
     updatedAtMillisInitial: Long = 0L,
     /** 历史客户端工厂（测试注入假传输；生产默认 OkHttp 传输，签名与 CoursewareClient 同风格）。 */
-    private val createHistoryClient: (String) -> RollcallHistoryClient = { cookieHeader ->
-        RollcallHistoryClient(cookieHeader, OkHttpQueryTransport(), { size -> Executors.newFixedThreadPool(size) })
+    private val createHistoryClient: (String) -> RollcallHistoryClient = { cookie ->
+        RollcallHistoryClient(cookie, OkHttpQueryTransport(), { size -> Executors.newFixedThreadPool(size) })
     },
-    private val createEngine: (String) -> RollcallEngine = { cookieHeader ->
-        val coordinates = RadarCoordinateStore(activity)
-        RollcallEngine(cookieHeader, radarCoordinateProvider = { event ->
-            coordinates.preferredFor(event.courseId, event.courseTitle)
-        })
+    private val createEngine: (String) -> RollcallEngine = { cookie ->
+        RollcallEngine(cookie)
     },
 ) {
     /** 最近一次拉到的签到事件列表。 */
@@ -66,10 +60,6 @@ internal class RollcallSectionState(
         private set
 
     var refreshError by mutableStateOf("")
-        private set
-
-    /** 首页「一键签到」是否正在执行。 */
-    var oneTapBusy by mutableStateOf(false)
         private set
 
     // ---- 最近十次签到（历史区块，独立门 "rollcall_history"）----
@@ -106,7 +96,7 @@ internal class RollcallSectionState(
             onResult = { result ->
                 result.onSuccess { list ->
                     refreshError = ""
-                    events = list
+                    events = list.map { it.copy(numberCode = "") }
                     updatedAtMillis = System.currentTimeMillis()
                     if (showFeedback) show(if (list.isEmpty()) "暂未检测到签到" else "已读取 ${list.size} 条签到")
                 }
@@ -125,187 +115,9 @@ internal class RollcallSectionState(
         return true
     }
 
-    /** 首页「一键签到」：拉取最新进行中签到明细，直接提交待处理的数字/雷达签到，跳过已签与二维码签到。 */
-    fun oneTapSignIn(): Boolean {
-        if (!requireLogin()) return false
-        if (!requestGate.tryStart("rollcall_one_tap")) return false
-        refreshError = ""
-        oneTapBusy = true
-        val session = sessionEpoch.snapshot(sessionOwner, cookieHeader())
-        val accountId = username()
-        scope.runModuleRequest(
-            requestGate = requestGate,
-            gateKey = "rollcall_one_tap",
-            acceptsResult = { sessionEpoch.accepts(session, cookieHeader(), loggedIn()) },
-            ioWork = {
-                val workContext = currentCoroutineContext()
-                workContext.ensureActive()
-                if (!sessionEpoch.isCurrent(session)) {
-                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                }
-                val engine = createEngine(session.cookieHeader)
-                val polled = engine.pollWithDetails(accountId).distinctBy { it.id }
-                currentCoroutineContext().ensureActive()
-                if (!sessionEpoch.isCurrent(session)) {
-                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                }
-                if (polled.isEmpty()) {
-                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                }
-                var submitted = 0
-                var alreadySigned = 0
-                var skippedQr = 0
-                var missingCoordinate = 0
-                var missingCode = 0
-                var failed = 0
-                var firstError = ""
-                for (event in polled) {
-                    currentCoroutineContext().ensureActive()
-                    if (!sessionEpoch.isCurrent(session)) {
-                        return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                    }
-                    val resolvedStatus = event.ownStatus ?: event.status
-                    if (isTerminalRollcallStatus(resolvedStatus)) {
-                        alreadySigned += 1
-                        continue
-                    }
-                    when (event.type) {
-                        "二维码签到" -> skippedQr += 1
-                        "数字签到" -> {
-                            if (event.numberCode.isBlank()) {
-                                missingCode += 1
-                            } else {
-                                try {
-                                    val accepted = RollcallAnswerGate.answerOnce(
-                                        accountId = accountId,
-                                        cookieHeader = session.cookieHeader,
-                                        rollcallId = event.id,
-                                        canAnswer = { workContext.ensureActive(); sessionEpoch.isCurrent(session) },
-                                        answer = { engine.answer(event) },
-                                    )
-                                    currentCoroutineContext().ensureActive()
-                                    if (!sessionEpoch.isCurrent(session)) {
-                                        return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                                    }
-                                    if (accepted) submitted += 1 else failed += 1
-                                } catch (expired: MainSessionExpiredException) {
-                                    throw expired
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (error: Throwable) {
-                                    failed += 1
-                                    if (firstError.isBlank()) firstError = refreshFailureMessage(error)
-                                }
-                            }
-                        }
-                        "雷达签到" -> {
-                            try {
-                                val accepted = RollcallAnswerGate.answerOnce(
-                                    accountId = accountId,
-                                    cookieHeader = session.cookieHeader,
-                                    rollcallId = event.id,
-                                    canAnswer = { workContext.ensureActive(); sessionEpoch.isCurrent(session) },
-                                    answer = { engine.answer(event) },
-                                )
-                                currentCoroutineContext().ensureActive()
-                                if (!sessionEpoch.isCurrent(session)) {
-                                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                                }
-                                if (accepted) submitted += 1 else failed += 1
-                            } catch (expired: MainSessionExpiredException) {
-                                throw expired
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (notSubmitted: RollcallAnswerNotSubmittedException) {
-                                missingCoordinate += 1
-                                if (firstError.isBlank()) firstError = notSubmitted.message.orEmpty()
-                            } catch (error: Throwable) {
-                                failed += 1
-                                if (firstError.isBlank()) firstError = refreshFailureMessage(error)
-                            }
-                        }
-                        else -> skippedQr += 1
-                    }
-                }
-                currentCoroutineContext().ensureActive()
-                if (!sessionEpoch.isCurrent(session)) {
-                    return@runModuleRequest OneTapSignInOutcome(events = emptyList())
-                }
-                val refreshed = if (submitted > 0) {
-                    runCatching { engine.pollWithDetails(accountId) }.getOrElse { polled }
-                } else {
-                    polled
-                }
-                OneTapSignInOutcome(
-                    events = refreshed,
-                    submitted = submitted,
-                    alreadySigned = alreadySigned,
-                    skippedQr = skippedQr,
-                    missingCoordinate = missingCoordinate,
-                    missingCode = missingCode,
-                    failed = failed,
-                    firstError = firstError,
-                )
-            },
-            onResult = { result ->
-                result.onSuccess { outcome ->
-                    refreshError = ""
-                    events = outcome.events
-                    updatedAtMillis = System.currentTimeMillis()
-                    when {
-                        outcome.submitted == 0 && outcome.events.isEmpty() -> show("当前暂无进行中的签到")
-                        outcome.submitted > 0 && outcome.failed == 0 && outcome.missingCoordinate == 0 && outcome.missingCode == 0 -> {
-                            val suffix = if (outcome.skippedQr > 0) "（跳过 ${outcome.skippedQr} 项二维码签到）" else ""
-                            show("一键签到已提交 ${outcome.submitted} 项$suffix")
-                        }
-                        outcome.submitted == 0 && outcome.alreadySigned > 0 && outcome.failed == 0 &&
-                            outcome.missingCoordinate == 0 && outcome.missingCode == 0 && outcome.skippedQr == 0 -> {
-                            show("进行中的 ${outcome.alreadySigned} 项签到均已签到")
-                        }
-                        outcome.submitted == 0 && outcome.skippedQr > 0 && outcome.failed == 0 &&
-                            outcome.missingCoordinate == 0 && outcome.missingCode == 0 -> {
-                            show("当前仅有二维码签到，请在畅课内扫码")
-                        }
-                        outcome.missingCoordinate > 0 && outcome.submitted == 0 && outcome.failed == 0 -> {
-                            showWarning("有 ${outcome.missingCoordinate} 项雷达签到未配置课程坐标，请先配置")
-                        }
-                        outcome.missingCode > 0 && outcome.submitted == 0 && outcome.failed == 0 -> {
-                            showWarning("数字签到码暂未获取到，请稍后重试")
-                        }
-                        else -> {
-                            val parts = buildList {
-                                if (outcome.submitted > 0) add("已提交 ${outcome.submitted} 项")
-                                if (outcome.alreadySigned > 0) add("已签 ${outcome.alreadySigned} 项")
-                                if (outcome.missingCoordinate > 0) add("缺坐标 ${outcome.missingCoordinate} 项")
-                                if (outcome.missingCode > 0) add("缺签到码 ${outcome.missingCode} 项")
-                                if (outcome.skippedQr > 0) add("跳过二维码 ${outcome.skippedQr} 项")
-                                if (outcome.failed > 0) add("失败 ${outcome.failed} 项")
-                            }
-                            val detail = outcome.firstError.takeIf { it.isNotBlank() && outcome.failed > 0 }?.let { "：$it" }.orEmpty()
-                            val msg = "一键签到完成（${parts.joinToString("，")}）$detail"
-                            if (outcome.submitted > 0) showWarning(msg) else showError(msg)
-                        }
-                    }
-                }
-                result.onFailure { error ->
-                    val message = if (error is MainSessionExpiredException) {
-                        "登录已过期，请重新登录"
-                    } else {
-                        "一键签到失败：${refreshFailureMessage(error)}"
-                    }
-                    refreshError = refreshFailureMessage(error)
-                    showError(message)
-                }
-            },
-            releaseLoading = { oneTapBusy = false },
-        )
-        return true
-    }
-
     /** 会话失效时仅复位加载中标志（保留已展示数据，供 invalidateMainSessionUi 使用）。 */
     fun clearLoadingState() {
         loading = false
-        oneTapBusy = false
         historyLoading = false
     }
 
@@ -340,6 +152,7 @@ internal class RollcallSectionState(
                     val client = createHistoryClient(session.cookieHeader)
                     // 阶段一：最近十条选中即上屏，每条状态位「核实中…」——绝不显示聚合值
                     val preview = client.selectRecentRollcalls(accountId, coursesProvider())
+                        .map { it.copy(numberCode = "") }
                     if (preview.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
                             if (sessionEpoch.accepts(session, cookieHeader(), loggedIn())) {
@@ -349,6 +162,7 @@ internal class RollcallSectionState(
                     }
                     // 阶段二：并发核实本人状态，原位覆盖为准确结论
                     val resolved = client.resolveOwnStatuses(preview, accountId)
+                        .map { it.copy(numberCode = "") }
                     // 落盘放 IO 线程；失败静默（缓存只是加速路径，不阻塞展示）
                     runCatching {
                         // 写前校验会话世代：登出已删缓存文件，晚到的在途写不得复活
@@ -411,7 +225,6 @@ internal class RollcallSectionState(
     fun clearAll() {
         events = emptyList()
         loading = false
-        oneTapBusy = false
         refreshError = ""
         updatedAtMillis = 0L
         // 历史区块与进行中两块同清（磁盘缓存由调用方 deleteRollcallHistoryCacheFile 一并删）
@@ -422,14 +235,3 @@ internal class RollcallSectionState(
         historyLoaded = false
     }
 }
-
-private data class OneTapSignInOutcome(
-    val events: List<RollcallEvent>,
-    val submitted: Int = 0,
-    val alreadySigned: Int = 0,
-    val skippedQr: Int = 0,
-    val missingCoordinate: Int = 0,
-    val missingCode: Int = 0,
-    val failed: Int = 0,
-    val firstError: String = "",
-)

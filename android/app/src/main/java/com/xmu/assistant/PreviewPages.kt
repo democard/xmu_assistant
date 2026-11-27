@@ -70,14 +70,13 @@ internal fun TutorialPage(scrollState: androidx.compose.foundation.ScrollState, 
             PreviewListRow(R.drawable.ic_nav_help, "你想完成什么？", "按场景直达对应页面，快速上手全部功能", trailing = {})
         }
         val tasks = listOf(
-            Triple("01", "登录、监控与一键签到", "校园账号本机加密保存；支持下拉通知栏「签到监控」磁贴与首页一键签到") to "首页",
-            Triple("02", "自动签到与人数时机", "分别开关数字/雷达签到，设置人数或比例阈值，二维码签到仅提醒") to "策略",
-            Triple("03", "雷达签到坐标与现场采点", "按课程管理多个教室坐标，支持翔安校区预设与教室内 GPS 现场采点") to "课程坐标",
-            Triple("04", "微信与 QQ 邮箱提醒", "开启本机通知、微信 PushPlus 或免费的 QQ 邮箱 SMTP 授权码提醒") to "通知",
-            Triple("05", "看课表、改安排与导出日历", "支持周课表/日程切换、本地微调上课教室与节次、导出 .ics 系统日历") to "课表",
-            Triple("06", "桌面小卡片与外观主题", "在策略页校准当前周次、添加今日课程桌面小卡片并切换深色模式") to "策略",
-            Triple("07", "查看成绩、排名与模拟", "固定成绩概览、长图分享、专业排名证明以及实时加权成绩模拟") to "成绩",
-            Triple("08", "课程课件与考试安排", "按学年/学期筛选课程批量下载课件，查看考试倒计时并开启考前强提醒") to "课程课件",
+            Triple("01", "登录与签到监控", "校园账号本机加密保存；支持下拉通知栏「签到监控」磁贴与新签到提醒") to "首页",
+            Triple("02", "查看签到与打开畅课", "实时查看签到进度与出勤记录，并可直接跳转畅课页面完成签到") to "签到情况",
+            Triple("03", "微信与 QQ 邮箱提醒", "开启本机通知、微信 PushPlus 或免费的 QQ 邮箱 SMTP 授权码提醒") to "通知",
+            Triple("04", "看课表、改安排与导出日历", "支持周课表/日程切换、本地微调上课教室与节次、导出 .ics 系统日历") to "课表",
+            Triple("05", "监控间隔、小卡片与外观", "在策略页设置轮询间隔、校准当前周次、添加今日课程桌面小卡片并切换深色模式") to "策略",
+            Triple("06", "查看成绩、排名与模拟", "固定成绩概览、长图分享、专业排名证明以及实时加权成绩模拟") to "成绩",
+            Triple("07", "课程课件与考试安排", "按学年/学期筛选课程批量下载课件，查看考试倒计时并开启考前强提醒") to "课程课件",
         )
         tasks.forEach { (task, target) ->
             PreviewCard(onClick = { navigate(target) }) {
@@ -123,11 +122,11 @@ internal fun NotificationSettingsPreviewPage(
 
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         PreviewCard {
-            ChannelHeader(R.drawable.ic_nav_bell, "本机通知", "签到、监控异常与考试提醒", systemEnabled) { systemEnabled = it }
+            ChannelHeader(R.drawable.ic_nav_bell, "本机通知", "新签到、监控异常与考试提醒", systemEnabled) { systemEnabled = it }
             PreviewBadge(if (systemEnabled) "已开启本机推送" else "已关闭", if (systemEnabled) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER)
         }
         PreviewCard {
-            ChannelHeader(R.drawable.ic_nav_check, "微信 PushPlus", "把签到状态推送到微信", pushEnabled) { pushEnabled = it }
+            ChannelHeader(R.drawable.ic_nav_check, "微信 PushPlus", "把新签到提醒推送到微信", pushEnabled) { pushEnabled = it }
             PreviewBadge("服务需约 3.5 元实名费用", PreviewBadgeTone.AMBER)
             if (pushEnabled) {
                 OutlinedTextField(pushToken, { pushToken = it }, label = { Text("PushPlus Token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -200,21 +199,10 @@ internal fun StrategyPreviewPage(
     onOpenFullScreenSettings: () -> Unit,
 ) {
     var interval by rememberSyncedText(current.pollIntervalSeconds.toString())
-    val number = rememberSyncedBoolean(current.autoAnswerNumber)
-    val radar = rememberSyncedBoolean(current.autoAnswerRadar)
-    var waitMode by rememberSyncedText(current.waitBeforeAnswerMode)
-    var waitCount by rememberSyncedText(current.waitBeforeAnswerCount.toString())
-    var waitPercent by rememberSyncedText(current.waitBeforeAnswerPercent.toString())
 
     val intervalInvalid = !pollIntervalSecondsValid(interval)
-    val waitError = strategyWaitInputError(waitMode, waitCount, waitPercent)
-    val saveEnabled = strategyRollcallSaveEnabled(interval, waitMode, waitCount, waitPercent)
-    val hasUnsavedRollcallChanges = interval != current.pollIntervalSeconds.toString() ||
-        number.value != current.autoAnswerNumber ||
-        radar.value != current.autoAnswerRadar ||
-        waitMode != current.waitBeforeAnswerMode ||
-        waitCount != current.waitBeforeAnswerCount.toString() ||
-        waitPercent != current.waitBeforeAnswerPercent.toString()
+    val saveEnabled = !intervalInvalid
+    val hasUnsavedRollcallChanges = interval != current.pollIntervalSeconds.toString()
 
     var reminderEnabled by rememberSyncedBoolean(examReminder.enabled)
     var reminderMinutes by rememberSyncedText(examReminder.advanceMinutes.toString())
@@ -247,71 +235,37 @@ internal fun StrategyPreviewPage(
     val calibrationMaxWeek = xmuAcademicCalendarForTerm(termCode)?.totalWeeks ?: 19
 
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        PreviewSectionHeader("自动签到策略", if (hasUnsavedRollcallChanges) "有未保存修改" else "已保存")
+        PreviewSectionHeader("签到监控", if (hasUnsavedRollcallChanges) "有未保存修改" else "已保存")
         PreviewCard {
+            Text(
+                "监控仅负责轮询签到状态并发送提醒；检测到新签到后请前往畅课完成签到。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedTextField(
                 value = interval,
                 onValueChange = { interval = it.filter(Char::isDigit) },
-                label = { Text("轮询间隔（1-300 秒）") },
+                label = { Text("默认轮询间隔（1-300 秒）") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 isError = intervalInvalid,
                 supportingText = { if (intervalInvalid) Text("请输入 1-300 的整数；留空默认 30 秒") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
-            SettingSwitch("数字签到", "自动处理（与首页快捷开关同步）", number.value) { number.value = it }
-            SettingSwitch("雷达签到", "使用课程坐标自动处理", radar.value) { radar.value = it }
-        }
-        PreviewCard {
-            Text("自动处理时机", fontWeight = FontWeight.Bold)
-            SegmentedOptions(
-                options = listOf(WAIT_BEFORE_ANSWER_NONE to "立即", WAIT_BEFORE_ANSWER_COUNT to "达到人数", WAIT_BEFORE_ANSWER_PERCENT to "达到比例"),
-                selected = waitMode,
-                onSelected = { waitMode = it },
-            )
-            if (waitMode == WAIT_BEFORE_ANSWER_COUNT) {
-                OutlinedTextField(
-                    waitCount,
-                    { waitCount = it.filter(Char::isDigit) },
-                    label = { Text("达到人数（至少 1 人）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    isError = waitError != null,
-                    supportingText = { if (waitError != null) Text(waitError) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-            }
-            if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) {
-                OutlinedTextField(
-                    waitPercent,
-                    { waitPercent = it.filter(Char::isDigit) },
-                    label = { Text("达到比例（1-100%）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    isError = waitError != null,
-                    supportingText = { if (waitError != null) Text(waitError) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-            }
             Button(
                 onClick = {
                     if (!saveEnabled) return@Button
-                    val count = if (waitMode == WAIT_BEFORE_ANSWER_COUNT) waitCount.toIntOrNull() ?: return@Button else current.waitBeforeAnswerCount
-                    val percent = if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) waitPercent.toIntOrNull() ?: return@Button else current.waitBeforeAnswerPercent
                     val next = current.copy(
                         pollIntervalSeconds = (interval.toIntOrNull() ?: 30).coerceIn(1, 300),
-                        autoAnswerNumber = number.value,
-                        autoAnswerRadar = radar.value,
-                        waitBeforeAnswerMode = waitMode,
-                        waitBeforeAnswerCount = count.coerceAtLeast(1),
-                        waitBeforeAnswerPercent = percent.coerceIn(1, 100),
+                        autoAnswerNumber = false,
+                        autoAnswerRadar = false,
                     )
                     settings.saveRollcall(next)
                     onSaved(next)
                 },
                 enabled = saveEnabled,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("保存策略更改") }
+            ) { Text("保存监控间隔") }
         }
         PreviewSectionHeader("考试提醒")
         PreviewCard {

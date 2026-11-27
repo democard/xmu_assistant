@@ -62,8 +62,8 @@ class AndroidUiOptimizationTest {
     }
 
     @Test
-    fun `home page exposes one tap sign in button and dispatches click`() {
-        var clicked = 0
+    fun `home page exposes today overview and monitor card without one tap sign in`() {
+        var navigated = ""
         composeRule.setContent {
             XmuMobileTheme {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -73,25 +73,22 @@ class AndroidUiOptimizationTest {
                         monitorStatus = "未启动", monitorLastCheck = "10:00:00",
                         monitorFailureCount = 0, monitorLastError = "", rollcallSettings = RollcallSettings(),
                         onUsername = {}, onPassword = {}, onLogin = {}, onLogout = {},
-                        onStartMonitor = {}, onStopMonitor = {}, onAutoChanged = {},
-                        onOpenBackgroundSettings = {}, onNavigate = {},
-                        onOneTapSignIn = { clicked++ },
+                        onStartMonitor = {}, onStopMonitor = {},
+                        onOpenBackgroundSettings = {}, onNavigate = { navigated = it },
                     )
                 }
             }
         }
-        composeRule.onNodeWithText("一键签到").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals(1, clicked) }
+        composeRule.onNodeWithText("一键签到").assertDoesNotExist()
+        composeRule.onNodeWithText("自动签到快捷开关").assertDoesNotExist()
+        composeRule.onNodeWithText("今日课程").assertExists()
+        composeRule.onNodeWithText("监控设置").assertExists()
+        composeRule.onNodeWithText("通知").performClick()
+        composeRule.runOnIdle { assertEquals("通知", navigated) }
     }
 
     @Test
     fun `rollcall status page renders 3 distinct branches and absent history badge`() {
-        val app = RuntimeEnvironment.getApplication()
-        val store = RadarCoordinateStore(app)
-        store.placesFor("c-radar", "高等数学").forEach { store.delete(it.id) }
-        val p1 = store.add("c-radar", "高等数学", "坤銮楼 B207", 24.6, 118.3, "custom", makePreferred = true)
-        val p2 = store.add("c-radar", "高等数学", "学武楼 A305", 24.61, 118.31, "custom", makePreferred = false)
-
         val events = listOf(
             RollcallEvent("d1", "软件工程", "李老师", "数字签到", "进行中", numberCode = "3819", ownStatus = "已签"),
             RollcallEvent("r1", "高等数学", "陈老师", "雷达签到", "进行中", courseId = "c-radar"),
@@ -121,136 +118,24 @@ class AndroidUiOptimizationTest {
                         historyUpdatedAtMillis = 1L,
                         loggedIn = true,
                         monitorRunning = true,
-                        coordinateStore = store,
                         onRefresh = {},
                     )
                 }
             }
         }
         composeRule.onNodeWithText("监控中").assertExists()
-        composeRule.onNodeWithText("签到码 3819").assertExists()
-        composeRule.onNodeWithText("复制").assertExists()
-        composeRule.onNodeWithText("坤銮楼 B207").assertExists()
-        composeRule.onNodeWithText("学武楼 A305").assertExists()
-        composeRule.onNodeWithText("（首选）", substring = true).assertDoesNotExist()
-        composeRule.onNodeWithText("需扫码").assertExists()
+        composeRule.onNodeWithText("签到码 3819").assertDoesNotExist()
+        composeRule.onNodeWithText("数字签到").assertExists()
+        composeRule.onNodeWithText("雷达签到").assertExists()
+        composeRule.onNodeWithText("二维码签到").assertExists()
+        composeRule.onNodeWithText("需扫码").assertDoesNotExist()
+        composeRule.onNodeWithText("复制").assertDoesNotExist()
+        composeRule.onNodeWithText("雷达坐标").assertDoesNotExist()
         composeRule.onNodeWithText("最近 2 次").assertExists()
         composeRule.onNodeWithText("缺勤").assertExists()
         composeRule.onNodeWithText("!").assertExists()
         composeRule.onNodeWithText("已签").assertExists()
         composeRule.onNodeWithText("58 / 64 人").assertExists()
-        store.delete(p1.id)
-        store.delete(p2.id)
-    }
-
-    @Test
-    fun `oneTapSignIn submits pending digital rollcall and skips QR`() {
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val gate = RequestGate()
-        val epoch = SessionEpoch()
-        val owner = epoch.attachOwner()
-        val messages = mutableListOf<String>()
-        var submittedPutUrls = mutableListOf<String>()
-
-        val statusTransport = QueryHttpTransport { request ->
-            when {
-                request.url.endsWith("/api/radar/rollcalls") -> QueryHttpResponse(
-                    code = 200,
-                    url = request.url,
-                    location = "",
-                    body = """
-                        {"rollcalls":[
-                            {"rollcall_id":"101","course_id":"c1","course_title":"软件工程","created_by_name":"李老师","is_number":true,"status":"on_call"},
-                            {"rollcall_id":"102","course_id":"c2","course_title":"大学英语","created_by_name":"张老师","is_number":false,"is_radar":false,"status":"on_call"}
-                        ]}
-                    """.trimIndent(),
-                    headers = emptyMap(),
-                )
-                request.url.endsWith("/api/rollcall/101/student_rollcalls") -> QueryHttpResponse(
-                    code = 200,
-                    url = request.url,
-                    location = "",
-                    body = """{"number_code":"3819","student_rollcalls":[{"user_no":"20260001","status":"absent"}]}""",
-                    headers = emptyMap(),
-                )
-                request.url.endsWith("/api/rollcall/102/student_rollcalls") -> QueryHttpResponse(
-                    code = 200,
-                    url = request.url,
-                    location = "",
-                    body = """{"student_rollcalls":[{"user_no":"20260001","status":"absent"}]}""",
-                    headers = emptyMap(),
-                )
-                else -> QueryHttpResponse(code = 404, url = request.url, location = "", body = "{}", headers = emptyMap())
-            }
-        }
-        val answerTransport = QueryHttpTransport { request ->
-            submittedPutUrls += request.url
-            QueryHttpResponse(code = 200, url = request.url, location = "", body = """{"status":"ok"}""", headers = emptyMap())
-        }
-
-        val state = RollcallSectionState(
-            activity = activity,
-            requestGate = gate,
-            sessionEpoch = epoch,
-            sessionOwner = owner,
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
-            show = { messages += it },
-            requireLogin = { true },
-            loggedIn = { true },
-            cookieHeader = { "session=ok" },
-            username = { "20260001" },
-            coursesProvider = { emptyList() },
-            setPendingSessionRetry = {},
-            createEngine = { cookie ->
-                RollcallEngine(cookie, statusTransport = statusTransport, answerTransport = answerTransport)
-            },
-        )
-
-        assertTrue(state.oneTapSignIn())
-        val deadline = System.currentTimeMillis() + 5000
-        while (state.oneTapBusy && System.currentTimeMillis() < deadline) {
-            shadowOf(Looper.getMainLooper()).idle()
-            Thread.sleep(20)
-        }
-        shadowOf(Looper.getMainLooper()).idle()
-
-        assertEquals(1, submittedPutUrls.size)
-        assertTrue(submittedPutUrls.single().endsWith("/api/rollcall/101/answer_number_rollcall"))
-        assertTrue(messages.any { "已提交 1 项" in it && "跳过 1 项二维码签到" in it })
-    }
-
-    @Test
-    fun `course coordinate page opens bottom sheet picker and shows configured status`() {
-        val app = RuntimeEnvironment.getApplication()
-        val store = RadarCoordinateStore(app)
-        store.placesFor("c-1", "高等数学").forEach { store.delete(it.id) }
-        store.placesFor("c-2", "操作系统").forEach { store.delete(it.id) }
-        val p1 = store.add("c-1", "高等数学", "坤銮楼 B207", 24.6, 118.3, "custom", makePreferred = true)
-
-        val courses = listOf(
-            CourseSummary("c-1", "高等数学", "2026-2027 第一学期", "2026-1"),
-            CourseSummary("c-2", "操作系统", "2026-2027 第一学期", "2026-1"),
-        )
-        var picked = ""
-        composeRule.setContent {
-            XmuMobileTheme {
-                CourseCoordinatePage(
-                    courses = courses,
-                    initialCourse = courses.first(),
-                    store = store,
-                    show = {},
-                    onCourseSelected = { picked = it.title },
-                )
-            }
-        }
-        composeRule.onNodeWithText("换课 ▾").performClick()
-        composeRule.onNodeWithText("选择课程").assertExists()
-        composeRule.onNodeWithText("已设 1 个").assertExists()
-        composeRule.onNodeWithText("未配置").assertExists()
-        composeRule.onNodeWithText("操作系统").performClick()
-        composeRule.runOnIdle { assertEquals("操作系统", picked) }
-        composeRule.onNodeWithText("选择课程").assertDoesNotExist()
-        store.delete(p1.id)
     }
 
     @Test

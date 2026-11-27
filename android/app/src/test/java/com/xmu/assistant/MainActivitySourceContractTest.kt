@@ -528,36 +528,22 @@ class MainActivitySourceContractTest {
     }
 
     @Test
-    fun `strategy page resyncs auto answer toggles from the saved settings`() {
-        val source = pagesSource()
-        val strategy = source
+    fun `strategy page enforces monitor only settings without auto answer toggles`() {
+        val pages = pagesSource()
+        val previewPages = sectionSource("PreviewPages.kt")
+        val strategy = pages
             .substringAfter("fun StrategyPage(", missingDelimiterValue = "")
-            .substringBefore("SectionCard(\"策略\")")
-        val helper = source
-            .substringAfter("internal fun rememberSyncedBoolean(", missingDelimiterValue = "")
-            .substringBefore("fun StrategyPage(", missingDelimiterValue = "")
+            .substringBefore("SectionCard(\"考试提醒\")")
+        val previewStrategy = previewPages
+            .substringAfter("fun StrategyPreviewPage(", missingDelimiterValue = "")
+            .substringBefore("PreviewSectionHeader(\"考试提醒\")")
 
         assertTrue("strategy page was not found", strategy.isNotBlank())
-        assertTrue("synced toggle helper was not found", helper.isNotBlank())
-        // rememberSaveable 的 inputs 只在组合内做失效检测，状态恢复路径不校验
-        // （恢复出的旧值优先于 init），因此跨导航保留的副本必须靠 LaunchedEffect
-        // 在每次进入组合时重同步——否则首页改了自动签到后回到策略页仍是旧值。
-        assertTrue(
-            "helper must keep a saveable local copy",
-            "rememberSaveable { mutableStateOf(saved) }" in helper,
-        )
-        assertTrue(
-            "helper must resync from the saved value on every composition",
-            "LaunchedEffect(saved) { state.value = saved }" in helper,
-        )
-        assertTrue(
-            "auto answer number toggle must use the synced helper",
-            "val number = rememberSyncedBoolean(current.autoAnswerNumber)" in strategy,
-        )
-        assertTrue(
-            "auto answer radar toggle must use the synced helper",
-            "val radar = rememberSyncedBoolean(current.autoAnswerRadar)" in strategy,
-        )
+        assertTrue("preview strategy page was not found", previewStrategy.isNotBlank())
+        assertTrue("strategy page must disable autoAnswerNumber on save", "autoAnswerNumber = false" in strategy)
+        assertTrue("strategy page must disable autoAnswerRadar on save", "autoAnswerRadar = false" in strategy)
+        assertTrue("preview strategy page must disable autoAnswerNumber on save", "autoAnswerNumber = false" in previewStrategy)
+        assertTrue("preview strategy page must disable autoAnswerRadar on save", "autoAnswerRadar = false" in previewStrategy)
     }
 
     @Test

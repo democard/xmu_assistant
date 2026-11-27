@@ -83,7 +83,10 @@ internal class TronclassLogin(
             body = JSONObject().put("access_token", token).put("org_id", 1).toString(),
         ).requireNotServerError("TronClass 登录")
         if (finalLogin.code !in 200..299) error("TronClass 登录失败：${finalLogin.code}")
-        return LoginResult(cookieHeader = jar.header(loginUrl))
+        return LoginResult(
+            cookieHeader = jar.header(loginUrl),
+            ssoCookiesByOrigin = jar.allCookiesByOrigin(),
+        )
     }
 
     /** 服务端 5xx 显式归为"服务繁忙"（与密码错误/网络失败区分，避免误导重试）。 */
@@ -161,5 +164,21 @@ class SimpleCookieJar {
         cookies.entries.removeAll { it.value.expiresAt <= now }
         return cookies.values.filter { it.matches(target) }.sortedByDescending { it.path.length }
             .joinToString("; ") { "${it.name}=${it.value}" }
+    }
+
+    @Synchronized
+    fun allCookiesByOrigin(): Map<String, List<String>> {
+        val now = System.currentTimeMillis()
+        cookies.entries.removeAll { it.value.expiresAt <= now }
+        return cookies.values.groupBy(
+            keySelector = { cookie -> "https://${cookie.domain.trimStart('.')}" },
+            valueTransform = { cookie ->
+                buildString {
+                    append("${cookie.name}=${cookie.value}; Path=${cookie.path}")
+                    if (cookie.secure) append("; Secure")
+                    if (cookie.httpOnly) append("; HttpOnly")
+                }
+            },
+        )
     }
 }

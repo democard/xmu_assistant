@@ -148,7 +148,8 @@ class RollcallStatusQueryTest {
         val events = RollcallEngine("session=x", transport).pollWithDetails("me")
         assertTrue(transport.requests.all { it.method == "GET" })
         assertEquals(1, transport.requests.count { "/n1/student_rollcalls" in it.url })
-        assertEquals("0042", events.first().numberCode)
+        assertEquals("数字签到", events.first().type)
+        assertEquals("", events.first().numberCode)
         assertEquals(50.0, events.first().progress?.percentage ?: -1.0, 0.0)
         assertEquals(STATUS_SIGNED, events.first().ownStatus)
         assertEquals("", events.last().numberCode)
@@ -192,106 +193,12 @@ class RollcallStatusQueryTest {
     }
 
     @Test
-    fun `number answer sends one PUT with the exact fresh code and cookie`() {
-        val transport = ScriptedAnswerTransport(mutableListOf(answerResponse(200)))
-        val engine = RollcallEngine("session=fixture", answerTransport = transport)
-
-        assertTrue(engine.answer(numberEvent("0042")))
-
-        val request = transport.requests.single()
-        assertEquals("PUT", request.method)
-        assertEquals("https://lnt.xmu.edu.cn/api/rollcall/n1/answer_number_rollcall", request.url)
-        assertEquals("session=fixture", request.headers["Cookie"])
-        assertEquals("application/json; charset=utf-8", request.contentType)
-        assertTrue(request.oneShot)
-        val payload = JSONObject(request.body)
-        assertEquals("0042", payload.getString("numberCode"))
-        assertTrue(payload.getString("deviceId").isNotBlank())
-    }
-
-    @Test
-    fun `number answer login form is session expiry and never completes the rollcall`() {
-        val transport = ScriptedAnswerTransport(mutableListOf(answerResponse(200).copy(body = knownLoginPage)))
-        val engine = RollcallEngine("session=fixture", answerTransport = transport)
-        val completed = mutableSetOf<String>()
-        val attempts = mutableMapOf<String, Int>()
-        var healthSuccesses = 0
-
-        assertThrows(MainSessionExpiredException::class.java) {
-            processRollcallMonitorPoll(
-                events = listOf(numberEvent("0042")),
-                settings = RollcallSettings(autoAnswerNumber = true),
-                notifiedIds = mutableSetOf(),
-                completedIds = completed,
-                answerAttempts = attempts,
-                runIfActive = { action -> action(); true },
-                onNotify = { true },
-                onAnswer = engine::answer,
-                onSuccess = { healthSuccesses++ },
-            )
-        }
-
-        assertTrue(completed.isEmpty())
-        assertTrue(attempts.isEmpty())
-        assertEquals(0, healthSuccesses)
-        assertEquals(1, transport.requests.size)
-        assertEquals("PUT", transport.requests.single().method)
-    }
-
-    @Test
-    fun `forbidden response semantics take precedence over login looking bodies`() {
+    fun `forbidden detail stays local`() {
         val details = RoutingTransport(
             """{"rollcalls":[{"rollcall_id":"n1","is_number":true}]}""",
             mapOf("n1" to Spec(403, knownLoginPage)),
         )
         assertNull(RollcallEngine("session=fixture", details).pollWithDetails().single().ownStatus)
-
-        val answers = ScriptedAnswerTransport(mutableListOf(answerResponse(403).copy(body = knownLoginPage)))
-        val rejection = assertThrows(RollcallAnswerRejectedException::class.java) {
-            RollcallEngine("session=fixture", answerTransport = answers).answer(numberEvent("0042"))
-        }
-        assertEquals(403, rejection.responseCode)
-    }
-
-    @Test
-    fun `number answer keeps resource forbidden separate from expired session`() {
-        val forbidden = RollcallEngine(
-            "session=x",
-            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(403))),
-        )
-        val rejected = assertThrows(RollcallAnswerRejectedException::class.java) {
-            forbidden.answer(numberEvent("1234"))
-        }
-        assertEquals(403, rejected.responseCode)
-
-        val unauthorized = RollcallEngine(
-            "session=x",
-            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(401))),
-        )
-        assertThrows(MainSessionExpiredException::class.java) { unauthorized.answer(numberEvent("1234")) }
-    }
-
-    @Test
-    fun `number answer treats server failure as an uncertain write result`() {
-        val engine = RollcallEngine(
-            "session=x",
-            answerTransport = ScriptedAnswerTransport(mutableListOf(answerResponse(503))),
-        )
-
-        val uncertain = assertThrows(RollcallAnswerUncertainException::class.java) {
-            engine.answer(numberEvent("1234"))
-        }
-
-        assertEquals(503, uncertain.responseCode)
-    }
-
-    @Test
-    fun `number answer timeout is not converted into an accepted or rejected response`() {
-        val transport = ScriptedAnswerTransport(mutableListOf(IOException("timeout")))
-        val engine = RollcallEngine("session=x", answerTransport = transport)
-
-        assertThrows(IOException::class.java) { engine.answer(numberEvent("1234")) }
-        assertEquals(1, transport.requests.size)
     }
 
     private val knownLoginPage = """
@@ -310,37 +217,7 @@ class RollcallStatusQueryTest {
         ),
     )
 
-    private fun numberEvent(code: String) = RollcallEvent(
-        id = "n1",
-        courseTitle = "课程",
-        teacher = "老师",
-        type = "数字签到",
-        status = "未签",
-        numberCode = code,
-    )
 
-    private fun answerResponse(code: Int) = QueryHttpResponse(
-        url = "https://lnt.xmu.edu.cn/api/rollcall/n1/answer_number_rollcall",
-        code = code,
-        location = null,
-        body = "",
-        headers = emptyMap(),
-    )
-
-    private class ScriptedAnswerTransport(
-        private val outcomes: MutableList<Any>,
-    ) : QueryHttpTransport {
-        val requests = mutableListOf<QueryHttpRequest>()
-
-        override fun execute(request: QueryHttpRequest): QueryHttpResponse {
-            requests += request
-            return when (val outcome = outcomes.removeAt(0)) {
-                is QueryHttpResponse -> outcome.copy(url = request.url)
-                is Throwable -> throw outcome
-                else -> error("unsupported scripted outcome")
-            }
-        }
-    }
 
     private class RecordingQueryTransport(
         private val response: QueryHttpResponse,

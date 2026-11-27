@@ -34,10 +34,14 @@ class HomePageUiTest {
     @Composable
     private fun HomeFixture(loggedIn: Boolean = true, running: Boolean = false, busy: Boolean = false,
                             settings: RollcallSettings = RollcallSettings(), start: () -> Unit = {},
-                            stop: () -> Unit = {}, logout: () -> Unit = {}, autoChanged: (Boolean) -> Unit = {},
+                            stop: () -> Unit = {}, logout: () -> Unit = {},
                             navigate: (String) -> Unit = {}, events: List<RollcallEvent> = emptyList(),
                             rollcallLoading: Boolean = false, rollcallError: String = "",
-                            updatedAt: Long = 0L) {
+                            updatedAt: Long = 0L,
+                            scheduleEntries: List<XmuScheduleEntry> = emptyList(),
+                            scheduleTermCode: String = "",
+                            inferredCalendar: XmuAcademicCalendar? = null,
+                            upcomingExams: List<XmuExam> = emptyList()) {
         XmuMobileTheme {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 HomePage(
@@ -46,36 +50,34 @@ class HomePageUiTest {
                     monitorStatus = if (running) "运行中" else "未启动", monitorLastCheck = "10:00:00",
                     monitorFailureCount = 0, monitorLastError = "", rollcallSettings = settings,
                     onUsername = {}, onPassword = {}, onLogin = {}, onLogout = logout,
-                    onStartMonitor = start, onStopMonitor = stop, onAutoChanged = autoChanged,
+                    onStartMonitor = start, onStopMonitor = stop,
                     onOpenBackgroundSettings = {}, onNavigate = navigate,
                     currentRollcalls = events, rollcallLoading = rollcallLoading,
                     rollcallError = rollcallError, rollcallUpdatedAtMillis = updatedAt,
+                    scheduleEntries = scheduleEntries, scheduleTermCode = scheduleTermCode,
+                    inferredCalendar = inferredCalendar, upcomingExams = upcomingExams,
                 )
             }
         }
     }
 
-    @Test fun `home uses the legacy inline summary and clears ended events`() {
+    @Test fun `home shows compact rollcall banner inside hero and clears ended events`() {
         val events = mutableStateOf(listOf(
             RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知", numberCode = "001204"),
             RollcallEvent("r2", "数学建模", "李老师", "雷达签到", "未知", courseId = "c2"),
         ))
         composeRule.setContent { HomeFixture(events = events.value, updatedAt = 1L) }
-        composeRule.onNodeWithText("当前签到").performScrollTo().assertExists()
-        composeRule.onNodeWithText("高等数学 / 数字签到 · 共 2 项").assertExists()
+        composeRule.onNodeWithText("进行中：高等数学 / 数字签到 等 2 项").assertExists()
         composeRule.onNodeWithText("签到码 001204").assertDoesNotExist()
+        composeRule.onNodeWithText("当前签到").assertDoesNotExist()
         composeRule.onNodeWithText("未配置课程坐标").assertDoesNotExist()
-        composeRule.onNodeWithText("刷新签到").assertDoesNotExist()
-        composeRule.onNodeWithText("详情 ›").assertDoesNotExist()
-        composeRule.onNodeWithText("当前签到").performScrollTo()
-        saveCurrentRender("home-current-rollcalls.png")
         composeRule.runOnIdle { events.value = emptyList() }
-        composeRule.onNodeWithText("暂无进行中的签到").performScrollTo().assertExists()
+        composeRule.onNodeWithText("进行中：高等数学 / 数字签到 等 2 项").assertDoesNotExist()
         composeRule.onNodeWithText("高等数学").assertDoesNotExist()
         composeRule.onNodeWithText("数学建模").assertDoesNotExist()
     }
 
-    @Test fun `legacy summary detail and existing coordinate button retain navigation`() {
+    @Test fun `rollcall detail and monitor settings buttons retain navigation`() {
         var destination = ""
         composeRule.setContent {
             HomeFixture(
@@ -83,25 +85,23 @@ class HomePageUiTest {
                 navigate = { destination = it },
             )
         }
-        composeRule.onNodeWithText("数学建模 / 雷达签到").performScrollTo().assertExists()
-        composeRule.onNodeWithText("查看签到详情").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals("签到情况", destination) }
-        composeRule.onNodeWithText("雷达签到坐标管理").performScrollTo().performClick()
+        composeRule.onNodeWithText("进行中：数学建模 / 雷达签到").assertExists().performClick()
+        composeRule.runOnIdle { assertEquals("畅课签到", destination) }
+        composeRule.onNodeWithText("监控设置").performClick()
         composeRule.runOnIdle {
-            assertEquals("课程坐标", destination)
+            assertEquals("策略", destination)
         }
     }
 
     @Test fun `home keeps current rollcalls visible when refresh fails`() {
         composeRule.setContent {
             HomeFixture(
-                events = listOf(RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知", numberCode = "0099")),
+                events = listOf(RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知")),
                 rollcallError = "网络连接失败",
             )
         }
-        composeRule.onNodeWithText("高等数学 / 数字签到").performScrollTo().assertExists()
-        composeRule.onNodeWithText("暂无进行中的签到").assertDoesNotExist()
-        composeRule.onNodeWithText("网络连接失败", substring = true).performScrollTo().assertExists()
+        composeRule.onNodeWithText("进行中：高等数学 / 数字签到").assertExists()
+        composeRule.onNodeWithText("网络连接失败", substring = true).assertExists()
     }
 
     @Test fun `home hides private rollcalls when logged out and keeps summary while loading`() {
@@ -110,9 +110,9 @@ class HomePageUiTest {
             HomeFixture(loggedIn = loggedIn.value, rollcallLoading = true,
                 events = listOf(RollcallEvent("r1", "高等数学", "陈老师", "数字签到", "未知")))
         }
-        composeRule.onNodeWithText("高等数学 / 数字签到").performScrollTo().assertExists()
+        composeRule.onNodeWithText("进行中：高等数学 / 数字签到").assertExists()
         composeRule.runOnIdle { loggedIn.value = false }
-        composeRule.onNodeWithText("当前签到").assertDoesNotExist()
+        composeRule.onNodeWithText("进行中：高等数学 / 数字签到").assertDoesNotExist()
         composeRule.onNodeWithText("高等数学").assertDoesNotExist()
     }
 
@@ -136,11 +136,11 @@ class HomePageUiTest {
         composeRule.onNodeWithText("启动监控").assertDoesNotExist()
         composeRule.onNodeWithText("暂停监控").performClick()
         composeRule.runOnIdle { assertEquals(0, starts); assertEquals(1, stops) }
-        composeRule.onNodeWithText("退出登录").performClick()
+        composeRule.onNodeWithText("退出登录").performScrollTo().performClick()
         composeRule.runOnIdle { assertEquals(0, logouts) }
         composeRule.onNodeWithText("取消").performClick()
         composeRule.runOnIdle { assertEquals(0, logouts) }
-        composeRule.onNodeWithText("退出登录").performClick()
+        composeRule.onNodeWithText("退出登录").performScrollTo().performClick()
         composeRule.onNodeWithText("确认退出").performClick()
         composeRule.runOnIdle { assertEquals(1, logouts) }
     }
@@ -160,7 +160,7 @@ class HomePageUiTest {
     @Test fun `logout confirmation survives state restoration`() {
         val restoration = StateRestorationTester(composeRule)
         restoration.setContent { HomeFixture() }
-        composeRule.onNodeWithText("退出登录").performClick()
+        composeRule.onNodeWithText("退出登录").performScrollTo().performClick()
         composeRule.onNodeWithText("确认退出").assertExists()
         restoration.emulateSavedInstanceStateRestore()
         composeRule.onNodeWithText("确认退出").assertExists()
@@ -175,38 +175,32 @@ class HomePageUiTest {
         composeRule.onNodeWithText("隐藏").assertExists()
     }
 
-    @Test fun `auto shortcut shows saved types threshold and inactive warning`() {
-        composeRule.setContent {
-            HomeFixture(
-                settings = RollcallSettings(
-                    autoAnswerNumber = true,
-                    autoAnswerRadar = false,
-                    waitBeforeAnswerMode = WAIT_BEFORE_ANSWER_COUNT,
-                    waitBeforeAnswerCount = 8,
-                ),
-            )
-        }
-        composeRule.onNodeWithText("自动签到快捷开关").performScrollTo().assertExists()
-        composeRule.onNodeWithText("仅数字 · 达到 8 人").assertExists()
-        composeRule.onNodeWithText("尚未生效，请先启动监控").assertExists()
-        composeRule.onNodeWithText("与策略页同步；此开关同时开启或关闭数字、雷达签到。").assertExists()
-    }
-
-    @Test fun `strategy link and shortcut toggle dispatch expected values`() {
+    @Test fun `home renders today schedule upcoming exam and shortcuts without auto signin`() {
+        val today = java.time.LocalDate.now()
+        val monday = today.minusDays(today.dayOfWeek.value - 1L)
+        val calendar = XmuAcademicCalendar("20261", "2026-2027", "第一学期", monday, monday.plusWeeks(18))
+        val entry = XmuScheduleEntry(today.dayOfWeek.value, 1, 2, 2230, 2350, "高等数学", "学武楼 A305", "陈老师", "1-16周", "20261")
+        val exam = XmuExam("e1", "概率论", today.plusDays(2).toString(), "08:30-10:30", "坤銮楼 B102", "线下", "期末考试")
         var destination = ""
-        var enabled: Boolean? = null
         composeRule.setContent {
             HomeFixture(
-                settings = RollcallSettings(autoAnswerNumber = true),
-                autoChanged = { enabled = it },
+                scheduleEntries = listOf(entry),
+                scheduleTermCode = "20261",
+                inferredCalendar = calendar,
+                upcomingExams = listOf(exam),
                 navigate = { destination = it },
             )
         }
-        composeRule.onNodeWithText("调整类型与人数条件").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals("策略", destination) }
-        composeRule.onNodeWithText("雷达签到坐标管理").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals("课程坐标", destination) }
-        composeRule.onNodeWithText("自动签到快捷开关").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals(false, enabled) }
+        composeRule.onNodeWithText("今日课程").assertExists()
+        composeRule.onNodeWithText("高等数学").assertExists()
+        composeRule.onNodeWithText("近期考试").assertExists()
+        composeRule.onNodeWithText("概率论").assertExists()
+        composeRule.onNodeWithText("自动签到快捷开关").assertDoesNotExist()
+        composeRule.onNodeWithText("一键签到").assertDoesNotExist()
+        composeRule.onNodeWithText("雷达签到坐标管理").assertDoesNotExist()
+        composeRule.onNodeWithText("课件").performClick()
+        composeRule.runOnIdle { assertEquals("课程课件", destination) }
+        composeRule.onNodeWithText("通知").performClick()
+        composeRule.runOnIdle { assertEquals("通知", destination) }
     }
 }

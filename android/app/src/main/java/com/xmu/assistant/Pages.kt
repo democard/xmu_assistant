@@ -1,9 +1,5 @@
 package com.xmu.assistant
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -46,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -68,10 +63,8 @@ internal fun RollcallStatusPage(
     historyUpdatedAtMillis: Long,
     loggedIn: Boolean = false,
     monitorRunning: Boolean = false,
-    coordinateStore: RadarCoordinateStore? = null,
-    onManageCoordinates: (String, String) -> Unit = { _, _ -> },
-    onOpenCoordinatesHome: () -> Unit = { onManageCoordinates("", "") },
     onRefresh: () -> Unit,
+    onOpenTronclass: (RollcallEvent?) -> Unit = {},
 ) {
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     LaunchedEffect(openedEventId, events) {
@@ -123,17 +116,44 @@ internal fun RollcallStatusPage(
                         )
                     }
                     OutlinedButton(
-                        onClick = onOpenCoordinatesHome,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                    ) {
-                        Text("雷达坐标", style = MaterialTheme.typography.labelMedium)
-                    }
-                    OutlinedButton(
                         onClick = onRefresh,
                         enabled = !loading && !historyLoading,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     ) {
                         Text(if (loading || historyLoading) "刷新中" else "刷新", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                Text(
+                    "仅展示进行中的签到类型、进度与近期出勤状态，请前往畅课完成签到。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (events.isNotEmpty()) {
+                    Button(
+                        onClick = { onOpenTronclass(events.firstOrNull()) },
+                        enabled = loggedIn,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(999.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
+                    ) {
+                        Text(
+                            "打开畅课完成签到 ›",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onOpenTronclass(null) },
+                        enabled = loggedIn,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(999.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            "打开畅课 ›",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
                     }
                 }
                 if (loading || historyLoading || refreshError.isNotBlank()) {
@@ -152,14 +172,10 @@ internal fun RollcallStatusPage(
             item { PreviewSectionHeader("正在签到", "${events.size} 项") }
             // 同一签到也会出现在最近记录中，LazyColumn 的 key 必须跨区块唯一。
             items(events, key = { "active:${it.id}" }) { event ->
-                val places = if (event.type == "雷达签到") {
-                    coordinateStore?.placesFor(event.courseId, event.courseTitle).orEmpty()
-                } else emptyList()
                 ActiveRollcallPreviewCard(
                     event = event,
-                    places = places,
                     highlighted = openedEventId.isNotBlank() && event.id == openedEventId,
-                    onManageCoordinates = { onManageCoordinates(event.courseId, event.courseTitle) },
+                    onOpenTronclass = { onOpenTronclass(event) },
                 )
             }
         }
@@ -190,22 +206,16 @@ internal fun RollcallStatusPage(
 @Composable
 private fun ActiveRollcallPreviewCard(
     event: RollcallEvent,
-    places: List<RadarCoordinate>,
     highlighted: Boolean = false,
-    onManageCoordinates: () -> Unit,
+    onOpenTronclass: () -> Unit = {},
 ) {
-    val context = LocalContext.current
     val resolvedStatus = event.ownStatus ?: event.status
     val isSigned = isTerminalRollcallStatus(resolvedStatus)
-    val statusBadgeText = when {
-        isSigned -> "本人已签"
-        event.type == "二维码签到" -> "需扫码"
-        else -> "待处理"
-    }
+    val statusBadgeText = if (isSigned) "本人已签" else "待签到"
     val statusBadgeTone = if (isSigned) PreviewBadgeTone.GREEN else PreviewBadgeTone.AMBER
 
     PreviewCard(
-        modifier = if (highlighted) Modifier else Modifier,
+        modifier = Modifier,
         soft = highlighted,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -217,132 +227,33 @@ private fun ActiveRollcallPreviewCard(
             PreviewBadge(statusBadgeText, statusBadgeTone)
         }
         val progress = event.progress
-        when (event.type) {
-            "数字签到" -> {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        if (progress != null && progress.total > 0) "${progress.present} / ${progress.total} 人已签到" else "签到人数暂未获取",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            event.numberCode.takeIf { it.isNotBlank() }?.let { "签到码 $it" } ?: "签到码暂未获取",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (event.numberCode.isNotBlank()) {
-                            Surface(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    clipboard?.setPrimaryClip(ClipData.newPlainText("rollcall_code", event.numberCode))
-                                    Toast.makeText(context, "已复制签到码 ${event.numberCode}", Toast.LENGTH_SHORT).show()
-                                },
-                                color = themePrimarySoft(),
-                                shape = RoundedCornerShape(8.dp),
-                            ) {
-                                Text(
-                                    "复制",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = themePrimary(),
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                        }
-                    }
-                }
-                if (progress != null && progress.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-            "雷达签到" -> {
-                if (progress != null && progress.total > 0) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "${progress.present} / ${progress.total} 人已签到",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    LinearProgressIndicator(
-                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (places.isNotEmpty()) {
-                        Text(
-                            "地点：",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            places.forEach { place ->
-                                Text(
-                                    place.name,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    } else {
-                        Text(
-                            "未配置课程坐标（配置后自动签到才会提交）",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = themeWarning(),
-                        )
-                    }
-                    Text(
-                        "坐标管理 ›",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = themePrimary(),
-                        modifier = Modifier
-                            .clickable(onClick = onManageCoordinates)
-                            .padding(start = 6.dp),
-                    )
-                }
-            }
-            // 二维码签到：保留课程、徽章与可选签到人数，不显示坐标管理或冗余说明
-            else -> {
-                if (progress != null && progress.total > 0) {
-                    Text(
-                        "${progress.present} / ${progress.total} 人已签到",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    LinearProgressIndicator(
-                        progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+        if (progress != null && progress.total > 0) {
+            Text(
+                "${progress.present} / ${progress.total} 人已签到",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LinearProgressIndicator(
+                progress = { (progress.present.toFloat() / progress.total.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                if (isSigned) "可点击右侧核实或打开畅课" else "请前往畅课完成签到",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onOpenTronclass,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text("打开畅课签到 ›", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -368,9 +279,8 @@ private fun CompactRollcallHistoryCard(item: RollcallHistoryItem) {
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(item.courseTitle, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val code = item.numberCode.takeIf { it.isNotBlank() }?.let { " · 签到码 $it" }.orEmpty()
                 Text(
-                    "${item.timeDisplay} · ${item.type}$code",
+                    "${item.timeDisplay} · ${item.type}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -742,159 +652,6 @@ fun NotificationSettingsPage(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Suppress("UNUSED_PARAMETER")
-@Composable
-private fun TutorialPageLegacy(scrollState: ScrollState, navigate: (String) -> Unit) {
-    val scope = rememberCoroutineScope()
-    // 不再用手写像素偏移：教程内容、系统字体缩放和不同屏幕高度都会改变每张卡片的
-    // 实际高度。BringIntoViewRequester 由 Compose 根据真实布局向外层 ScrollState
-    // 滚动，新增/改写教程段落时不需要重新维护一串容易失准的数字。
-    val sectionTitles = listOf(
-        "签到启用教程", "开启监控", "磁贴快捷开关", "开启自动签到", "查看课表", "导出日历",
-        "考试安排与提醒", "成绩与长图分享", "模拟成绩", "桌面小卡片", "设置微信通知",
-        "设置 QQ 邮箱通知", "下载课件", "外观主题", "常见问题",
-    )
-    val anchors = remember(sectionTitles) {
-        sectionTitles.associateWith { BringIntoViewRequester() }
-    }
-    SectionCard("教程") {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            anchors.forEach { (title, _) ->
-                OutlinedButton(
-                    onClick = { scope.launch { anchors.getValue(title).bringIntoView() } },
-                    shape = RoundedCornerShape(999.dp),
-                ) {
-                    Text(title, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-        TutorialSection("签到启用教程", modifier = Modifier.bringIntoViewRequester(anchors.getValue("签到启用教程"))) {
-            Text("1. 在首页输入学号和密码，点击登录。")
-            Text("2. 登录成功后点击启动监控。")
-            Text("3. 需要自动处理数字签到和雷达签到时，再打开开启自动签到。")
-            Text("账号、Cookie、通知配置和下载目录只保存在本机。")
-            OutlinedButton(onClick = { navigate("首页") }) { Text("前往首页") }
-        }
-        TutorialSection("开启监控", modifier = Modifier.bringIntoViewRequester(anchors.getValue("开启监控"))) {
-            Text("1. 监控会按策略页的默认轮询间隔检查签到。")
-            Text("2. 检测到签到后会在签到情况页展示课程、类型、发起人与当前状态。")
-            Text("3. 手机端需要允许通知和后台运行，否则系统可能会限制常驻。")
-            OutlinedButton(onClick = { navigate("签到情况") }) { Text("查看签到情况") }
-        }
-        TutorialSection("磁贴快捷开关", modifier = Modifier.bringIntoViewRequester(anchors.getValue("磁贴快捷开关"))) {
-            Text("1. 下拉通知栏展开快捷设置面板，长按编辑，找到「签到监控」磁贴。")
-            Text("2. 把磁贴拖到常用位置，之后不打开 App 点一下就能启动或暂停监控。")
-            Text("3. 磁贴点亮表示监控运行中，灰色表示已暂停；与 App 内开关状态同步。")
-            Text("4. 未登录时磁贴不可用，点击会跳到首页提示先登录。")
-            Text("5. 长按桌面 App 图标也能看到「签到情况 / 课表 / 成绩」快捷方式直达对应页面。")
-        }
-        TutorialSection("开启自动签到", modifier = Modifier.bringIntoViewRequester(anchors.getValue("开启自动签到"))) {
-            Text("1. 自动签到只处理数字签到和雷达签到。")
-            Text("2. 二维码签到只提醒，不会自动处理。")
-            Text("3. 如果担心误操作，可以先关闭自动签到，只保留监控提醒。")
-            OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
-        }
-        TutorialSection("查看课表", modifier = Modifier.bringIntoViewRequester(anchors.getValue("查看课表"))) {
-            Text("1. 进入课表页后自动读取本学期排课，按周显示课程格子。")
-            Text("2. 左右滑动切换星期，顶部可以切换第几周。")
-            Text("3. 格子显示课程名、节次和当周教室，不显示老师。")
-            Text("4. 点击某个课程格子，可以看到老师、完整周次和平行教学班详情。")
-            Text("5. 平行教学班（同一时间多个教室）会在格子显示第一个教室，点开看全部。")
-            OutlinedButton(onClick = { navigate("课表") }) { Text("前往课表") }
-        }
-        TutorialSection("导出日历", modifier = Modifier.bringIntoViewRequester(anchors.getValue("导出日历"))) {
-            Text("1. 课表页右上角点击「导出日历」，选择系统日历或邮件应用打开即可导入。")
-            Text("2. 单双周课程会按隔周重复写入，断档的周次不会多排。")
-            Text("3. 上课日期以课表页校准后的开学日为准，校准过再导出更准确。")
-            Text("4. 节假日调休由学校另行安排，导入的课程不会自动跳过。")
-            OutlinedButton(onClick = { navigate("课表") }) { Text("前往课表") }
-        }
-        TutorialSection("考试安排与提醒", modifier = Modifier.bringIntoViewRequester(anchors.getValue("考试安排与提醒"))) {
-            Text("1. 考试安排页查看各学期考试的时间、地点和座位，顶栏可切换学期，下拉即刷新。")
-            Text("2. 首次进入显示骨架占位，读取完成后展示列表。")
-            Text("3. 在策略页开启「考试提醒」并设置提前分钟数，到点会发通知提醒。")
-            Text("4. Android 12 及以上需要在系统设置允许「闹钟和提醒」权限，点击策略页的设置入口可直接跳转。")
-            Text("5. 可选「全屏提醒」：锁屏时也能弹出横幅（需要系统允许全屏通知）。")
-            OutlinedButton(onClick = { navigate("考试安排") }) { Text("前往考试安排") }
-        }
-        TutorialSection("成绩与长图分享", modifier = Modifier.bringIntoViewRequester(anchors.getValue("成绩与长图分享"))) {
-            Text("1. 成绩页点击刷新按钮拉取各学期成绩，卡片显示课程、成绩、学分与绩点。")
-            Text("2. 页面顶部汇总面板展示总学分、平均绩点等整体情况。")
-            Text("3. 点击「分享长图」可把成绩单生成为一张长图，保存或分享给他人。")
-            Text("4. 成绩数据按账号加密保存在本机，换账号登录会自动清空。")
-            OutlinedButton(onClick = { navigate("成绩") }) { Text("前往成绩") }
-        }
-        TutorialSection("模拟成绩", modifier = Modifier.bringIntoViewRequester(anchors.getValue("模拟成绩"))) {
-            Text("1. 成绩页顶部点击「模拟成绩」，页面跳到底部的模拟区。")
-            Text("2. 填入预计出分课程的成绩（0-100）和学分，可添加多行，每行可单独删除。")
-            Text("3. 面板逐项显示「当前 → 计入后」：平均分数、平均绩点按课程等权，加权分数、加权绩点按学分；模拟课不计入已修总学分。")
-            Text("4. 空、非法或超范围的行自动跳过，不影响其余计算。")
-            Text("5. 换算采用虾大官方 4.0 分制，纯本地计算，不上传任何数据。")
-            OutlinedButton(onClick = { navigate("成绩") }) { Text("前往成绩") }
-        }
-        TutorialSection("桌面小卡片", modifier = Modifier.bringIntoViewRequester(anchors.getValue("桌面小卡片"))) {
-            Text("1. 在策略页开启「桌面小卡片」，然后点击「添加到桌面」。")
-            Text("2. 系统会弹出固定小部件窗口，选一个位置放置即可。")
-            Text("3. 小卡片显示今天的课程、时间和地点，点击可打开 App 课表页。")
-            Text("4. 课表刷新后小卡片会自动更新；在策略页关闭开关可隐藏内容。")
-            Text("5. 如果没弹出添加窗口，可以长按手机桌面空白处 -> 小部件 -> 找到 虾大助手。")
-            OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
-        }
-        TutorialSection("设置微信通知", modifier = Modifier.bringIntoViewRequester(anchors.getValue("设置微信通知"))) {
-            Text("1. 打开通知页，开启微信通知。")
-            Text("2. 填入 PushPlus Token，保存后点击发送测试通知。")
-            Text("3. 收到测试消息后，说明微信通知可用。")
-            Text("PushPlus 会收取约 3.5 元实名费用。", color = themeWarning(), fontWeight = FontWeight.Bold)
-            OutlinedButton(onClick = { navigate("通知") }) { Text("前往通知") }
-        }
-        TutorialSection("设置 QQ 邮箱通知", modifier = Modifier.bringIntoViewRequester(anchors.getValue("设置 QQ 邮箱通知"))) {
-            Text("1. 在 QQ 邮箱网页版开启 SMTP 服务，并生成授权码。")
-            Text("网页版", color = themeWarning(), fontWeight = FontWeight.Bold)
-            Text("打开网页 -> 点击设置 -> 点击账号与安全 -> 安全设置 -> 下滑找到生成入口。")
-            Text("2. 回到通知页，填写发件 QQ 邮箱、SMTP 授权码和收件邮箱。")
-            Text("3. QQ 邮箱免费使用；授权码不是 QQ 密码。")
-            Text("4. 保存后点击发送测试通知，确认邮箱能收到提醒。")
-            OutlinedButton(onClick = { navigate("通知") }) { Text("前往通知") }
-        }
-        TutorialSection("下载课件", modifier = Modifier.bringIntoViewRequester(anchors.getValue("下载课件"))) {
-            Text("1. 进入课程课件页，先点击刷新课程。")
-            Text("2. 选择学年、学期和课程，再点击刷新课件。")
-            Text("3. 勾选需要的课件，点击下载；也可以点击全选后统一下载。")
-            Text("4. 文件会尽量直接下载；视频、网页、H5 或 SCORM 无法直接下载时，会保存平台入口。")
-            Text("5. 下载失败的课件会在卡片里显示原因，例如平台未提供地址、登录过期、网络失败。")
-            OutlinedButton(onClick = { navigate("课程课件") }) { Text("前往课程课件") }
-        }
-        TutorialSection("外观主题", modifier = Modifier.bringIntoViewRequester(anchors.getValue("外观主题"))) {
-            Text("1. 策略页底部的「外观」可选浅色、深色或跟随系统。")
-            Text("2. 切换即时生效并自动记忆，下次启动保持上次选择。")
-            Text("3. 桌面小卡片会同步使用深色配色，夜间不刺眼。")
-            OutlinedButton(onClick = { navigate("策略") }) { Text("前往策略") }
-        }
-        TutorialSection("常见问题", modifier = Modifier.bringIntoViewRequester(anchors.getValue("常见问题"))) {
-            Text(
-                "重要：系统后台限制无法绕过。手机锁屏后，Android 系统（尤其国产系统）可能延迟或停止后台服务，自动签到和提醒最多可能延迟约 6 小时（系统数据同步周期）。",
-                color = themeWarning(),
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                "建议：把 虾大助手 加入电池不限制 / 允许后台运行白名单，保持通知开启；重要签到请同时手动确认，不要只依赖自动签到。",
-                color = themeWarning(),
-                fontWeight = FontWeight.Bold,
-            )
-            Text("关闭 App 后，监控服务会尽量在后台运行；彻底退出需要在系统后台或通知里停止。")
-            Text("如果课程或课件刷不出来，先重新登录，再刷新课程。")
-            Text("如果通知测试失败，优先检查 Token、SMTP 授权码、收件邮箱和网络。")
-            Text("如果平台没有提供资源地址，软件不会绕过平台限制，只会保存入口并显示原因。")
-        }
-    }
-}
-
 /**
  * 本地可编辑的布尔副本，并在每次进入组合时以「已保存值」为准重同步。
  *
@@ -931,21 +688,6 @@ internal fun rememberSyncedText(saved: String): MutableState<String> {
     return state
 }
 
-internal fun strategyWaitInputError(mode: String, countText: String, percentText: String): String? = when (mode) {
-    WAIT_BEFORE_ANSWER_COUNT ->
-        if (countText.toIntOrNull()?.let { it >= 1 } == true) null else "请输入至少 1 的整数"
-    WAIT_BEFORE_ANSWER_PERCENT ->
-        if (percentText.toIntOrNull()?.let { it in 1..100 } == true) null else "请输入 1-100 的整数比例"
-    else -> null
-}
-
-internal fun strategyRollcallSaveEnabled(
-    intervalText: String,
-    mode: String,
-    countText: String,
-    percentText: String,
-): Boolean = pollIntervalSecondsValid(intervalText) && strategyWaitInputError(mode, countText, percentText) == null
-
 @Composable
 fun StrategyPage(
     settings: AssistantSettings,
@@ -963,29 +705,10 @@ fun StrategyPage(
     onOpenFullScreenSettings: () -> Unit = {},
 ) {
     var interval by rememberSaveable { mutableStateOf(current.pollIntervalSeconds.toString()) }
-    // 自动签到两开关：首页的自动签到开关会改写同一份 RollcallSettings，本地副本
-    // 必须能跟随，否则回到本页按「确认更改」会把刚开启的自动签到静默写回
-    // （修复机理见 rememberSyncedBoolean 的注释）。
-    val number = rememberSyncedBoolean(current.autoAnswerNumber)
-    val radar = rememberSyncedBoolean(current.autoAnswerRadar)
-    var waitMode by rememberSyncedText(current.waitBeforeAnswerMode)
-    var waitCount by rememberSyncedText(current.waitBeforeAnswerCount.toString())
-    var waitPercent by rememberSyncedText(current.waitBeforeAnswerPercent.toString())
-    // 手动周次用本地 State 持有，确保切换开关/选周时 UI 立即重组（settings 非 State）。
-    // 以 termCode 为键：学期变化（新学期/缓存重载）后重读该学期的校准值，
-    // 否则本地副本停留在旧学期，与 SchedulePage 实际生效值不一致。
     var manualWeek by rememberSaveable(termCode) { mutableStateOf(settings.manualAcademicWeek(termCode)) }
-    // 轮询间隔即时校验：只允许数字，非空时必须为 1-300；空串保存时回退默认 30
     val intervalInvalid = !pollIntervalSecondsValid(interval)
-    val waitInputError = strategyWaitInputError(waitMode, waitCount, waitPercent)
-    val hasUnsavedRollcallChanges = interval != current.pollIntervalSeconds.toString() ||
-        number.value != current.autoAnswerNumber || radar.value != current.autoAnswerRadar ||
-        waitMode != current.waitBeforeAnswerMode || waitCount != current.waitBeforeAnswerCount.toString() ||
-        waitPercent != current.waitBeforeAnswerPercent.toString()
-    // 校准按钮范围：官方校历表内学期用真实周数（18/19），表外学期按 19 兜底，
-    // 与反推默认总周数一致，保证 19 周长学期也能手动校准到第 19 周。
+    val hasUnsavedRollcallChanges = interval != current.pollIntervalSeconds.toString()
     val calibrationMaxWeek = xmuAcademicCalendarForTerm(termCode)?.totalWeeks ?: 19
-    // 考试提醒：本地 State + 变更即回调（由 MainActivity 持久化并重排闹钟）
     var reminderEnabled by rememberSaveable { mutableStateOf(examReminder.enabled) }
     var reminderMinutes by rememberSaveable { mutableStateOf(examReminder.advanceMinutes.toString()) }
     var reminderFullScreen by rememberSaveable { mutableStateOf(examReminder.fullScreenEnabled) }
@@ -999,7 +722,11 @@ fun StrategyPage(
             ),
         )
     }
-    SectionCard("策略") {
+    SectionCard("签到监控") {
+        Text(
+            "仅用于后台监测新签到并发送提醒；已下线自动签到，检测到新签到请前往畅课完成。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         OutlinedTextField(
             value = interval,
             onValueChange = { interval = it.filter(Char::isDigit) },
@@ -1012,74 +739,23 @@ fun StrategyPage(
                 if (intervalInvalid) Text("请输入 1-300 的整数；留空将使用默认 30 秒")
             },
         )
-        Text(
-            "这里可分别选择自动处理类型；保存后会与首页快捷开关同步。首页快捷开关会同时开启或关闭数字、雷达签到。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        ToggleRow("数字签到自动处理", number.value) { number.value = it }
-        ToggleRow("雷达签到自动处理", radar.value) { radar.value = it }
-        Text("自动处理时机", fontWeight = FontWeight.Bold)
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(
-                WAIT_BEFORE_ANSWER_NONE to "检测到立即处理",
-                WAIT_BEFORE_ANSWER_COUNT to "达到人数",
-                WAIT_BEFORE_ANSWER_PERCENT to "达到比例",
-            ).forEach { (value, label) ->
-                OutlinedButton(onClick = { waitMode = value }, enabled = waitMode != value) { Text(label) }
-            }
-        }
-        if (waitMode == WAIT_BEFORE_ANSWER_COUNT) {
-            OutlinedTextField(
-                value = waitCount,
-                onValueChange = { waitCount = it.filter(Char::isDigit) },
-                label = { Text("达到人数后自动处理（至少 1 人）") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = waitInputError != null,
-                supportingText = { if (waitInputError != null) Text(waitInputError) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) {
-            OutlinedTextField(
-                value = waitPercent,
-                onValueChange = { waitPercent = it.filter(Char::isDigit) },
-                label = { Text("达到比例后自动处理（1-100%）") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = waitInputError != null,
-                supportingText = { if (waitInputError != null) Text(waitInputError) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
         Button(
             onClick = {
                 if (intervalInvalid) return@Button
-                val count = if (waitMode == WAIT_BEFORE_ANSWER_COUNT) {
-                    waitCount.toIntOrNull() ?: return@Button
-                } else current.waitBeforeAnswerCount
-                val percent = if (waitMode == WAIT_BEFORE_ANSWER_PERCENT) {
-                    waitPercent.toIntOrNull() ?: return@Button
-                } else current.waitBeforeAnswerPercent
-                if (waitMode == WAIT_BEFORE_ANSWER_COUNT && count < 1) return@Button
-                if (waitMode == WAIT_BEFORE_ANSWER_PERCENT && percent !in 1..100) return@Button
-                val saved = RollcallSettings(
+                val saved = current.copy(
                     pollIntervalSeconds = (interval.toIntOrNull() ?: 30).coerceIn(1, 300),
-                    autoAnswerNumber = number.value,
-                    autoAnswerRadar = radar.value,
-                    waitBeforeAnswerMode = waitMode,
-                    waitBeforeAnswerCount = count.coerceAtLeast(1),
-                    waitBeforeAnswerPercent = percent.coerceIn(1, 100),
+                    autoAnswerNumber = false,
+                    autoAnswerRadar = false,
                 )
                 settings.saveRollcall(saved)
                 onSaved(saved)
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = strategyRollcallSaveEnabled(interval, waitMode, waitCount, waitPercent),
-        ) { Text("保存策略更改") }
+            enabled = !intervalInvalid,
+        ) { Text("保存监控间隔") }
         Text(
             if (hasUnsavedRollcallChanges) {
-                "当前修改尚未保存；点击“保存策略更改”后生效。"
+                "当前修改尚未保存；点击“保存监控间隔”后生效。"
             } else {
                 "当前显示已保存设置。"
             },

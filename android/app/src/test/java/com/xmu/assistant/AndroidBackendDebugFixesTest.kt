@@ -81,12 +81,6 @@ class AndroidBackendDebugFixesTest {
     }
 
     @Test
-    fun `rollcallCodeDates handles compact timezone offsets without colon`() {
-        val dates = rollcallCodeDates(startTime = "2026-11-19T00:30:00+0800")
-        assertEquals(listOf("2026-11-18"), dates)
-    }
-
-    @Test
     fun `rank clearPdf resets stage after saving completes`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val epoch = SessionEpoch()

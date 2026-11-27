@@ -223,3 +223,8 @@ internal fun scheduleSectionEndTime(section: Int, fallback: Int): Int = when (se
     11 -> 2125
     else -> fallback
 }
+
+internal fun normalizeCourseTitle(value: String): String = value
+    .trim()
+    .lowercase()
+    .replace(Regex("[\\s·•_—–-]+"), "")

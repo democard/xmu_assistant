@@ -138,24 +138,23 @@ class RollcallMonitorService : Service() {
                     if (liveCookie.isBlank()) error("登录已过期，请重新登录")
                     // 运行中换号/重登：seen 与新账号不匹配，退出循环，由重登流程重启监控
                     if (liveCookie != cookieSnapshot) return
-                    val coordinateStore = RadarCoordinateStore(this)
-                    val engine = RollcallEngine(
-                        liveCookie,
-                        radarCoordinateProvider = { event ->
-                            coordinateStore.preferredFor(event.courseId, event.courseTitle)
-                        },
-                    )
-                    // 同一轮详情 GET 同时供进度门槛、本人状态和数字码使用。
+                    val engine = RollcallEngine(liveCookie)
+                    // 同一轮详情 GET 同时供进度和本人状态使用。
                     val allEvents = engine.pollWithDetails(settings.username)
                     // 自适应轮询节奏（与桌面端 MonitorWorker 对齐）：存在进行中的签到
                     // （remainingSeconds > 0）时切密集轮询，空闲时段维持用户设定间隔。
                     // 平均发现延迟从 interval/2 降到 ACTIVE_POLL_INTERVAL_SECONDS/2；
                     // 密集期只覆盖课堂签到窗口，日均请求量几乎不变。
                     val activeRollcall = allEvents.any { (it.remainingSeconds ?: 0L) > 0 }
+                    // 已下线自动签到，仅保留签到监控与多渠道提醒
+                    val monitorOnlySettings = rollcallSettings.copy(
+                        autoAnswerNumber = false,
+                        autoAnswerRadar = false,
+                    )
                     try {
                         processRollcallMonitorPoll(
                             events = allEvents,
-                            settings = rollcallSettings,
+                            settings = monitorOnlySettings,
                             notifiedIds = notifiedSet,
                             completedIds = completedSet,
                             answerAttempts = answerAttempts,
@@ -163,19 +162,7 @@ class RollcallMonitorService : Service() {
                                 monitorWorkerCoordinator.runIfCurrent(token, settings.monitorDesired, action)
                             },
                             onNotify = { notifyRollcall(it) },
-                            onAnswer = { event ->
-                                RollcallAnswerGate.answerOnce(
-                                    accountId = settings.username,
-                                    cookieHeader = cookieSnapshot,
-                                    rollcallId = event.id,
-                                    canAnswer = {
-                                        isMonitorRunActive(token, settings) &&
-                                            settings.cookieHeader == cookieSnapshot &&
-                                            settings.rollcall() == rollcallSettings
-                                    },
-                                    answer = { engine.answer(event) },
-                                )
-                            },
+                            onAnswer = { false },
                             onSuccess = settings::recordMonitorSuccess,
                             settingsStillCurrent = {
                                 settings.cookieHeader == cookieSnapshot && settings.rollcall() == rollcallSettings

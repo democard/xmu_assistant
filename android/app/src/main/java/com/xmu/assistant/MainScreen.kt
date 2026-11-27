@@ -193,6 +193,7 @@ internal class CoursesWritePath(
  * - 页面内联回调（登录/登出/监控开关/桌面小卡片/手动周次等）与拆分前逐字对齐，
  *   全部依赖经构造参数注入，行为零变更。
  */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 internal fun MainScreen(
     activity: ComponentActivity,
@@ -253,18 +254,14 @@ internal fun MainScreen(
     val (toast, toastSeverity, busy, downloadingCount) = status
     // 设置页写入的是 prefs，不是 Compose State；递增此值让课表页重读校准周次。
     val manualWeekRevision = remember { mutableIntStateOf(0) }
-    val radarCoordinateStore = remember(activity) { RadarCoordinateStore(activity) }
-    var coordinateTarget by remember(username, loggedIn) { mutableStateOf<CourseSummary?>(null) }
-    val currentSemesterCoordinateCourses = remember(courses, schedule.termCode, schedule.entries) {
-        currentTermCoordinateCourses(courses, schedule.termCode, schedule.entries)
-    }
-    val currentTermCoordinateTarget = remember(coordinateTarget, currentSemesterCoordinateCourses) {
-        coordinateTarget?.let { target ->
-            currentSemesterCoordinateCourses.firstOrNull { course ->
-                (course.id.isNotBlank() && course.id == target.id) ||
-                    normalizeCourseTitle(course.title) == normalizeCourseTitle(target.title)
-            }
-        }
+    var tronclassTargetEvent by remember { mutableStateOf<RollcallEvent?>(null) }
+    var tronclassReturnPage by rememberSaveable { mutableStateOf("首页") }
+    val upcomingHomeExams = remember(exam.summary) {
+        val nowMillis = System.currentTimeMillis()
+        exam.summary?.exams
+            ?.filter { item -> examEndEpochMillis(item) > nowMillis }
+            ?.sortedBy { it.date + it.timeRange }
+            .orEmpty()
     }
 
     // 桌面小卡片 pin 结果延时校验（批次四·两段重复 postDelayed 合并 + 可取消化）：
@@ -291,7 +288,9 @@ internal fun MainScreen(
             activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
             onDispose { }
         }
-        AppBackNavigation(page, onSelected = onModuleEntered)
+        AppBackNavigation(page, onSelected = { dest ->
+            onModuleEntered(if (page == "畅课签到") tronclassReturnPage else dest)
+        })
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Box(
                 modifier = Modifier
@@ -313,7 +312,9 @@ internal fun MainScreen(
                         loggedIn = loggedIn,
                         page = page,
                         showBack = page != "首页" && primaryDestinations.none { it.page == page },
-                        onBack = { onModuleEntered(parentPage(page)) },
+                        onBack = {
+                            onModuleEntered(if (page == "畅课签到") tronclassReturnPage else parentPage(page))
+                        },
                     )
                     Box(
                         modifier = Modifier
@@ -334,19 +335,26 @@ internal fun MainScreen(
                                 historyUpdatedAtMillis = rollcall.historyUpdatedAtMillis,
                                 loggedIn = loggedIn,
                                 monitorRunning = monitorRunning,
-                                coordinateStore = radarCoordinateStore,
-                                onManageCoordinates = { courseId, courseTitle ->
-                                    coordinateTarget = CourseSummary(courseId, courseTitle)
-                                    onModuleEntered("课程坐标")
-                                },
-                                onOpenCoordinatesHome = {
-                                    onModuleEntered("课程坐标")
-                                },
                                 onRefresh = {
                                     // 顶部按钮一键刷两块（独立互斥门，可并行）
                                     rollcall.refresh()
                                     rollcall.refreshHistory()
                                 },
+                                onOpenTronclass = { event ->
+                                    tronclassTargetEvent = event
+                                    tronclassReturnPage = "签到情况"
+                                    onModuleEntered("畅课签到")
+                                },
+                            )
+                            "畅课签到" -> TronclassRollcallPage(
+                                loggedIn = loggedIn,
+                                cookieHeader = settings.cookieHeader,
+                                username = username,
+                                password = password,
+                                targetEvent = tronclassTargetEvent ?: rollcall.events.firstOrNull(),
+                                onBack = { onModuleEntered(tronclassReturnPage) },
+                                onOpenStatus = { onModuleEntered("签到情况") },
+                                onCookieRefreshed = homeActions::syncRefreshedCookie,
                             )
                             "课表" -> SchedulePage(
                                 entries = schedule.entries,
@@ -362,30 +370,6 @@ internal fun MainScreen(
                                     settings.manualAcademicWeek(schedule.termCode)
                                 },
                                 pinnedHeader = true,
-                            )
-                            "课程坐标" -> CourseCoordinatePage(
-                                courses = currentSemesterCoordinateCourses,
-                                initialCourse = currentTermCoordinateTarget,
-                                store = radarCoordinateStore,
-                                show = show,
-                                onCourseSelected = { coordinateTarget = it },
-                                onAddPlace = { onModuleEntered("添加地点") },
-                                onCapture = { onModuleEntered("现场采点") },
-                            )
-                            "添加地点" -> AddRadarPlacePage(
-                                courses = currentSemesterCoordinateCourses,
-                                initialCourse = currentTermCoordinateTarget,
-                                store = radarCoordinateStore,
-                                show = show,
-                                onSaved = { onModuleEntered("课程坐标") },
-                                onCapture = { onModuleEntered("现场采点") },
-                            )
-                            "现场采点" -> OnsiteRadarCapturePage(
-                                courses = currentSemesterCoordinateCourses,
-                                initialCourse = currentTermCoordinateTarget,
-                                store = radarCoordinateStore,
-                                show = show,
-                                onSaved = { onModuleEntered("课程坐标") },
                             )
                             "成绩" -> ScorePage(
                                 records = scores.scoreRecords,
@@ -446,7 +430,17 @@ internal fun MainScreen(
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     when (page) {
-                                        "更多" -> MorePage(notificationSettings, downloadingCount, onSelected = onModuleEntered)
+                                        "更多" -> MorePage(
+                                            notificationSettings = notificationSettings,
+                                            downloadingCount = downloadingCount,
+                                            onSelected = { dest ->
+                                                if (dest == "畅课签到") {
+                                                    tronclassTargetEvent = rollcall.events.firstOrNull()
+                                                    tronclassReturnPage = "更多"
+                                                }
+                                                onModuleEntered(dest)
+                                            },
+                                        )
                                         "通知" -> NotificationSettingsPreviewPage(settings, notificationSettings, testNotifications) {
                                             onNotificationSettingsSaved(it)
                                             show("通知设置已保存")
@@ -582,27 +576,25 @@ internal fun MainScreen(
                                                 }
                                             },
                                             onStopMonitor = { homeActions.onStopMonitor(monitor.monitorTransitionInProgress, monitor.monitorTransitionId) },
-                                            onAutoChanged = { enabled ->
-                                                val next = toggleAllAutoAnswer(rollcallSettings, enabled)
-                                                setRollcallSettings(next)
-                                                settings.saveRollcall(next)
-                                                show(
-                                                    when {
-                                                        enabled && !monitorRunning ->
-                                                            "已开启数字和雷达自动处理；尚未生效，请先启动监控"
-                                                        enabled -> "已开启数字和雷达自动处理"
-                                                        else -> "已关闭数字和雷达自动处理，仍会保留签到提醒"
-                                                    },
-                                                )
-                                            },
                                             onOpenBackgroundSettings = onOpenBackgroundSettings,
-                                            onNavigate = onModuleEntered,
+                                            onNavigate = { target ->
+                                                if (target == "畅课签到") {
+                                                    tronclassTargetEvent = rollcall.events.firstOrNull()
+                                                    tronclassReturnPage = "首页"
+                                                }
+                                                onModuleEntered(target)
+                                            },
                                             currentRollcalls = rollcall.events,
                                             rollcallLoading = rollcall.loading,
                                             rollcallError = rollcall.refreshError,
                                             rollcallUpdatedAtMillis = rollcall.updatedAtMillis,
-                                            onOneTapSignIn = { rollcall.oneTapSignIn() },
-                                            oneTapBusy = rollcall.oneTapBusy,
+                                            scheduleEntries = schedule.entries,
+                                            scheduleTermCode = schedule.termCode,
+                                            inferredCalendar = schedule.cache.inferredCalendars[schedule.termCode],
+                                            manualAcademicWeek = remember(schedule.termCode, manualWeekRevision.intValue) {
+                                                settings.manualAcademicWeek(schedule.termCode)
+                                            },
+                                            upcomingExams = upcomingHomeExams,
                                         )
                                     }
                                 }

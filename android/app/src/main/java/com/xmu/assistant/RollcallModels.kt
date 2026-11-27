@@ -12,6 +12,7 @@ const val COURSEWARE_STATUS_LIMITED = "平台限制"
 data class LoginResult(
     val cookieHeader: String,
     val displayName: String = "",
+    val ssoCookiesByOrigin: Map<String, List<String>> = emptyMap(),
 )
 
 data class RollcallEvent(

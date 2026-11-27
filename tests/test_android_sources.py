@@ -57,7 +57,7 @@ class AndroidSourceTests(unittest.TestCase):
         self.assertNotIn('"签到事件"', ui)
         self.assertNotIn('"设置"', ui)
         self.assertIn("启动监控", ui)
-        self.assertIn("开启自动签到", ui)
+        self.assertIn("监控间隔", ui)
         self.assertIn("请选择课程", ui)
         self.assertIn("缺少配置", ui)
         self.assertIn("温馨提示", ui)
@@ -70,7 +70,7 @@ class AndroidSourceTests(unittest.TestCase):
         self.assertIn("QQ 邮箱", ui)
         self.assertIn("SMTP 端口", ui)
         self.assertIn("465,587", ui)
-        self.assertIn("二维码签到只提醒", ui)
+        self.assertIn("请前往畅课完成签到", ui)
         # 原断言 "Modifier.clickable"→import 文本：UI 拆分后 clickable 用法已移出
         # UiComponents（本轮死导入清理一并移除），改锚本文件真实在用的原生交互
         # API toggleable（语义等价加严：锚定物必须实际存在）
@@ -141,22 +141,23 @@ class AndroidSourceTests(unittest.TestCase):
             self.assertIn(text, combined)
 
     def test_android_tutorial_contains_full_windows_like_sections(self):
-        # 教程页（TutorialPage 及其锚点）已移入 Pages.kt（2026-08-19 守卫测试更新）
-        pages = (ANDROID_SRC / "Pages.kt").read_text(encoding="utf-8")
+        tutorial = (
+            (ANDROID_SRC / "PreviewPages.kt").read_text(encoding="utf-8")
+            + "\n"
+            + (ANDROID_SRC / "Pages.kt").read_text(encoding="utf-8")
+        )
 
         for section in (
-            "签到启用教程",
-            "开启监控",
-            "开启自动签到",
-            "设置微信通知",
-            "设置 QQ 邮箱通知",
-            "下载课件",
-            "常见问题",
-            "网页版",
-            "二维码签到只提醒",
-            "模拟成绩",
+            "登录与签到监控",
+            "查看签到与打开畅课",
+            "微信与 QQ 邮箱提醒",
+            "看课表、改安排与导出日历",
+            "监控间隔、小卡片与外观",
+            "查看成绩、排名与模拟",
+            "课程课件与考试安排",
+            "后台保活建议",
         ):
-            self.assertIn(section, pages)
+            self.assertIn(section, tutorial)
 
     def test_android_notifications_use_f1_small_icon_and_bounded_seen_cache(self):
         service = (ANDROID_SRC / "RollcallMonitorService.kt").read_text(encoding="utf-8")

@@ -179,10 +179,7 @@ internal class RollcallHistoryClient internal constructor(
         return DetailVerdict(
             ownStatus = ownStatus,
             progress = progress,
-            numberCode = if (item.type == "数字签到") RollcallNumberCodeLookup(cookieHeader, queryTransport).complete(
-                item.rollcallId, detail, item.courseId,
-                item.sortKeyMillis?.let { java.time.Instant.ofEpochMilli(it).toString() }.orEmpty(),
-            ) else "",
+            numberCode = "",
         )
     }
 
@@ -458,9 +455,6 @@ fun saveRollcallHistoryCache(
                             .put("unknown", progress.unknown)
                             .put("reliablePercentage", progress.reliablePercentage),
                     )
-                }
-                if (item.type == "数字签到" && item.numberCode.isNotBlank()) {
-                    obj.put("numberCode", item.numberCode)
                 }
                 obj
             }))

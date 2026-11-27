@@ -77,6 +77,7 @@ class MonitorControlTileServiceSourceContractTest {
     @Test
     fun `tutorial mentions the quick settings tile`() {
         val pages = source("src/main/java/com/xmu/assistant/Pages.kt")
-        assertTrue("tutorial must contain the tile section", "磁贴快捷开关" in pages)
+        val previewPages = sourceOrNull("src/main/java/com/xmu/assistant/PreviewPages.kt").orEmpty()
+        assertTrue("tutorial must contain the tile section", "磁贴快捷开关" in (pages + "\n" + previewPages))
     }
 }

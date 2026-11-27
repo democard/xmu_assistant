@@ -275,7 +275,7 @@ class RollcallHistoryClientTest {
     }
 
     @Test
-    fun `history single detail request yields status progress and number code`() {
+    fun `history single detail request yields status and progress without number code`() {
         val transport = FakeHistoryTransport(
             courses = listOf(course("c1", "课程一", "2026-1")),
             rollcallsByCourse = mapOf("c1" to listOf("""{"id":"r1","rollcall_time":"2026-07-01T08:00:00","is_number":true}""")),
@@ -288,7 +288,7 @@ class RollcallHistoryClientTest {
         val item = client(transport).fetchRecentRollcalls("u1", fakeCourses()).single()
         assertEquals(STATUS_SIGNED, item.ownStatus)
         assertEquals(50.0, item.progress?.percentage ?: -1.0, 0.0)
-        assertEquals("0042", item.numberCode)
+        assertEquals("", item.numberCode)
         assertEquals(1, transport.requests.count { "/api/rollcall/r1/student_rollcalls" in it.url })
     }
 
@@ -385,7 +385,7 @@ class RollcallHistoryClientTest {
                     "r1", "c1", "课程一", "数字签到", "07-01 08:00", 1_720_000_000L * 1000,
                     STATUS_SIGNED,
                     StudentRollcallProgress(5, 1, 1, 1, 20.0, true, leave = 1, late = 1),
-                    "0042",
+                    "",
                 ),
                 RollcallHistoryItem("r2", "c1", "课程一", "数字签到", "-", null, STATUS_UNKNOWN),
             ),

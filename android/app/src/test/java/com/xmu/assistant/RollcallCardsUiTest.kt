@@ -57,7 +57,7 @@ class RollcallCardsUiTest {
     }
 
     @Test
-    fun `regular width keeps active cards compact and preserves number code`() {
+    fun `regular width keeps active cards compact with type badges and without number code`() {
         composeRule.setContent {
             XmuMobileTheme {
                 Box(Modifier.width(390.dp).height(1600.dp).testTag("page")) {
@@ -74,14 +74,16 @@ class RollcallCardsUiTest {
             }
         }
         composeRule.onNodeWithText("18 / 40 人已签到").assertExists()
-        composeRule.onNodeWithText("签到码 001204").assertExists()
+        composeRule.onNodeWithText("打开畅课完成签到 ›").assertExists()
+        composeRule.onAllNodesWithText("请前往畅课完成签到").assertCountEquals(2)
+        composeRule.onAllNodesWithText("打开畅课签到 ›").assertCountEquals(2)
+        composeRule.onNodeWithText("数字签到").assertExists()
+        composeRule.onNodeWithText("雷达签到").assertExists()
+        composeRule.onNodeWithText("签到码 001204").assertDoesNotExist()
         composeRule.onAllNodesWithText("签到进度").assertCountEquals(0)
-        composeRule.onNodeWithText("暂未获取").assertDoesNotExist()
         val activeCount = composeRule.onNodeWithText("18 / 40 人已签到").fetchSemanticsNode().boundsInRoot
         val activeTeacher = composeRule.onNodeWithText("发起人：陈老师").fetchSemanticsNode().boundsInRoot
-        val activeCode = composeRule.onNodeWithText("签到码 001204").fetchSemanticsNode().boundsInRoot
         assertTrue(activeCount.top >= activeTeacher.bottom)
-        assertTrue(activeCode.left > activeCount.left)
     }
 
     @Test

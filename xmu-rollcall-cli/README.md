@@ -1,6 +1,8 @@
-# 虾大助手 Windows 源码
+# 虾大助手 Windows 源码（已废弃）
 
-本目录包含 `xmu_rollcall` Python 包：PySide6 桌面界面、登录与会话、学习记录、课件下载和通知逻辑。当前公开版本 **1.8.4**。虽然目录沿用 `xmu-rollcall-cli` 名称，当前应用入口是桌面界面。
+> **已停止维护 / 声明废弃**：由于签到接口已不可用且后续仅维护 Android 客户端，本 Windows 桌面端（`xmu-rollcall-cli`）已声明废弃，仅保留历史归档代码，不再更新功能或适配接口。请使用 [Android 端](../android/README.md)。
+
+本目录包含历史 `xmu_rollcall` Python 包：PySide6 桌面界面、登录与会话、学习记录、课件下载和通知逻辑。最后公开归档版本为 **1.8.6**。
 
 [直接下载 EXE](https://github.com/democard/xmu_assistant/releases/download/v1.8.4/xmu-assistant.exe) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.4) · [项目首页](../README.md) · [测试报告](../TEST_REPORT.md) · [开发文档](../documentation/README.md)
 

@@ -42,21 +42,25 @@ internal val primaryDestinations = listOf(
 )
 
 internal val moreDestinations = listOf(
+    AppDestination("畅课签到", "畅课网页", R.drawable.ic_nav_check, "直接进入畅课页面查看与完成签到"),
     AppDestination("课程课件", "课程课件", R.drawable.ic_nav_folder, "查找课程 · 批量下载课件"),
     AppDestination("考试安排", "考试安排", R.drawable.ic_nav_calendar, "考试时间、考场与历史安排"),
     AppDestination("通知", "通知", R.drawable.ic_nav_bell, "系统、微信与邮件提醒"),
-    AppDestination("策略", "策略与外观", R.drawable.ic_nav_settings, "监控策略 · 主题 · 桌面小卡片"),
+    AppDestination("策略", "策略与外观", R.drawable.ic_nav_settings, "监控间隔 · 考试提醒 · 主题 · 小卡片"),
     AppDestination("教程", "使用教程", R.drawable.ic_nav_help, "功能说明与常见问题"),
-    AppDestination("课程坐标", "课程坐标", R.drawable.ic_nav_location, "管理自动签到使用的地点"),
 )
 
 internal fun primaryPage(page: String): String =
-    if (page == "专业排名") "成绩" else if (primaryDestinations.any { it.page == page }) page else "更多"
+    when {
+        page == "专业排名" -> "成绩"
+        page == "畅课签到" -> "签到情况"
+        primaryDestinations.any { it.page == page } -> page
+        else -> "更多"
+    }
 
 internal fun parentPage(page: String): String =
     when (page) {
         "专业排名" -> "成绩"
-        "添加地点", "现场采点" -> "课程坐标"
         else -> if (moreDestinations.any { it.page == page }) "更多" else "首页"
     }
 

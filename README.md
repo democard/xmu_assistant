@@ -4,31 +4,38 @@
 
 # 虾大助手 · Campus Assistant
 
-一个支持 Windows 和 Android 的个人学习工具，帮助整理课程信息、查看学习记录与管理日常安排。
+一个面向厦门大学学生的 **Android 校园日常工具**，帮助整理课表、查看成绩与考试、下载课件，并提供课堂签到状态监控与提醒。
 
-课程、课件、课表、成绩与提醒，集中在一个轻量客户端中。
+> **重要变更说明**
+> - **自动签到与一键签到已下线**：因原签到接口已不可用，Android 端已移除自动签到、一键签到、数字签到码抓取与雷达坐标管理，仅保留**签到监控提醒**与**签到情况查看**（保留数字 / 雷达 / 二维码类型标注、实时进度与近期出勤记录）。
+> - **Windows 桌面端已声明废弃（停止维护）**：后续仅维护 Android 端，不再对 Windows 客户端提供功能更新或接口适配。
 
-**当前公开版本：Windows 1.8.6 · Android 1.8.6（versionCode 47）**
+课程、课件、课表、成绩、考试与签到监控提醒，集中在一个轻量客户端中。
 
-1.8.6 纳入 2026-11-21 三轮维护修复，涵盖桌面课件恢复与安全导出、Android 会话并发、课表缓存、小组件及成绩分享。排查过程见[第一轮维护](documentation/debug-2026-11-21.md)、[第二轮维护](documentation/debug-2026-11-21-round2.md)与[第三轮维护](documentation/debug-2026-11-21-round3.md)。
+**当前版本：Android 端持续维护（上个公开包 v1.8.6 · versionCode 47） · Windows 桌面端已废弃（历史归档 v1.8.6）**
 
-[下载 Windows 程序](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant.exe) · [下载 Android 安装包](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6)
+[下载 Android 安装包（v1.8.6）](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk) · [发布说明](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6)
 
 </div>
 
-两端独立登录、独立运行，无需配对。Windows 端适合在电脑上查看学习记录、批量下载课件；Android 端还提供周课表、桌面小组件、成绩统计和考前提醒。
+## 平台状态
 
-[安装与使用](#安装与使用) · [功能对照](#功能对照) · [本版更新](#本版更新) · [数据与隐私](#数据与隐私) · [开发与验证](#开发与验证) · [问题反馈](#问题反馈)
+| 平台 | 当前状态 | 说明 |
+| --- | --- | --- |
+| Android | **维护中（推荐）** | 覆盖课表、成绩、课件、考试、签到监控提醒及重做后的今日概览首页 |
+| Windows | **已废弃（停止维护）** | 原 `xmu-rollcall-cli` 代码仅作历史归档，不再更新或适配新接口 |
+
+[安装与使用](#安装与使用) · [Android 功能概览](#android-功能概览) · [数据与隐私](#数据与隐私) · [开发与验证](#开发与验证) · [问题反馈](#问题反馈)
 
 ## 安装与使用
 
 ### 下载
 
-| 平台 | 版本 | 文件与运行要求 |
+| 平台 | 状态 / 版本 | 文件与运行要求 |
 | --- | --- | --- |
-| Windows | 1.8.6 | [xmu-assistant.exe](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant.exe)，下载后运行，无需另装 Python |
-| Android | 1.8.6（versionCode 47） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk)，Android 8.0 及以上 |
-| 对应源码 | v1.8.6 | [源码 ZIP](https://github.com/democard/xmu_assistant/archive/refs/tags/v1.8.6.zip) |
+| Android | 1.8.6（versionCode 47） | [xmu-assistant-release.apk](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/xmu-assistant-release.apk)，Android 8.0 及以上（新界面改动尚未单独发布 APK，可通过源码构建） |
+| Windows（已废弃） | 历史归档 1.8.6 | 不再推荐使用，历史发布文件见 [Releases](https://github.com/democard/xmu_assistant/releases/tag/v1.8.6) |
+| 对应源码 | 仓库当前分支 | 通过 GitHub 源码构建最新版本 |
 
 双端文件校验值见 [1.8.6 SHA256SUMS.txt](https://github.com/democard/xmu_assistant/releases/download/v1.8.6/SHA256SUMS.txt)。在下载目录打开 PowerShell，可用以下命令计算 SHA-256，与对应版本校验文件中的同名条目核对：
 
@@ -47,24 +54,23 @@ Get-FileHash .\xmu-assistant-release.apk -Algorithm SHA256
 
 后台功能依赖应用运行、有效登录态和网络连接。Windows 端需保持程序运行；Android 使用前台服务，仍可能受系统或厂商后台策略影响。提醒不保证始终及时。
 
-## 功能对照
+## Android 功能概览
 
-| 功能 | Windows | Android |
-| --- | --- | --- |
-| 登录态保存与恢复、会话过期检测 | 支持 | 支持 |
-| 学习记录与提醒 | 查询、统计、导出与个人策略 | 近期记录、状态查看与个人策略 |
-| 课程课件浏览与批量下载 | 支持 | 支持 |
-| 系统通知、PushPlus、QQ 邮箱通知 | 支持 | 支持 |
-| 全学期课表、周 / 日程视图、日历导出 | — | 支持 |
-| 今日课程桌面小组件 | — | 支持 |
-| 成绩、GPA / 加权均分 / 学分统计、长图分享 | — | 支持 |
-| 专业排名、绩点证明 PDF 导出 | — | 手动申请或读取已有结果 |
-| 考试安排与考前提醒 | — | 支持 |
-| 常驻与快捷操作 | 系统托盘、开机自启、页面快捷键 | 快捷设置磁贴、图标长按入口 |
+| 功能 | 说明 |
+| --- | --- |
+| 今日概览首页 | 展示今日课程与教室、近期考试倒计时、签到监控状态及快捷功能入口 |
+| 登录态保存与恢复 | 本地加密保存账号与会话，支持会话过期安全续登 |
+| 签到监控与情况查看 | 后台监控新签到并推送系统 / PushPlus / QQ 邮箱提醒；保留签到类型标注，查看实时进度与历史出勤记录（已下线自动签到、一键签到与签到码抓取） |
+| 课程课件浏览与批量下载 | 支持课程搜索、学年学期筛选与断点续传 |
+| 全学期课表与日历导出 | 周课表 / 日程视图、本地微调上课安排、导出 `.ics` 日历 |
+| 今日课程桌面小组件 | 预投影未来 14 天课程摘要，跨日可读本地缓存 |
+| 成绩、模拟与排名 | GPA / 加权均分 / 学分统计、实时模拟计算、长图分享与专业排名证明 |
+| 考试安排与考前提醒 | 按学期展示考试，支持精确闹钟与锁屏全屏提醒 |
+| 常驻与快捷操作 | 快捷设置「签到监控」磁贴、桌面图标长按直达、浅色 / 深色 / 跟随系统主题 |
 
-### 记录与课件
+### 签到监控与课件
 
-支持查看课程相关记录与状态，提醒及其他操作按用户设置启用，具体结果以原平台记录为准。
+已下线自动提交签到、一键签到与数字签到码抓取功能，仅保留签到状态监测、类型标注（数字 / 雷达 / 二维码）、近期出勤记录查看以及多渠道提醒；实际签到请在畅课完成。
 
 课件可按课程浏览并批量下载。Windows 按平台章节组织列表、按课程目录保存，重名文件不直接覆盖；Android 支持课程搜索和学年学期筛选，无法直接下载时保留平台入口。下载是否成功仍取决于当前账号权限、链接有效性和服务器响应。
 
@@ -193,9 +199,9 @@ Python 全量 800 项测试、294 个子测试通过；Android 全量 822 项通
 
 ```text
 xmu_assistant/
-├── android/                 # Kotlin + Compose 原生客户端及 JVM 测试
-├── xmu-rollcall-cli/        # Python 包、PySide6 桌面界面与业务逻辑
-├── tests/                   # Python 回归测试
+├── android/                 # Kotlin + Compose 原生客户端及 JVM 测试（当前主维护端）
+├── xmu-rollcall-cli/        # [已废弃] 历史 Windows 桌面端源码（停止维护）
+├── tests/                   # [已废弃] 历史 Windows 端 Python 测试
 ├── assets/                  # 图标与品牌资源
 ├── scripts/                 # 构建、模拟器启动及维护脚本
 ├── documentation/           # 公开维护文档与历史开发记录

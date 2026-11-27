@@ -105,6 +105,7 @@ internal class HomeActions(
                             settings.username = accountUsername
                             settings.password = accountPassword
                             settings.cookieHeader = result.cookieHeader
+                            TronclassWebSessionCache.update(accountUsername, result.ssoCookiesByOrigin)
                             // 换账号登录：清掉上一个账号的教务(ids/jw) cookie 与全部数据残留
                             // （成绩持久化、课表、考试、提醒、桌面小卡片、课程缓存），
                             // 否则 B 账号直接看到 A 的成绩/课表/考试，A 的提醒继续对 B 触发（串号/串提醒）。
@@ -211,6 +212,7 @@ internal class HomeActions(
         ProcessSessionRecovery.coordinator.invalidate()
         settings.markUserLoggedOut()
         settings.clearSession()
+        TronclassWebSessionCache.clear()
         clearLoggedOutUi()
         setAccountTransitionInProgress(true)
         setBusy(BusyStates.LOGGING_OUT)
@@ -229,6 +231,12 @@ internal class HomeActions(
                 show("已退出登录")
             }
         }
+    }
+
+    fun syncRefreshedCookie(newCookie: String) {
+        if (newCookie.isBlank()) return
+        settings.cookieHeader = newCookie
+        setCookieHeader(newCookie)
     }
 
     fun onStopMonitor(
